@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CpIPOS Desktop",
+  "version": "0.1.0",
+  "identifier": "th.co.cuttingpoint.cpipos.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "CpIPOS Desktop",
+        "width": 1366,
+        "height": 768,
+        "minWidth": 1024,
+        "minHeight": 650,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": { "csp": null }
+  },
+  "plugins": { "sql": { "preload": ["sqlite:cpipos.db"] } },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "windows": { "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true } }
+  }
+}
