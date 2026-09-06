@@ -1,0 +1,184 @@
+.barcode-svg,
+.barcode-svg rect{
+  shape-rendering:crispEdges;
+}
+
+.barcode-cell-preview{
+  cursor:pointer;
+  padding:4px 6px;
+  border-radius:10px;
+  transition:background .16s ease, box-shadow .16s ease, transform .16s ease;
+}
+
+.barcode-cell-preview:hover{
+  background:#f5f9ff;
+  box-shadow:0 0 0 2px rgba(9,105,218,.12);
+  transform:translateY(-1px);
+}
+
+.barcode-cell-preview .barcode-svg{
+  height:42px;
+  background:#fff;
+}
+
+.barcode-cell-preview small,
+.barcode-mini small{
+  color:#020817!important;
+  font-weight:950!important;
+}
+
+.inventory-filters input[placeholder*="บาร์โค้ด"],
+.inventory-filters input[placeholder*="SKU"]{
+  font-weight:800;
+}
+
+.inventory-filters input[placeholder*="บาร์โค้ด"]:focus,
+.inventory-filters input[placeholder*="SKU"]:focus{
+  border-color:#0969da!important;
+  box-shadow:0 0 0 4px rgba(9,105,218,.12)!important;
+}
+
+.inventory-barcode-inspector-backdrop{
+  position:fixed;
+  inset:0;
+  z-index:320;
+  display:grid;
+  place-items:center;
+  padding:18px;
+  background:rgba(6,20,39,.66);
+  backdrop-filter:blur(4px);
+}
+
+.inventory-barcode-inspector{
+  width:min(620px,95vw);
+  overflow:hidden;
+  border-radius:24px;
+  background:#fff;
+  box-shadow:0 28px 90px rgba(2,8,23,.36);
+}
+
+.inventory-barcode-inspector header{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:16px;
+  padding:20px 22px 16px;
+  border-bottom:1px solid #e2ebf5;
+  background:linear-gradient(180deg,#fbfdff,#fff);
+}
+
+.inventory-barcode-inspector header span{
+  display:inline-flex;
+  min-height:26px;
+  align-items:center;
+  padding:0 10px;
+  border-radius:999px;
+  background:#eaf6ff;
+  color:#075fb9;
+  font-size:12px;
+  font-weight:950;
+  letter-spacing:.03em;
+}
+
+.inventory-barcode-inspector h2{
+  margin:8px 0 0;
+  color:#10223c;
+  font-size:27px;
+  line-height:1.15;
+}
+
+.inventory-barcode-inspector p{
+  margin:5px 0 0;
+  color:#607188;
+  font-size:14px;
+  font-weight:800;
+}
+
+.inventory-barcode-close{
+  width:46px;
+  height:46px;
+  border:0;
+  border-radius:14px;
+  background:#eef4fa;
+  color:#263a55;
+  font-size:23px;
+  font-weight:950;
+}
+
+.inventory-barcode-viewer{
+  display:grid;
+  gap:10px;
+  padding:22px;
+  text-align:center;
+}
+
+.inventory-barcode-large{
+  min-height:148px;
+  display:grid;
+  align-items:center;
+  padding:18px 22px 10px;
+  border:1px solid #d7e4f2;
+  border-radius:18px;
+  background:#fff;
+}
+
+.inventory-barcode-inspector-svg{
+  width:100%;
+  height:118px!important;
+  max-width:520px;
+  margin:0 auto;
+}
+
+.inventory-barcode-viewer strong{
+  display:block;
+  color:#050816;
+  font-family:"Consolas","Courier New",monospace;
+  font-size:24px;
+  line-height:1.1;
+  font-weight:950;
+  letter-spacing:.06em;
+}
+
+.inventory-barcode-viewer small{
+  color:#667891;
+  font-size:13px;
+  line-height:1.45;
+  font-weight:800;
+}
+
+.inventory-barcode-inspector footer{
+  display:flex;
+  justify-content:flex-end;
+  gap:10px;
+  padding:16px 22px 22px;
+  border-top:1px solid #edf2f8;
+}
+
+.inventory-barcode-inspector footer button{
+  min-height:48px;
+  padding:0 18px;
+  border:0;
+  border-radius:13px;
+  background:#0969da;
+  color:#fff;
+  font-weight:950;
+}
+
+.inventory-barcode-inspector footer button.secondary{
+  border:1px solid #d1deec;
+  background:#eef3f8;
+  color:#30445c;
+}
+
+@media(max-width:900px){
+  .inventory-barcode-inspector h2{font-size:22px}
+  .inventory-barcode-inspector-svg{height:96px!important}
+  .inventory-barcode-inspector footer{flex-direction:column-reverse}
+  .inventory-barcode-inspector footer button{width:100%}
+}
+
+@media print{
+  .inventory-barcode-inspector-backdrop{
+    display:none!important;
+  }
+}
