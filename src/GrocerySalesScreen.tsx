@@ -38,6 +38,7 @@ const money = (n: number) => `฿${moneyNumber(n).toLocaleString("th-TH", { mini
 const roundQty = (n: number) => Math.round((Number(n) || 0) * 1000) / 1000;
 const cleanCode = (value: string) => value.trim().replace(/\s+/g, "");
 const normalizeCode = (value: string) => cleanCode(value).toLowerCase();
+const safeScanQty = (value: number | string) => Math.max(0.001, roundQty(Number(value) || 1));
 const SYSTEM_LOGO = "/icon.png";
 
 function priceCart(cart: CartLine[], discount: Discount, language: Language) {
@@ -64,10 +65,12 @@ function priceCart(cart: CartLine[], discount: Discount, language: Language) {
 
 export function RetailSalesScreen({ repo, staff, shift, settings, products, language, refreshProducts }: Props) {
   const scanRef = useRef<HTMLInputElement>(null);
+  const qtyRef = useRef<HTMLInputElement>(null);
   const unknownTimerRef = useRef<number | null>(null);
   const cartRef = useRef<CartLine[]>([]);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [scanValue, setScanValue] = useState("");
+  const [scanQty, setScanQty] = useState(1);
   const [toast, setToast] = useState<ToastState>(null);
   const [paymentChoice, setPaymentChoice] = useState(false);
   const [cashOpen, setCashOpen] = useState(false);
@@ -109,20 +112,32 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
   };
 
   const addProduct = (product: Product, quantity = 1) => {
+    const qty = safeScanQty(quantity);
     const rows = cartRef.current;
     const existing = rows.find(x => x.id === product.id);
     const current = existing?.quantity || 0;
-    const nextQuantity = roundQty(current + quantity);
+    const nextQuantity = roundQty(current + qty);
     if (product.stockQuantity >= 0 && nextQuantity > product.stockQuantity) {
       notify("warn", `สต๊อกไม่พอ · คงเหลือ ${product.stockQuantity} ${product.unit}`);
       focusScanner();
-      return;
+      return false;
     }
     const nextRows = existing
       ? rows.map(x => x.id === product.id ? { ...x, quantity: nextQuantity } : x)
-      : [...rows, { ...product, quantity: roundQty(quantity) }];
+      : [...rows, { ...product, quantity: qty }];
     replaceCart(nextRows);
     focusScanner();
+    return true;
+  };
+
+  const addScannedProduct = (product: Product) => {
+    const qty = safeScanQty(scanQty);
+    const added = addProduct(product, qty);
+    if (added) {
+      if (qty !== 1) notify("ok", `เพิ่ม ${productName(language, product)} จำนวน ${qty} ${product.unit}`);
+      setScanQty(1);
+      window.setTimeout(() => qtyRef.current?.blur(), 20);
+    }
   };
 
   const setQuantity = (line: CartLine, quantity: number) => {
@@ -153,7 +168,7 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
     const memoryProduct = productIndex.get(key);
     if (memoryProduct) {
       setScanValue("");
-      addProduct(memoryProduct);
+      addScannedProduct(memoryProduct);
       return;
     }
 
@@ -161,7 +176,7 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
       const found = await repo.findProductByBarcode(rawCode) || await repo.findProductByCode(rawCode);
       if (found && found.active) {
         setScanValue("");
-        addProduct(found);
+        addScannedProduct(found);
         return;
       }
     } catch {
@@ -184,7 +199,7 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
     const found = productIndex.get(key);
     if (found) {
       setScanValue("");
-      addProduct(found);
+      addScannedProduct(found);
     }
   };
 
@@ -198,7 +213,7 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
     return () => {
       if (unknownTimerRef.current !== null) window.clearTimeout(unknownTimerRef.current);
     };
-  }, [scanValue, productIndex]);
+  }, [scanValue, productIndex, scanQty]);
 
   useEffect(() => {
     focusScanner();
@@ -292,12 +307,31 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
 
   return <section className="grocery-pos-layout">
     <div className="grocery-pos-main">
-      <section className="grocery-scan-zone">
+      <section className="grocery-scan-zone grocery-scan-zone-with-qty">
         <div className="grocery-scan-title">
           <strong>SD · ขายทั่วไป · สแกน SKU</strong>
-          <small>ยิงบาร์โค้ดหรือกรอก SKU — สินค้าที่พบจะลงตะกร้าอัตโนมัติทันที</small>
+          <small>ใส่จำนวนก่อนยิงบาร์โค้ดได้ เช่น 6 ชิ้น แล้วยิงครั้งเดียวลงตะกร้าเป็นรายการเดียว</small>
         </div>
-        <div className="grocery-scan-row">
+        <div className="grocery-scan-row grocery-scan-row-with-qty">
+          <label className="scan-qty-field">
+            <span>จำนวน</span>
+            <input
+              ref={qtyRef}
+              type="number"
+              min="0.001"
+              step="1"
+              value={scanQty}
+              onChange={e => setScanQty(safeScanQty(e.target.value))}
+              onFocus={e => e.currentTarget.select()}
+              onKeyDown={e => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  focusScanner();
+                }
+              }}
+              aria-label="จำนวนสินค้าสำหรับการสแกนครั้งถัดไป"
+            />
+          </label>
           <input
             ref={scanRef}
             value={scanValue}
@@ -313,9 +347,8 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
             autoFocus
           />
           <div className="scanner-ready"><span className="scanner-ready-dot"/><span>พร้อมสแกน</span></div>
-          <button className="scan-clear-all" disabled={!cart.length || busy} onClick={() => setClearOpen(true)}>ล้างรายการทั้งหมด</button>
         </div>
-        <div className="grocery-scan-status">{cart.length ? `ตะกร้า: ${cart.length} รายการ / ${roundQty(totalQty)} ชิ้น` : "พร้อมรับการสแกนสินค้า"}</div>
+        <div className="grocery-scan-status">{cart.length ? `ตะกร้า: ${cart.length} รายการ / ${roundQty(totalQty)} ชิ้น` : `พร้อมรับการสแกนสินค้า · จำนวนครั้งถัดไป ${scanQty}`}</div>
       </section>
 
       <section className="grocery-table-panel">
