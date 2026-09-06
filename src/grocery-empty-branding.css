@@ -1,0 +1,106 @@
+.grocery-checkout-panel::after{
+  content:"";
+  flex:1 1 auto;
+  min-height:170px;
+  margin-top:10px;
+  border:1px dashed #d8e6f4;
+  border-radius:16px;
+  background:
+    url("/icon.png") center 42% / 118px 118px no-repeat,
+    radial-gradient(circle at center 42%,rgba(9,105,218,.10),transparent 42%),
+    linear-gradient(180deg,#fbfdff,#f4f8fd);
+  opacity:.78;
+}
+
+.grocery-checkout-panel:has(.grocery-pay-button:not(:disabled))::after{
+  background:
+    url("/icon.png") center 48% / 96px 96px no-repeat,
+    radial-gradient(circle at center 48%,rgba(9,105,218,.08),transparent 40%),
+    linear-gradient(180deg,#fbfdff,#f7fafd);
+  opacity:.42;
+}
+
+.grocery-empty-table{
+  min-height:320px!important;
+  height:100%;
+  display:flex!important;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:8px!important;
+  padding:32px 16px;
+  text-align:center;
+  color:#728399;
+}
+
+.grocery-empty-table::before{
+  content:"";
+  width:132px;
+  height:132px;
+  margin-bottom:8px;
+  border-radius:32px;
+  background:
+    url("/icon.png") center / 108px 108px no-repeat,
+    linear-gradient(180deg,#eef6ff,#f8fbff);
+  box-shadow:0 18px 42px rgba(9,105,218,.12);
+}
+
+.grocery-empty-table strong{
+  color:#162946!important;
+  font-size:24px!important;
+  line-height:1.2;
+  font-weight:900;
+}
+
+.grocery-empty-table span{
+  max-width:360px;
+  color:#6b7d92;
+  font-size:15px!important;
+  line-height:1.5;
+}
+
+.grocery-empty-table::after{
+  content:"พร้อมขายแบบออฟไลน์ · ยิงบาร์โค้ดแล้วลงตารางทันที";
+  margin-top:6px;
+  padding:8px 12px;
+  border-radius:999px;
+  background:#ebfbf3;
+  color:#087552;
+  font-size:12px;
+  font-weight:900;
+}
+
+@media(max-height:760px){
+  .grocery-checkout-panel::after{
+    min-height:110px;
+    background-size:82px 82px,auto,auto;
+  }
+
+  .grocery-empty-table{
+    min-height:230px!important;
+    padding:22px 12px;
+  }
+
+  .grocery-empty-table::before{
+    width:96px;
+    height:96px;
+    border-radius:24px;
+    background-size:78px 78px,auto;
+  }
+
+  .grocery-empty-table strong{
+    font-size:20px!important;
+  }
+
+  .grocery-empty-table span{
+    font-size:13px!important;
+  }
+}
+
+@media print{
+  .grocery-checkout-panel::after,
+  .grocery-empty-table::before,
+  .grocery-empty-table::after{
+    display:none!important;
+  }
+}
