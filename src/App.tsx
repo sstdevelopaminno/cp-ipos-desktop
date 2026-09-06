@@ -8,6 +8,7 @@ import { RetailSalesScreen } from "./RetailSalesScreen";
 import { AppSidebar } from "./AppSidebar";
 import { SalesHistoryScreenV2 } from "./SalesHistoryScreen";
 import { ProductsScreenV2 } from "./ProductsScreen";
+import { ReportsDashboardScreen } from "./ReportsDashboardScreen";
 import "./inventory-ui.css";
 
 type View = "sales" | "products" | "salesHistory" | "reports" | "employees" | "settings";
@@ -145,11 +146,7 @@ function ShiftScreen({ repo, staff, settings, language, onOpen }: { repo: PosRep
 }
 
 function ReportsScreen({ repo, language }: { repo: PosRepository; language: Language }) {
-  const [date, setDate] = useState(today());
-  const [summary, setSummary] = useState<SalesSummary | null>(null);
-  const [stock, setStock] = useState<StockMovement[]>([]);
-  useEffect(() => { void repo.getSalesSummary(date).then(setSummary); void repo.listStockMovements(40).then(setStock); }, [date]);
-  return <section className="split"><div className="panel"><div className="toolbar"><h1>{t(language, "reports")}</h1><input type="date" value={date} onChange={e => setDate(e.target.value)} /></div>{summary ? <><div className="metric-grid"><Metric label="ยอดขายรวม" value={money(summary.totalSales)} /><Metric label="จำนวนบิล" value={String(summary.billCount)} /><Metric label={t(language, "cash")} value={money(summary.cashTotal)} /><Metric label={t(language, "transfer")} value={money(summary.transferTotal)} /><Metric label="เฉลี่ยต่อบิล" value={money(summary.averageBill)} /><Metric label="บิลยกเลิก" value={`${summary.cancelledCount} / ${money(summary.cancelledValue)}`} /></div><h3>{t(language, "byProduct")}</h3>{summary.byProduct.length ? summary.byProduct.map(p => <p key={p.label}>{p.label}: {p.quantity} · {money(p.total)}</p>) : <EmptyState text={t(language, "empty")} />}<h3>{t(language, "byEmployee")}</h3>{summary.byEmployee.length ? summary.byEmployee.map(p => <p key={p.label}>{p.label}: {p.count} · {money(p.total)}</p>) : <EmptyState text={t(language, "empty")} />}</> : <LoadingState />}</div><div className="panel"><h2>Stock ledger</h2><div className="mini-list">{stock.length ? stock.map(s => <p key={s.id}><strong>{s.movementType}</strong> {s.name} {s.quantity} <small>{s.reason}</small></p>) : <EmptyState text={t(language, "empty")} />}</div></div></section>;
+  return <ReportsDashboardScreen repo={repo} language={language} />;
 }
 
 function EmployeesScreen({ repo, staff, language }: { repo: PosRepository; staff: Staff; language: Language }) {
