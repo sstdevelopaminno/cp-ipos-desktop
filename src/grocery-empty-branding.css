@@ -1,18 +1,18 @@
 .grocery-checkout-panel::after{
   content:"";
   flex:1 1 auto;
-  min-height:120px;
+  min-height:112px;
   margin-top:8px;
   border:0;
   border-radius:0;
-  background:url("/icon.png") center center / 72px 72px no-repeat;
-  opacity:.28;
+  background:url("/icon.png") center center / 76px 76px no-repeat;
+  opacity:.56;
 }
 
 .grocery-checkout-panel:has(.grocery-pay-button:not(:disabled))::after{
-  min-height:96px;
-  background:url("/icon.png") center center / 58px 58px no-repeat;
-  opacity:.18;
+  min-height:88px;
+  background:url("/icon.png") center center / 62px 62px no-repeat;
+  opacity:.44;
 }
 
 .grocery-empty-table{
@@ -51,8 +51,8 @@
 @media(max-height:760px){
   .grocery-checkout-panel::after{
     min-height:72px;
-    background-size:44px 44px;
-    opacity:.18;
+    background-size:54px 54px;
+    opacity:.42;
   }
 
   .grocery-empty-table{
