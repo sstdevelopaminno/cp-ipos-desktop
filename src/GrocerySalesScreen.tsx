@@ -38,6 +38,7 @@ const money = (n: number) => `฿${moneyNumber(n).toLocaleString("th-TH", { mini
 const roundQty = (n: number) => Math.round((Number(n) || 0) * 1000) / 1000;
 const cleanCode = (value: string) => value.trim().replace(/\s+/g, "");
 const normalizeCode = (value: string) => cleanCode(value).toLowerCase();
+const SYSTEM_LOGO = "/icon.png";
 
 function priceCart(cart: CartLine[], discount: Discount, language: Language) {
   const subtotal = moneyNumber(cart.reduce((sum, line) => sum + line.quantity * line.price, 0));
@@ -403,9 +404,12 @@ function DiscountModal({ subtotal, current, onClose, onApply }: { subtotal: numb
 function ReceiptView({ receipt, onClose }: { receipt: PricedReceipt; onClose: () => void }) {
   const subtotal = receipt.subtotal ?? moneyNumber(receipt.items.reduce((sum, item) => sum + Math.max(0, item.lineTotal), 0));
   const discountAmount = receipt.discountAmount ?? moneyNumber(Math.max(0, subtotal - receipt.total));
+  const logoSrc = receipt.settings.storeLogoPath || SYSTEM_LOGO;
+  const printerName = receipt.settings.printerName?.trim();
   const print80 = () => window.print();
   return <SimpleModal title={`ใบเสร็จ ${receipt.receiptNo}`} onClose={onClose} wide={false}>
     <div className="receipt-preview-shell"><div className="receipt-paper-80">
+      <div className="receipt-logo-wrap"><img src={logoSrc} alt="โลโก้ร้าน" onError={event => { event.currentTarget.src = SYSTEM_LOGO; }} /></div>
       <h2>{receipt.settings.receiptHeader || receipt.settings.storeName}</h2>
       <p>{receipt.settings.branchName}</p>
       {receipt.settings.address && <p>{receipt.settings.address}</p>}
@@ -422,8 +426,8 @@ function ReceiptView({ receipt, onClose }: { receipt: PricedReceipt; onClose: ()
       {receipt.paymentMethod === "cash" && <><div className="grocery-receipt-row"><span>รับเงิน</span><strong>{money(receipt.paid)}</strong></div><div className="grocery-receipt-row"><span>เงินทอน</span><strong>{money(receipt.changeAmount)}</strong></div></>}
       <div className="receipt-divider"/>
       <p className="receipt-footer">{receipt.settings.receiptFooter}</p>
-      <small className="receipt-paper-label">รูปแบบกระดาษ 80 mm</small>
     </div></div>
+    <div className="receipt-printer-note">{printerName ? `เครื่องพิมพ์: ${printerName} · กระดาษ ${receipt.settings.printerPaperWidthMm || "80"}mm` : "ยังไม่ได้ระบุชื่อเครื่องพิมพ์ในตั้งค่า: ระบบจะเปิด Windows Print Dialog ให้เลือกเครื่องพิมพ์ 80mm"}</div>
     <div className="grocery-modal-actions receipt-actions"><button className="secondary-action" onClick={onClose}>ปิด</button><button onClick={print80}>พิมพ์ใบเสร็จ 80mm</button></div>
   </SimpleModal>;
 }
