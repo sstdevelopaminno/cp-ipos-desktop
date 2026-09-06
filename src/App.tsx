@@ -6,6 +6,7 @@ import type { AppSettings, Language, Product, Receipt, Sale, SalesSummary, Shift
 import { productName, t } from "./i18n";
 import { RetailSalesScreen } from "./RetailSalesScreen";
 import { AppSidebar } from "./AppSidebar";
+import { SalesHistoryScreenV2 } from "./SalesHistoryScreen";
 import "./inventory-ui.css";
 
 type View = "sales" | "products" | "salesHistory" | "reports" | "employees" | "settings";
@@ -119,7 +120,7 @@ export default function App() {
       <div className={`view-body ${view === "sales" ? "sales-view" : ""}`}>
         {view === "sales" && <RetailSalesScreen repo={repo} staff={staff} shift={shift} settings={settings} products={products} language={language} refreshProducts={()=>refreshProducts(repo)} />}
         {view === "products" && <ProductsScreen repo={repo} staff={staff} products={products} language={language} refreshProducts={()=>refreshProducts(repo)} />}
-        {view === "salesHistory" && <SalesHistoryScreen repo={repo} staff={staff} shift={shift} settings={settings} language={language} />}
+        {view === "salesHistory" && <SalesHistoryScreenV2 repo={repo} staff={staff} shift={shift} settings={settings} language={language} />}
         {view === "reports" && <ReportsScreen repo={repo} language={language} />}
         {view === "employees" && <EmployeesScreen repo={repo} staff={staff} language={language} />}
         {view === "settings" && <SettingsScreen repo={repo} staff={staff} settings={settings} language={language} refreshSettings={()=>refreshSettings(repo)} />}
