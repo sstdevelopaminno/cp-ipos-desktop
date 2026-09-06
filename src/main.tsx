@@ -5,6 +5,7 @@ import "./styles.css";
 import "./retail-ui.css";
 import "./receipt-print.css";
 import "./grocery-empty-branding.css";
+import "./sales-scan-qty-ui.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
