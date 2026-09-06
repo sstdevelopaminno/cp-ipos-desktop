@@ -1,0 +1,74 @@
+:root{
+  --retail-nav:#082651;
+  --retail-nav-2:#0a326b;
+  --retail-blue:#0b6ff6;
+  --retail-line:#d9e5f2;
+  --retail-soft:#f5f8fc;
+  --retail-green:#e9fbf2;
+  --retail-green-line:#9be8bf;
+  --retail-orange:#ff690b;
+  --retail-danger:#e23b45;
+}
+
+.app-shell{grid-template-columns:232px minmax(0,1fr);transition:grid-template-columns .18s ease}
+.app-shell.nav-collapsed{grid-template-columns:78px minmax(0,1fr)}
+.retail-side-nav{position:relative;padding:14px 12px;background:linear-gradient(180deg,var(--retail-nav),var(--retail-nav-2));gap:8px;transition:width .18s ease,padding .18s ease}
+.retail-side-nav.collapsed{padding-left:9px;padding-right:9px}
+.retail-side-brand{min-height:68px;padding:4px 6px 10px}
+.retail-side-brand img{width:44px;height:44px;flex:0 0 auto}
+.retail-side-brand strong{font-size:24px;line-height:1.05}
+.retail-side-brand small{font-size:12px}
+.nav-collapse-button{display:flex!important;align-items:center!important;justify-content:center!important;gap:8px!important;min-height:42px!important;padding:8px 10px!important;margin:0 2px 5px!important;border:1px solid rgba(255,255,255,.12)!important;background:rgba(255,255,255,.07)!important;color:#d9ebff!important;text-align:center!important}
+.nav-collapse-button svg{width:20px;height:20px;flex:0 0 auto}
+.retail-nav-list{display:flex;flex-direction:column;gap:7px}
+.retail-nav-list button{display:flex;align-items:center;gap:13px;min-height:49px;padding:11px 13px!important;white-space:nowrap;overflow:hidden}
+.retail-nav-list button span{overflow:hidden;text-overflow:ellipsis}
+.nav-icon{width:22px;height:22px;flex:0 0 auto}
+.retail-side-nav.collapsed .retail-nav-list button{justify-content:center;padding:11px 8px!important}
+.retail-side-nav.collapsed .nav-collapse-button{padding:8px!important}
+
+.view-body.sales-view{padding:10px;background:#f1f5f9}
+.retail-sale-layout{height:100%;display:grid;grid-template-columns:minmax(0,1fr) 365px;gap:10px;min-width:0;overflow:hidden}
+.retail-sale-main{min-width:0;display:grid;grid-template-rows:auto auto minmax(0,1fr);gap:10px;overflow:hidden}
+.sale-context-card,.grocery-scan-card,.grocery-table-card,.catalog-mode-card,.retail-checkout-panel{background:#fff;border:1px solid var(--retail-line);border-radius:17px;box-shadow:0 5px 18px rgba(23,53,89,.06)}
+.sale-context-card{display:grid;grid-template-columns:210px minmax(0,1fr);min-height:105px;padding:12px 14px}
+.sale-context-home{display:flex;gap:11px;align-items:flex-start;border-right:1px solid #e3ebf4;padding:5px 14px 5px 0}
+.home-icon{width:42px;height:42px;border-radius:11px;display:grid;place-items:center;background:#edf5ff;color:var(--retail-blue);font-size:22px}
+.sale-context-home small,.sale-context-home strong{display:block}.sale-context-home small{color:#718096}.sale-context-home strong{margin-top:3px;color:#17223a}
+.sale-context-grid{display:grid;grid-template-columns:repeat(3,minmax(120px,1fr));gap:8px 16px;padding-left:15px;align-content:center}
+.sale-info{display:grid;grid-template-columns:80px minmax(0,1fr);gap:6px;align-items:center;min-width:0;font-size:12px}.sale-info span{color:#708198}.sale-info strong{color:#111827;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+.grocery-scan-card{padding:12px;background:linear-gradient(180deg,#e9fbf2,#f0fcf6);border-color:var(--retail-green-line)}
+.grocery-scan-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.grocery-scan-head strong{display:block;color:#053d2b;font-size:15px}.grocery-scan-head small{display:block;margin-top:4px;color:#267258;font-size:12px}
+.sale-mode-toggle{display:flex;border:1px solid #8edfb4;border-radius:12px;overflow:hidden;background:#fff;flex:0 0 auto}.sale-mode-toggle button{padding:10px 13px;background:#fff;color:#246a51;font-weight:800}.sale-mode-toggle button.active{background:#0e986b;color:#fff}
+.scan-input-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;margin-top:10px}.scan-input-row input{height:44px;border:2px solid #1d2a3c;border-radius:11px;background:#fff;padding:9px 12px}.scan-input-row input:focus{border-color:#1d2a3c;box-shadow:0 0 0 3px rgba(15,152,107,.14)}.scan-add-button{min-width:94px;border-radius:11px;background:var(--retail-orange);color:#fff;font-weight:900;padding:0 16px}.scan-status{min-height:20px;padding-top:8px;color:#0f7655;font-size:12px;font-weight:800}
+
+.grocery-table-card,.catalog-mode-card{min-height:0;overflow:hidden;display:grid;grid-template-rows:auto minmax(0,1fr)}
+.grocery-table-card>header{height:51px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;background:linear-gradient(180deg,#edfbf3,#f6fdf9);border-bottom:1px solid #c7efda}.grocery-table-card>header strong{font-size:14px}.grocery-table-card>header b{font-size:18px;color:var(--retail-orange)}
+.grocery-table-scroll{min-height:0;overflow:auto;background:#fff}
+.grocery-table{width:100%;border-collapse:separate;border-spacing:0;margin:0;font-size:13px}.grocery-table thead{position:sticky;top:0;z-index:2}.grocery-table th{height:42px;padding:8px 9px;text-align:left;background:#f7f9fc;color:#223149;border-bottom:1px solid #dfe7f0;font-size:12px;white-space:nowrap}.grocery-table td{padding:10px 9px;border-bottom:1px solid #e7edf4;vertical-align:middle}.grocery-table td small{display:block;color:#77889d;margin-top:3px}.grocery-table tbody tr:hover{background:#fbfdff}.grocery-table th:first-child,.grocery-table td:first-child{width:42px;text-align:center}.grocery-table th:last-child,.grocery-table td:last-child{width:50px;text-align:center}
+.table-qty{display:grid;grid-template-columns:34px 54px 34px;align-items:center}.table-qty button{height:34px;background:#f3f6fa;border:1px solid #ccd9e8;font-weight:900;color:#0d203d}.table-qty button:first-child{border-radius:9px 0 0 9px}.table-qty button:last-child{border-radius:0 9px 9px 0}.table-qty input{height:34px;padding:4px;text-align:center;border-radius:0;border-left:0;border-right:0;box-shadow:none!important}.table-remove{width:34px;height:34px;border-radius:9px;background:#fff2f2;border:1px solid #ffc0c0;color:#e21d2f;font-size:19px}.retail-empty{margin:18px;border:1px dashed #ccd8e6;border-radius:14px;min-height:90px;display:grid;place-items:center;color:#77889d;background:#fafcff}
+
+.catalog-mode-card{grid-template-rows:auto minmax(0,1fr)}.catalog-mode-search{padding:12px;border-bottom:1px solid #e5edf5}.catalog-mode-search input{height:42px}.catalog-mode-grid{padding:12px;overflow:auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:10px;align-content:start}.catalog-mini-card{text-align:left;border:1px solid #d6e2ef;border-radius:15px;background:#fff;padding:12px;display:grid;gap:6px;min-height:155px;box-shadow:0 3px 10px rgba(20,45,78,.04)}.catalog-mini-card:hover{border-color:#70afff}.catalog-mini-card span{width:38px;height:38px;border-radius:10px;background:#e9f3ff;color:#0969da;display:grid;place-items:center;font-weight:900}.catalog-mini-card small{color:#748399}.catalog-mini-card b{color:#0969da;font-size:18px}.catalog-mini-card em{font-style:normal;color:#6e7d90;font-size:12px}
+
+.retail-checkout-panel{min-height:0;padding:8px;display:flex;flex-direction:column;gap:7px;overflow:auto;background:#fff}.checkout-mode,.checkout-total,.checkout-tender{border:1px solid #d8e2ee;border-radius:13px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center}.checkout-mode span,.checkout-total span,.checkout-tender span{font-size:12px;color:#5d6c80}.checkout-mode strong{font-size:12px;color:#303b4c}.checkout-total strong{font-size:19px;color:var(--retail-orange)}.checkout-tender strong{font-size:18px;color:#1261c9}.checkout-keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;padding:4px}.checkout-keypad button{height:43px;border-radius:10px;border:1px solid #ccd8e8;background:#fff;color:#1d2a3a;font-size:16px;font-weight:800}.checkout-keypad button:hover{background:#f2f7fd}.checkout-key-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px}.checkout-key-actions button,.checkout-shortcuts button{height:42px;border:1px solid #cad7e7;background:#fff;border-radius:10px;font-weight:800;color:#334156}.checkout-shortcuts{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:10px}.checkout-shortcuts button:last-child{border-color:#ffad72;color:#e45e08}.checkout-shortcuts button:disabled{opacity:.62}.retail-pay-button{height:46px;border-radius:10px;background:var(--retail-orange);color:#fff;font-weight:900;font-size:15px}.retail-cancel-button{height:42px;border-radius:10px;background:#fff4f4;border:1px solid #ffb8bc;color:#c72933;font-weight:900}.retail-pay-button:disabled,.retail-cancel-button:disabled{opacity:.45}
+
+.retail-toast{position:fixed;right:385px;bottom:22px;z-index:120;padding:12px 16px;border-radius:12px;font-weight:800;box-shadow:0 14px 38px rgba(20,41,68,.18)}.retail-toast.ok{background:#dcf7e8;color:#126a42}.retail-toast.warn{background:#fff5d9;color:#8b5e00}.retail-toast.error{background:#ffe7e8;color:#ae1d29}
+.retail-modal-backdrop{position:fixed;inset:0;background:rgba(7,20,39,.62);z-index:200;display:grid;place-items:center;padding:18px}.retail-modal{width:min(720px,94vw);max-height:92vh;overflow:auto;background:#fff;border-radius:20px;box-shadow:0 30px 95px rgba(0,0,0,.32);padding:18px}.retail-modal>header{display:flex;justify-content:space-between;align-items:center;padding-bottom:12px;margin-bottom:14px;border-bottom:1px solid #e5edf5}.retail-modal>header h2{margin:0;font-size:21px}.retail-modal>header button{width:38px;height:38px;border-radius:10px;background:#eff4fa;color:#3c4b5e;font-size:20px}.payment-total{display:flex;justify-content:space-between;align-items:center;padding:15px;border-radius:14px;background:#eef6ff;border:1px solid #d4e7ff;font-weight:800}.payment-total strong{font-size:30px;color:#0969da}.retail-payment-choice{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:13px}.retail-payment-choice button{min-height:118px;border:1px solid #d4e0ee;border-radius:16px;background:#fff;text-align:left;padding:15px;display:grid;gap:4px}.retail-payment-choice button:hover{border-color:#76b5ff;background:#f8fbff}.retail-payment-choice button>span{font-size:24px;color:#0969da}.retail-payment-choice strong{font-size:20px;color:#12233c}.retail-payment-choice small{color:#748399}
+.cash-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.cash-summary>div{padding:13px;border:1px solid #dbe5ef;border-radius:13px;background:#fbfdff}.cash-summary span,.cash-summary strong{display:block}.cash-summary span{font-size:12px;color:#6d7c8f}.cash-summary strong{font-size:22px;color:#16243b;margin-top:5px}.cash-summary .change{background:#e9f9f0;border-color:#bdebd0}.cash-summary .change strong{color:#147445}.cash-quick{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.cash-quick button{padding:9px 13px;border-radius:10px;background:#eef6ff;border:1px solid #cce2ff;color:#0969da;font-weight:900}.cash-keypad{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.cash-keypad button{height:52px;border-radius:11px;border:1px solid #d2deec;background:#fff;font-size:18px;font-weight:900}.transfer-warning{padding:14px;border:1px solid #ffd69d;background:#fff8e9;color:#7c4f00;border-radius:13px}.transfer-warning p{margin:6px 0 0}.retail-modal-actions{display:flex;justify-content:flex-end;gap:9px;margin-top:15px}.retail-modal-actions button{min-width:120px;padding:11px 16px;border-radius:11px;background:#0969da;color:#fff;font-weight:900}.retail-modal-actions .secondary-action{background:#eef3f8;color:#34475d;border:1px solid #d3dfeb}.retail-modal-actions .danger-action{background:#d92d3a}.retail-modal-actions button:disabled{opacity:.48}.unknown-code{font-size:24px;font-weight:900;color:#0969da;padding:15px;text-align:center;background:#f0f7ff;border-radius:12px}.retail-field{display:grid;gap:7px;margin:12px 0;font-weight:700;color:#3b4a5e}.retail-error{padding:10px 12px;border-radius:10px;background:#fff0f1;border:1px solid #ffc8cc;color:#af2430}.quick-product-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.quick-product-grid label{display:grid;gap:6px;font-weight:700;color:#3a4a5e}.retail-receipt{border:1px dashed #c7d4e2;border-radius:15px;padding:18px;text-align:center}.retail-receipt h2{margin:0 0 5px}.receipt-row{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px dashed #e0e7ef;text-align:left}.receipt-row.total{font-size:18px;border-top:1px solid #bac9d9;margin-top:8px}.retail-receipt p{margin:7px 0}
+
+@media(max-width:1366px){
+  .app-shell{grid-template-columns:210px minmax(0,1fr)}
+  .app-shell.nav-collapsed{grid-template-columns:72px minmax(0,1fr)}
+  .retail-sale-layout{grid-template-columns:minmax(0,1fr) 330px}
+  .sale-context-card{grid-template-columns:175px minmax(0,1fr)}
+  .sale-context-grid{gap:6px 10px}.sale-info{grid-template-columns:68px minmax(0,1fr)}
+  .grocery-table{font-size:12px}.grocery-table th,.grocery-table td{padding-left:7px;padding-right:7px}
+  .retail-toast{right:350px}
+}
+@media(max-width:1120px){
+  .retail-sale-layout{grid-template-columns:minmax(0,1fr) 300px}
+  .sale-context-grid{grid-template-columns:repeat(2,minmax(120px,1fr))}
+  .checkout-shortcuts{grid-template-columns:1fr}.retail-checkout-panel{font-size:12px}
+}
+@media(min-width:1600px){.retail-sale-layout{grid-template-columns:minmax(0,1fr) 390px}.sale-context-card{grid-template-columns:225px minmax(0,1fr)}.grocery-table{font-size:13px}}
