@@ -17,10 +17,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
       - name: Install dependencies
         run: npm ci
       - name: Frontend build
         run: npm run build
+      - name: SQLite grocery transaction smoke test
+        run: python scripts/test_sqlite_migrations.py
       - name: Rust check
         run: cargo check --manifest-path src-tauri/Cargo.toml
