@@ -1,0 +1,77 @@
+.grocery-scan-zone-with-qty{
+  padding:10px 13px 8px;
+}
+
+.grocery-scan-row-with-qty{
+  grid-template-columns:118px minmax(320px,680px) auto;
+  justify-content:start;
+  align-items:end;
+}
+
+.scan-qty-field{
+  display:grid;
+  gap:5px;
+  margin:0!important;
+  color:#0d5f46;
+  font-size:12px;
+  font-weight:900;
+}
+
+.scan-qty-field span{
+  line-height:1;
+}
+
+.scan-qty-field input{
+  width:118px;
+  height:46px;
+  border:2px solid #1f2b3b;
+  border-radius:11px;
+  padding:6px 10px;
+  text-align:center;
+  font-size:20px;
+  font-weight:900;
+  color:#0b2440;
+  background:#fff;
+}
+
+.scan-qty-field input:focus{
+  border-color:#0d996b;
+  box-shadow:0 0 0 4px rgba(13,153,107,.13);
+}
+
+.nav-close-shift-button{
+  margin-top:auto;
+  border:1px solid rgba(255,255,255,.18)!important;
+  background:rgba(255,255,255,.08)!important;
+  color:#fff!important;
+}
+
+.nav-close-shift-button:hover{
+  background:rgba(255,255,255,.15)!important;
+  box-shadow:inset 4px 0 0 #ffb454!important;
+}
+
+.topbar-meta button{
+  display:none!important;
+}
+
+@media(max-width:1180px){
+  .grocery-scan-row-with-qty{
+    grid-template-columns:100px minmax(240px,1fr);
+  }
+  .grocery-scan-row-with-qty .scanner-ready{
+    grid-column:1 / -1;
+  }
+  .scan-qty-field input{
+    width:100px;
+  }
+}
+
+@media(max-height:760px){
+  .grocery-scan-title small{
+    display:none;
+  }
+  .grocery-scan-row-with-qty{
+    margin-top:6px;
+  }
+}
