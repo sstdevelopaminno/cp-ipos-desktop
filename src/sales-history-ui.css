@@ -332,6 +332,77 @@
   object-fit:contain;
 }
 
+/* Scroll stability fix for sales history.
+   The screen has 5 direct rows: toolbar, periods, filters, table, pagination.
+   Keeping filters outside the scrollable row avoids the table expanding past the viewport. */
+.sales-history-page{
+  grid-template-rows:auto auto auto minmax(260px,1fr) auto!important;
+  max-height:100%;
+}
+
+.sales-history-page > .sales-history-table-shell{
+  min-height:0!important;
+  height:auto!important;
+  max-height:100%;
+}
+
+.sales-history-table-wrap{
+  min-height:0!important;
+  max-height:100%!important;
+  overflow-y:auto!important;
+  overflow-x:auto!important;
+  scrollbar-gutter:stable;
+  -webkit-overflow-scrolling:touch;
+}
+
+.sales-history-table tbody tr{
+  height:74px;
+}
+
+@media(max-height:820px){
+  .sales-history-page{
+    gap:9px;
+    grid-template-rows:auto auto auto minmax(220px,1fr) auto!important;
+  }
+
+  .sales-history-title h1{
+    font-size:28px;
+  }
+
+  .sales-history-title p{
+    margin-top:3px;
+    font-size:12.5px;
+  }
+
+  .sales-history-periods button{
+    min-height:36px;
+    padding:0 14px;
+  }
+
+  .sales-history-filters input,
+  .sales-history-filters select{
+    height:40px;
+  }
+
+  .sales-history-table th{
+    height:42px;
+  }
+
+  .sales-history-table td{
+    padding-top:9px;
+    padding-bottom:9px;
+  }
+
+  .sales-history-table tbody tr{
+    height:66px;
+  }
+
+  .sales-history-pages button{
+    min-width:36px;
+    min-height:36px;
+  }
+}
+
 @media(max-width:1366px){
   .sales-history-toolbar{gap:10px}
   .sales-history-title h1{font-size:28px}
