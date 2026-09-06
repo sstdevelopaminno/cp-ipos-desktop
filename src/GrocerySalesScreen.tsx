@@ -18,11 +18,13 @@ type ToastState = { kind: "ok" | "warn" | "error"; text: string } | null;
 
 const money = (n: number) => `฿${Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const roundQty = (n: number) => Math.round((Number(n) || 0) * 1000) / 1000;
-const normalizeCode = (value: string) => value.trim().replace(/\s+/g, "").toLowerCase();
+const cleanCode = (value: string) => value.trim().replace(/\s+/g, "");
+const normalizeCode = (value: string) => cleanCode(value).toLowerCase();
 
 export function RetailSalesScreen({ repo, staff, shift, settings, products, language, refreshProducts }: Props) {
   const scanRef = useRef<HTMLInputElement>(null);
   const unknownTimerRef = useRef<number | null>(null);
+  const cartRef = useRef<CartLine[]>([]);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [scanValue, setScanValue] = useState("");
   const [toast, setToast] = useState<ToastState>(null);
@@ -51,6 +53,11 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
     return index;
   }, [products]);
 
+  const replaceCart = (rows: CartLine[]) => {
+    cartRef.current = rows;
+    setCart(rows);
+  };
+
   const focusScanner = () => window.setTimeout(() => scanRef.current?.focus(), 20);
   const notify = (kind: NonNullable<ToastState>["kind"], text: string) => {
     setToast({ kind, text });
@@ -58,33 +65,36 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
   };
 
   const addProduct = (product: Product, quantity = 1) => {
-    let accepted = false;
-    setCart(rows => {
-      const existing = rows.find(x => x.id === product.id);
-      const current = existing?.quantity || 0;
-      const next = roundQty(current + quantity);
-      if (product.stockQuantity >= 0 && next > product.stockQuantity) return rows;
-      accepted = true;
-      return existing
-        ? rows.map(x => x.id === product.id ? { ...x, quantity: next } : x)
-        : [...rows, { ...product, quantity: roundQty(quantity) }];
-    });
-    if (!accepted) notify("warn", `สต๊อกไม่พอ · คงเหลือ ${product.stockQuantity} ${product.unit}`);
+    const rows = cartRef.current;
+    const existing = rows.find(x => x.id === product.id);
+    const current = existing?.quantity || 0;
+    const nextQuantity = roundQty(current + quantity);
+
+    if (product.stockQuantity >= 0 && nextQuantity > product.stockQuantity) {
+      notify("warn", `สต๊อกไม่พอ · คงเหลือ ${product.stockQuantity} ${product.unit}`);
+      focusScanner();
+      return;
+    }
+
+    const nextRows = existing
+      ? rows.map(x => x.id === product.id ? { ...x, quantity: nextQuantity } : x)
+      : [...rows, { ...product, quantity: roundQty(quantity) }];
+    replaceCart(nextRows);
     focusScanner();
   };
 
   const setQuantity = (line: CartLine, quantity: number) => {
-    const next = Math.max(0.001, roundQty(quantity));
-    if (next > line.stockQuantity) {
+    const nextQuantity = Math.max(0.001, roundQty(quantity));
+    if (nextQuantity > line.stockQuantity) {
       notify("warn", `สต๊อกไม่พอ · คงเหลือ ${line.stockQuantity} ${line.unit}`);
       return;
     }
-    setCart(rows => rows.map(x => x.id === line.id ? { ...x, quantity: next } : x));
+    replaceCart(cartRef.current.map(x => x.id === line.id ? { ...x, quantity: nextQuantity } : x));
     focusScanner();
   };
 
   const removeLine = async (line: CartLine) => {
-    setCart(rows => rows.filter(x => x.id !== line.id));
+    replaceCart(cartRef.current.filter(x => x.id !== line.id));
     focusScanner();
     try {
       await repo.recordCartItemRemoved(line, line.quantity, staff, shift, settings.deviceId);
@@ -94,10 +104,11 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
   };
 
   const resolveScan = async (raw: string, showUnknown = true) => {
-    const code = normalizeCode(raw);
-    if (!code) return;
+    const rawCode = cleanCode(raw);
+    const key = normalizeCode(rawCode);
+    if (!key) return;
 
-    const memoryProduct = productIndex.get(code);
+    const memoryProduct = productIndex.get(key);
     if (memoryProduct) {
       setScanValue("");
       addProduct(memoryProduct);
@@ -105,7 +116,7 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
     }
 
     try {
-      const found = await repo.findProductByBarcode(code) || await repo.findProductByCode(code);
+      const found = await repo.findProductByBarcode(rawCode) || await repo.findProductByCode(rawCode);
       if (found && found.active) {
         setScanValue("");
         addProduct(found);
@@ -119,19 +130,19 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
 
     if (showUnknown) {
       setScanValue("");
-      setUnknownBarcode(raw.trim());
+      setUnknownBarcode(rawCode);
     }
     focusScanner();
   };
 
   const onScanChange = (value: string) => {
     setScanValue(value);
-    const code = normalizeCode(value);
-    if (!code) return;
+    const key = normalizeCode(value);
+    if (!key) return;
 
-    // Known barcodes/SKUs are resolved from memory on the same input event.
-    // This avoids a SQLite round trip on every normal scanner read.
-    const found = productIndex.get(code);
+    // Normal registered scans are handled from the in-memory index on the same
+    // input event, so repeated scanner reads do not wait for SQLite queries.
+    const found = productIndex.get(key);
     if (found) {
       setScanValue("");
       addProduct(found);
@@ -140,10 +151,10 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
 
   useEffect(() => {
     if (unknownTimerRef.current !== null) window.clearTimeout(unknownTimerRef.current);
-    const code = normalizeCode(scanValue);
-    if (!code || code.length < 5 || productIndex.has(code)) return;
+    const key = normalizeCode(scanValue);
+    if (!key || key.length < 5 || productIndex.has(key)) return;
 
-    // Keyboard-wedge scanners usually send Enter. This short idle fallback also
+    // Most keyboard-wedge scanners send Enter. This short idle fallback also
     // supports scanners configured without an Enter suffix.
     unknownTimerRef.current = window.setTimeout(() => {
       void resolveScan(scanValue, true);
@@ -162,19 +173,13 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
   }, []);
 
   const completeSale = async (method: "cash" | "transfer", paid: number) => {
-    if (busy || !cart.length) return;
+    if (busy || !cartRef.current.length) return;
     setBusy(true);
     try {
-      const sale = await repo.checkout({
-        items: cart.map(line => ({ productId: line.id, name: productName(language, line), quantity: line.quantity, unitPrice: line.price })),
-        paymentMethod: method,
-        paid,
-        staff,
-        shift,
-        deviceId: settings.deviceId,
-      });
+      const items = cartRef.current.map(line => ({ productId: line.id, name: productName(language, line), quantity: line.quantity, unitPrice: line.price }));
+      const sale = await repo.checkout({ items, paymentMethod: method, paid, staff, shift, deviceId: settings.deviceId });
       const savedReceipt = await repo.getReceipt(sale.id);
-      setCart([]);
+      replaceCart([]);
       setQuickTender("");
       setPaymentChoice(false);
       setCashOpen(false);
@@ -280,7 +285,7 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
     {cashOpen && <CashPayment total={total} initialPaid={Number(quickTender || 0)} busy={busy} onClose={() => setCashOpen(false)} onConfirm={paid => completeSale("cash", paid)} />}
     {transferOpen && <TransferPayment total={total} busy={busy} onClose={() => setTransferOpen(false)} onConfirm={() => completeSale("transfer", total)} />}
     {receipt && <ReceiptView receipt={receipt} onClose={() => setReceipt(null)} />}
-    {cancelOpen && <CancelCart repo={repo} cart={cart} staff={staff} shift={shift} settings={settings} onClose={() => setCancelOpen(false)} onDone={() => { setCart([]); setCancelOpen(false); focusScanner(); }} />}
+    {cancelOpen && <CancelCart repo={repo} cart={cart} staff={staff} shift={shift} settings={settings} onClose={() => setCancelOpen(false)} onDone={() => { replaceCart([]); setCancelOpen(false); focusScanner(); }} />}
     {unknownBarcode && <SimpleModal title="ไม่พบสินค้า" onClose={() => { setUnknownBarcode(""); focusScanner(); }}><div className="grocery-unknown-code">{unknownBarcode}</div><p>ยังไม่มีบาร์โค้ด/SKU นี้ในฐานข้อมูลเครื่อง</p><div className="grocery-modal-actions"><button className="secondary-action" onClick={() => { setUnknownBarcode(""); focusScanner(); }}>ปิด</button><button onClick={() => { setQuickAddBarcode(unknownBarcode); setUnknownBarcode(""); }}>เพิ่มสินค้าใหม่</button></div></SimpleModal>}
     {quickAddBarcode !== null && <QuickAddProduct repo={repo} staff={staff} barcode={quickAddBarcode} onClose={() => { setQuickAddBarcode(null); focusScanner(); }} onSaved={async product => { setQuickAddBarcode(null); await refreshProducts(); addProduct(product); }} />}
   </section>;
