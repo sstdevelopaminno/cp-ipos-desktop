@@ -75,9 +75,13 @@ export type AppSettings = {
   address: string;
   phone: string;
   receiptFooter: string;
+  storeLogoPath: string;
   ownerName: string;
   ownerPinNote: string;
   printerType: string;
+  printerName: string;
+  printerPaperWidthMm: string;
+  printerConnectionNote: string;
   scannerMode: string;
   remoteManagementEnabled: boolean;
   language: Language;
