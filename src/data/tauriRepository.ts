@@ -21,9 +21,13 @@ const DEFAULT_SETTINGS: AppSettings = {
   address: "",
   phone: "",
   receiptFooter: "ขอบคุณที่ใช้บริการ",
+  storeLogoPath: "",
   ownerName: "Owner",
   ownerPinNote: "Demo-only owner PIN. Secure hashing is a later task.",
-  printerType: "ยังไม่ได้ตั้งค่าเครื่องพิมพ์",
+  printerType: "windows-print-dialog",
+  printerName: "",
+  printerPaperWidthMm: "80",
+  printerConnectionNote: "เลือกเครื่องพิมพ์ 80mm ผ่าน Windows Print Dialog ในการพิมพ์ครั้งแรก",
   scannerMode: "keyboard-wedge",
   remoteManagementEnabled: false,
   language: "th",
@@ -196,7 +200,7 @@ export class TauriRepository implements PosRepository {
   async listEmployees() { const db=await this.conn(); const rows=await db.select<DbStaff[]>("SELECT id,code,display_name,role,active FROM staff ORDER BY active DESC, code"); return rows.map(r=>this.staff(r)); }
   async saveEmployee(input:EmployeeInput, staff:Staff) { const db=await this.conn(); const id=input.id || crypto.randomUUID(); await db.execute("INSERT INTO staff(id,code,display_name,role,pin_demo,active) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(id) DO UPDATE SET code=excluded.code,display_name=excluded.display_name,role=excluded.role,pin_demo=COALESCE(excluded.pin_demo,staff.pin_demo),active=excluded.active", [id,input.code,input.displayName,input.role,input.demoPin || null,input.active?1:0]); await this.audit(input.id?"EMPLOYEE_UPDATED":"EMPLOYEE_CREATED", staff, {entityType:"employee",entityId:id}); const rows=await db.select<DbStaff[]>("SELECT id,code,display_name,role,active FROM staff WHERE id=$1", [id]); return this.staff(rows[0]); }
   async getSettings() { const db=await this.conn(); await this.ensureSettings(db); const rows=await db.select<Array<{key:string;value:string}>>("SELECT key,value FROM app_settings"); return this.rowsToSettings(rows); }
-  async updateSettings(settings:AppSettings, staff:Staff) { const db=await this.conn(); for(const [key,value] of Object.entries(this.settingsToRows(settings))) await db.execute("INSERT INTO app_settings(key,value,updated_at) VALUES($1,$2,CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=CURRENT_TIMESTAMP", [key,value]); await this.audit("SETTINGS_CHANGED", staff, {entityType:"settings",entityId:"local",details:JSON.stringify({language:settings.language})}); return settings; }
+  async updateSettings(settings:AppSettings, staff:Staff) { const db=await this.conn(); for(const [key,value] of Object.entries(this.settingsToRows(settings))) await db.execute("INSERT INTO app_settings(key,value,updated_at) VALUES($1,$2,CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=CURRENT_TIMESTAMP", [key,value]); await this.audit("SETTINGS_CHANGED", staff, {entityType:"settings",entityId:"local",details:JSON.stringify({language:settings.language,printerName:settings.printerName})}); return settings; }
   async getStorageHealth() { const db=await this.conn(); const metrics=await invoke<Omit<StorageHealth,"salesCount"|"auditCount"|"oldestSale"|"newestSale">>("get_local_storage_metrics"); const sales=await db.select<Array<{count:number;oldest?:string|null;newest?:string|null}>>("SELECT COUNT(*) as count, MIN(created_at) as oldest, MAX(created_at) as newest FROM sales"); const audit=await db.select<Array<{count:number}>>("SELECT COUNT(*) as count FROM audit_events"); return {...metrics,salesCount:Number(sales[0]?.count || 0),auditCount:Number(audit[0]?.count || 0),oldestSale:sales[0]?.oldest || undefined,newestSale:sales[0]?.newest || undefined}; }
   async getAppVersion() { return "0.1.0"; }
 }
