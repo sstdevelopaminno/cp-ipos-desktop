@@ -6,21 +6,12 @@
 }
 
 .grocery-scan-zone-with-qty .grocery-scan-title{
-  display:flex;
-  align-items:flex-start;
-  gap:10px;
+  display:block;
 }
 
 .grocery-scan-zone-with-qty .grocery-scan-title::before{
-  content:"";
-  width:34px;
-  height:34px;
-  flex:0 0 auto;
-  border-radius:12px;
-  background:
-    linear-gradient(180deg,rgba(255,255,255,.92),rgba(255,255,255,.55)),
-    url("/icon.png") center / 24px 24px no-repeat;
-  box-shadow:0 10px 24px rgba(13,153,107,.14);
+  display:none!important;
+  content:none!important;
 }
 
 .grocery-scan-zone-with-qty .grocery-scan-title strong{
