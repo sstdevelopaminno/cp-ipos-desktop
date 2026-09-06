@@ -25,7 +25,13 @@ const DEFAULT_SETTINGS: AppSettings = {
   remoteManagementEnabled:false,
   language:"th"
 };
-const read = <T,>(key:string, fallback:T):T => { const v=localStorage.getItem(key); return v?{...fallback,...JSON.parse(v)} as T:fallback; };
+const read = <T,>(key:string, fallback:T):T => {
+  const v=localStorage.getItem(key);
+  if(!v) return fallback;
+  const parsed = JSON.parse(v) as T;
+  const canMerge = fallback && typeof fallback === "object" && !Array.isArray(fallback) && parsed && typeof parsed === "object" && !Array.isArray(parsed);
+  return canMerge ? { ...(fallback as Record<string, unknown>), ...(parsed as Record<string, unknown>) } as T : parsed;
+};
 const write = (key:string, value:unknown) => localStorage.setItem(key, JSON.stringify(value));
 const money = (n:number) => Math.round((Number(n)||0)*100)/100;
 const qty = (n:number) => Math.round((Number(n)||0)*1000)/1000;
