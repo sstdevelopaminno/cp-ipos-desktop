@@ -130,6 +130,12 @@ pub fn run() {
             sql: include_str!("../migrations/0004_grocery_stock_precision.sql"),
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 5,
+            description: "sale_discount_metadata",
+            sql: include_str!("../migrations/0005_sale_discounts.sql"),
+            kind: MigrationKind::Up,
+        },
     ];
 
     tauri::Builder::default()
