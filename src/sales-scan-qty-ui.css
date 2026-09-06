@@ -1,12 +1,12 @@
 .grocery-scan-zone-with-qty{
-  padding:12px 14px 10px;
+  padding:10px 14px 10px;
   background:
-    radial-gradient(circle at 98% 0%,rgba(13,153,107,.12),transparent 26%),
+    radial-gradient(circle at 98% 0%,rgba(13,153,107,.10),transparent 26%),
     linear-gradient(180deg,#eafff4,#f5fdf9)!important;
 }
 
 .grocery-scan-zone-with-qty .grocery-scan-title{
-  display:block;
+  display:none!important;
 }
 
 .grocery-scan-zone-with-qty .grocery-scan-title::before{
@@ -14,15 +14,9 @@
   content:none!important;
 }
 
-.grocery-scan-zone-with-qty .grocery-scan-title strong{
-  font-size:18px;
-  letter-spacing:.01em;
-}
-
+.grocery-scan-zone-with-qty .grocery-scan-title strong,
 .grocery-scan-zone-with-qty .grocery-scan-title small{
-  max-width:740px;
-  font-size:12.5px;
-  line-height:1.45;
+  display:none!important;
 }
 
 .grocery-scan-row-with-qty{
@@ -246,11 +240,8 @@
 }
 
 @media(max-height:760px){
-  .grocery-scan-title small{
-    display:none;
-  }
   .grocery-scan-row-with-qty{
-    margin-top:6px;
+    margin-top:0;
   }
   .nav-bottom-actions button{
     min-height:48px;
