@@ -31,27 +31,50 @@ fn dir_size(path: &Path) -> u64 {
 }
 
 #[tauri::command]
-fn save_product_image<R: Runtime>(app: tauri::AppHandle<R>, file_name: String, bytes: Vec<u8>) -> Result<String, String> {
+fn save_product_image<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    file_name: String,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
     let clean = file_name
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
         .collect::<String>();
-    let safe_name = if clean.is_empty() { "product.png".to_string() } else { clean };
-    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("media").join("products");
+    let safe_name = if clean.is_empty() {
+        "product.png".to_string()
+    } else {
+        clean
+    };
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("media")
+        .join("products");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let relative = format!("media/products/{}-{}", chrono_like_stamp(), safe_name);
-    let path = app.path().app_data_dir().map_err(|e| e.to_string())?.join(&relative);
+    let path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join(&relative);
     fs::write(path, bytes).map_err(|e| e.to_string())?;
     Ok(relative)
 }
 
 fn chrono_like_stamp() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis().to_string()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .to_string()
 }
 
 #[tauri::command]
-fn get_local_storage_metrics<R: Runtime>(app: tauri::AppHandle<R>) -> Result<LocalStorageMetrics, String> {
+fn get_local_storage_metrics<R: Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<LocalStorageMetrics, String> {
     let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let database = app_dir.join("cpipos.db");
     let media = app_dir.join("media");
@@ -94,10 +117,17 @@ pub fn run() {
             description: "retail_core_foundation",
             sql: include_str!("../migrations/0002_retail_core_foundation.sql"),
             kind: MigrationKind::Up,
-        },        Migration {
+        },
+        Migration {
             version: 3,
             description: "retail_localization_voids",
             sql: include_str!("../migrations/0003_retail_localization_voids.sql"),
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 4,
+            description: "grocery_stock_precision",
+            sql: include_str!("../migrations/0004_grocery_stock_precision.sql"),
             kind: MigrationKind::Up,
         },
     ];
@@ -108,7 +138,11 @@ pub fn run() {
                 .add_migrations("sqlite:cpipos.db", migrations)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![save_product_image, get_local_storage_metrics, complete_startup_splash])
+        .invoke_handler(tauri::generate_handler![
+            save_product_image,
+            get_local_storage_metrics,
+            complete_startup_splash
+        ])
         .run(tauri::generate_context!())
         .expect("error while running CpIPOS Desktop");
 }
