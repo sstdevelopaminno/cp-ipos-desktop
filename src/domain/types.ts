@@ -3,6 +3,7 @@ export type PaymentMethod = "cash" | "transfer" | "promptpay" | "card";
 export type SaleStatus = "completed" | "cancelled";
 export type Language = "th" | "en";
 export type StockMovementType = "STOCK_IN" | "SALE" | "STOCK_OUT" | "ADJUSTMENT" | "SALE_VOID_RETURN";
+export type DiscountType = "amount" | "percent";
 
 export type Product = {
   id: string;
@@ -54,7 +55,15 @@ export type Sale = {
   cancelledReason?: string;
 };
 
-export type Receipt = Sale & { items: SaleItem[]; settings: AppSettings; receiptLabel?: string };
+export type Receipt = Sale & {
+  items: SaleItem[];
+  settings: AppSettings;
+  receiptLabel?: string;
+  subtotal?: number;
+  discountAmount?: number;
+  discountType?: DiscountType;
+  discountValue?: number;
+};
 
 export type AppSettings = {
   storeName: string;
