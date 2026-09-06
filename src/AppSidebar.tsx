@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import "./retail-ui.css";
 
 type NavItem = { id: string; label: string; icon: "sale" | "stock" | "history" | "report" | "staff" | "settings" };
@@ -10,7 +11,7 @@ type Props = {
   onSelect: (id: string) => void;
 };
 
-const paths: Record<NavItem["icon"], JSX.Element> = {
+const paths: Record<NavItem["icon"], ReactNode> = {
   sale: <><path d="M4 6h16v12H4z"/><path d="M8 10h8M8 14h5"/></>,
   stock: <><path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5z"/><path d="M12 12 4 7.5M12 12l8-4.5M12 12v9"/></>,
   history: <><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5M12 7v5l3 2"/></>,
