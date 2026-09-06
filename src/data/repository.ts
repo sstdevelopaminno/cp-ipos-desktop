@@ -1,12 +1,26 @@
-﻿import type { AppSettings, AuditEvent, PaymentMethod, Product, Receipt, Sale, SalesSummary, Shift, Staff, StockMovement, StockMovementType, StorageHealth } from "../domain/types";
+﻿import type { AppSettings, AuditEvent, DiscountType, PaymentMethod, Product, Receipt, Sale, SalesSummary, Shift, Staff, StockMovement, StockMovementType, StorageHealth } from "../domain/types";
+
+export type CheckoutItemInput = {
+  productId: string;
+  name: string;
+  quantity: number;
+  unitPrice: number;
+  originalUnitPrice?: number;
+  discountType?: DiscountType | "none";
+  discountValue?: number;
+};
 
 export type CheckoutInput = {
-  items: { productId: string; name: string; quantity: number; unitPrice: number }[];
+  items: CheckoutItemInput[];
   paymentMethod: PaymentMethod;
   paid: number;
   staff: Staff;
   shift: Shift;
   deviceId: string;
+  subtotal?: number;
+  discountAmount?: number;
+  discountType?: DiscountType;
+  discountValue?: number;
 };
 
 export type SaleFilters = { todayOnly?: boolean; date?: string; paymentMethod?: PaymentMethod | "all"; receipt?: string; status?: "completed" | "cancelled" | "all" };
