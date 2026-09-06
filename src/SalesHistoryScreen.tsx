@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { PosRepository } from "./data/repository";
-import type { AppSettings, Language, Receipt, Sale, Shift, Staff } from "./domain/types";
+import type { AppSettings, Language, Receipt, Sale, SaleItem, Shift, Staff } from "./domain/types";
 import { t } from "./i18n";
 import "./sales-history-ui.css";
+import "./sales-receipt-ui.css";
 
 type Period = "day" | "month" | "year" | "all";
 type StatusFilter = "all" | "completed" | "cancelled";
 
 const SYSTEM_LOGO = "/icon.png";
-const money = (n: number) => `฿${Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const moneyNumber = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
+const money = (n: number) => `฿${moneyNumber(n).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const today = () => new Date().toISOString().slice(0, 10);
 const currentMonth = () => new Date().toISOString().slice(0, 7);
 const currentYear = () => String(new Date().getFullYear());
@@ -147,7 +149,7 @@ export function SalesHistoryScreenV2({ repo, staff, shift, settings, language }:
   </section>;
 }
 
-function VoidSaleDialog({ repo, sale, staff, shift, settings, language, onClose, onDone }: { repo: PosRepository; sale: Sale; staff: Staff; shift: Shift; settings: AppSettings; language: Language; onClose: () => void; onDone: () => void }) {
+function VoidSaleDialog({ repo, sale, staff, shift, settings, language, onClose, onDone }: { repo: PosRepository; sale: Sale; staff: Staff; shift: Shift; settings: AppSettings; language: Language; onClose: () => void; onDone: () => Promise<void> | void }) {
   const [pin, setPin] = useState("");
   const [reason, setReason] = useState("");
   const [restock, setRestock] = useState(true);
@@ -158,7 +160,7 @@ function VoidSaleDialog({ repo, sale, staff, shift, settings, language, onClose,
       setBusy(true);
       setError("");
       await repo.voidSale({ saleId: sale.id, pin, reason, restock, staff, shift, deviceId: settings.deviceId });
-      onDone();
+      await onDone();
     } catch (e) {
       setError(e instanceof Error ? e.message : "ยกเลิกบิลไม่สำเร็จ");
       setBusy(false);
@@ -178,29 +180,50 @@ function VoidSaleDialog({ repo, sale, staff, shift, settings, language, onClose,
 }
 
 function ReceiptDialog({ receipt, language, onClose }: { receipt: Receipt; language: Language; onClose: () => void }) {
+  const subtotal = receipt.subtotal ?? moneyNumber(receipt.items.reduce((sum, item) => sum + Math.max(0, Number(item.lineTotal || 0)), 0));
+  const discountAmount = receipt.discountAmount ?? moneyNumber(Math.max(0, subtotal - Number(receipt.total || 0)));
   const logoSrc = receipt.settings.storeLogoPath || SYSTEM_LOGO;
-  return <Modal title={`ใบเสร็จ ${receipt.receiptNo}`} onClose={onClose}>
-    <div className="sales-receipt-preview">
-      <div className="receipt-logo-wrap"><img src={logoSrc} alt="โลโก้ใบเสร็จ" onError={e => { e.currentTarget.src = SYSTEM_LOGO; }} /></div>
-      <h2>{receipt.settings.receiptHeader || receipt.settings.storeName}</h2>
-      <p>{receipt.settings.branchName}</p>
-      {receipt.settings.address && <p>{receipt.settings.address}</p>}
-      {receipt.settings.phone && <p>โทร {receipt.settings.phone}</p>}
-      <p>{receipt.receiptNo}</p>
-      <p>{localDate(receipt.createdAt)}</p>
-      {receipt.items.map(i => <div className="receipt-line" key={i.id || i.name}><span>{i.name} × {i.quantity}</span><span>{money(i.lineTotal)}</span></div>)}
-      <hr />
-      <div className="receipt-line"><strong>{t(language, "total")}</strong><strong>{money(receipt.total)}</strong></div>
-      <p>{paymentLabel(language, receipt.paymentMethod)} · {statusLabel(language, receipt.status)}</p>
-      <p>{receipt.settings.receiptFooter}</p>
+  const printerWidth = receipt.settings.printerPaperWidthMm || "80";
+  const print80 = () => window.print();
+  return <Modal title={`ใบเสร็จ ${receipt.receiptNo}`} onClose={onClose} className="sales-history-receipt-modal">
+    <div className="history-receipt-preview-shell">
+      <div className="history-receipt-paper" data-paper-mm={printerWidth}>
+        <div className="history-receipt-logo"><img src={logoSrc} alt="โลโก้ใบเสร็จ" onError={e => { e.currentTarget.src = SYSTEM_LOGO; }} /></div>
+        <h2>{receipt.settings.receiptHeader || receipt.settings.storeName}</h2>
+        <p>{receipt.settings.branchName}</p>
+        {receipt.settings.address && <p>{receipt.settings.address}</p>}
+        {receipt.settings.phone && <p>โทร {receipt.settings.phone}</p>}
+        {receipt.settings.taxId && <p>เลขประจำตัวผู้เสียภาษี {receipt.settings.taxId}</p>}
+        <div className="history-receipt-meta"><span>เลขที่ {receipt.receiptNo}</span><span>{localDate(receipt.createdAt)}</span><span>พนักงาน {receipt.cashierName || "-"}</span></div>
+        <div className="history-receipt-rule" />
+        <div className="history-receipt-items">{receipt.items.map((item, index) => <ReceiptItemRow item={item} key={`${item.id || item.name}-${index}`} />)}</div>
+        <div className="history-receipt-rule" />
+        {discountAmount > 0 && <div className="history-receipt-line"><span>ยอดสินค้า</span><strong>{money(subtotal)}</strong></div>}
+        {discountAmount > 0 && <div className="history-receipt-line discount"><span>ส่วนลด{receipt.discountType === "percent" && receipt.discountValue ? ` (${receipt.discountValue}%)` : ""}</span><strong>−{money(discountAmount)}</strong></div>}
+        <div className="history-receipt-total"><span>ยอดสุทธิ</span><strong>{money(receipt.total)}</strong></div>
+        <div className="history-receipt-payment"><div><span>ชำระโดย</span><strong>{paymentLabel(language, receipt.paymentMethod)}</strong></div><div><span>รับเงิน</span><strong>{money(receipt.paid)}</strong></div><div><span>เงินทอน</span><strong>{money(receipt.changeAmount)}</strong></div></div>
+        {receipt.status === "cancelled" && <div className="history-receipt-void"><strong>VOID</strong><span>{receipt.cancelledReason || "บิลนี้ถูกยกเลิกแล้ว"}</span></div>}
+        {receipt.settings.receiptFooter && <p className="history-receipt-footer">{receipt.settings.receiptFooter}</p>}
+      </div>
     </div>
-    <div className="actions modal-footer"><button className="secondary" onClick={onClose}>ปิด</button><button onClick={() => window.print()}>พิมพ์ใบเสร็จ</button></div>
+    <div className="history-receipt-actions"><button className="secondary" onClick={onClose}>ปิด</button><button onClick={print80}>พิมพ์ใบเสร็จ 80mm</button></div>
   </Modal>;
+}
+
+function ReceiptItemRow({ item }: { item: SaleItem }) {
+  return <div className="history-receipt-item">
+    <div><strong>{item.name}</strong><span>{item.quantity} × {money(item.unitPrice)}</span></div>
+    <strong>{money(item.lineTotal)}</strong>
+  </div>;
 }
 
 function EmptyState({ text }: { text: string }) { return <div className="empty-state">{text}</div>; }
 function ErrorMessage({ text }: { text: string }) { return <p className="error-message">{text}</p>; }
-function Modal({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
-  useEffect(() => { const f = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); }; window.addEventListener("keydown", f); return () => window.removeEventListener("keydown", f); }, [onClose]);
-  return <div className="modal-backdrop"><section className="modal"><header><h2>{title}</h2><button onClick={onClose}>×</button></header>{children}</section></div>;
+function Modal({ title, children, onClose, className = "" }: { title: string; children: ReactNode; onClose: () => void; className?: string }) {
+  useEffect(() => {
+    const f = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", f);
+    return () => window.removeEventListener("keydown", f);
+  }, [onClose]);
+  return <div className="modal-backdrop"><section className={`modal ${className}`}><header><h2>{title}</h2><button onClick={onClose}>×</button></header>{children}</section></div>;
 }
