@@ -49,6 +49,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [splashStep, setSplashStep] = useState(0);
   const [closeShift, setCloseShift] = useState(false);
+  const [logoutOpen, setLogoutOpen] = useState(false);
   const [navCollapsed, setNavCollapsed] = useState(() => localStorage.getItem("cpipos.nav.collapsed") === "1");
   const [clock, setClock] = useState(nowTime());
   const language: Language = settings?.language || "th";
@@ -108,7 +109,7 @@ export default function App() {
   ];
 
   return <main className={`app-shell ${navCollapsed ? "nav-collapsed" : ""}`}>
-    <AppSidebar collapsed={navCollapsed} active={view} items={nav} onToggle={() => setNavCollapsed(v => !v)} onSelect={id => setView(id as View)} />
+    <AppSidebar collapsed={navCollapsed} active={view} items={nav} onToggle={() => setNavCollapsed(v => !v)} onSelect={id => setView(id as View)} onCloseShift={() => setCloseShift(true)} onLogout={() => setLogoutOpen(true)} />
     <section className="workspace">
       <header className="topbar">
         <div><strong>CpIPOS</strong><span>{settings.storeName} / {settings.branchName}</span></div>
@@ -124,6 +125,7 @@ export default function App() {
       </div>
     </section>
     {closeShift && <CloseShiftModal repo={repo} staff={staff} shift={shift} settings={settings} language={language} onClose={() => setCloseShift(false)} onConfirm={async () => { await repo.closeShift(staff, settings.deviceId); await repo.clearSession(staff, shift, settings.deviceId); setCloseShift(false); setShift(null); setStaff(null); }} />}
+    {logoutOpen && <LogoutModal repo={repo} staff={staff} shift={shift} settings={settings} onClose={() => setLogoutOpen(false)} onConfirm={async () => { await repo.clearSession(staff, shift, settings.deviceId); setLogoutOpen(false); setView("sales"); setStaff(null); }} />}
   </main>;
 }
 
@@ -177,6 +179,15 @@ function SettingsScreen({ repo, staff, settings, language, refreshSettings }: { 
     {section === "receipt" && <div className="form-grid"><label>ชื่อหัวใบเสร็จ<input value={form.receiptHeader} onChange={e => set("receiptHeader", e.target.value)} /></label><label>ข้อความท้ายใบเสร็จ<input value={form.receiptFooter} onChange={e => set("receiptFooter", e.target.value)} /></label><label>ที่อยู่บนใบเสร็จ<textarea value={form.address} onChange={e => set("address", e.target.value)} /></label><label>เบอร์โทรบนใบเสร็จ<input value={form.phone} onChange={e => set("phone", e.target.value)} /></label><label>เลขผู้เสียภาษี<input value={form.taxId} onChange={e => set("taxId", e.target.value)} /></label></div>}
     {section === "printer" && <div className="printer-setup-card"><strong>ตั้งค่าเครื่องพิมพ์ใบเสร็จ 80mm</strong><p className="warning">โหมดนี้ใช้ Windows Print Dialog เพื่อเลือกเครื่องพิมพ์จริงที่ติดตั้งใน Windows แล้ว เช่น thermal printer 80mm. ตั้งค่าครั้งแรกแล้ว Windows จะจำค่าเครื่องพิมพ์ตามระบบ</p><div className="form-grid"><label>ชื่อเครื่องพิมพ์<input placeholder="เช่น XP-80C / POS-80 / Rongta 80mm" value={form.printerName} onChange={e => set("printerName", e.target.value)} /></label><label>ชนิดการพิมพ์<select value={form.printerType} onChange={e => set("printerType", e.target.value)}><option value="windows-print-dialog">Windows Print Dialog</option><option value="not-configured">ยังไม่ได้ตั้งค่า</option></select></label><label>ขนาดกระดาษ<select value={form.printerPaperWidthMm} onChange={e => set("printerPaperWidthMm", e.target.value)}><option value="80">80mm</option><option value="58">58mm</option></select></label><label>หมายเหตุการเชื่อมต่อ<input value={form.printerConnectionNote} onChange={e => set("printerConnectionNote", e.target.value)} /></label></div><p>เมื่อกดปุ่ม <strong>พิมพ์ใบเสร็จ 80mm</strong> ระบบจะเปิดหน้าต่างพิมพ์ของ Windows ให้เลือกเครื่องพิมพ์จริง</p></div>}
     {section === "scanner" && <p>{form.scannerMode}</p>}{section === "storage" && <StoragePanel health={health} />} {['backup', 'remote'].includes(section) && <p className="warning">{t(language, "notReady")}</p>} {section === "owner" && <p className="warning">{t(language, "demoPin")}</p>} {section === "about" && <p>CpIPOS Desktop 0.1.0</p>}<p className="warning">{t(language, "recordOnly")}</p><button onClick={() => void save()}>{t(language, "save")}</button></div></section>;
+}
+
+function LogoutModal({ repo, staff, shift, settings, onClose, onConfirm }: { repo: PosRepository; staff: Staff; shift: Shift; settings: AppSettings; onClose: () => void; onConfirm: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  return <Modal title="ล็อคเอาท์" onClose={busy ? () => {} : onClose}>
+    <div className="logout-confirm-card"><div className="logout-confirm-icon">↪</div><div><strong>ออกจากผู้ใช้งานปัจจุบัน?</strong><p>ระบบจะกลับไปหน้าใส่รหัสพนักงาน แต่กะขายปัจจุบันยังเปิดอยู่ ถ้าต้องการปิดรอบขายให้ใช้เมนู “ปิดยอด”</p></div></div>
+    <div className="info-grid"><Metric label="แคชเชียร์" value={staff.displayName} /><Metric label="สาขา" value={settings.branchName} /><Metric label="กะปัจจุบัน" value={shift.id.slice(0, 8)} /></div>
+    <div className="actions"><button disabled={busy} onClick={async () => { setBusy(true); await onConfirm(); }}>{busy ? "กำลังออกจากระบบ..." : "ยืนยันล็อคเอาท์"}</button><button className="secondary" disabled={busy} onClick={onClose}>กลับ</button></div>
+  </Modal>;
 }
 
 function CloseShiftModal({ repo, staff, shift, settings, language, onClose, onConfirm }: { repo: PosRepository; staff: Staff; shift: Shift; settings: AppSettings; language: Language; onClose: () => void; onConfirm: () => Promise<void> }) {
