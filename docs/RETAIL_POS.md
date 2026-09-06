@@ -1,25 +1,39 @@
-# Retail POS Foundation
+﻿# Retail POS Foundation
 
 CpIPOS Desktop is offline-first. Sales, barcode lookup, product management, stock movements, receipts and reports read and write local SQLite data.
 
-## Startup
+## Startup and shift flow
 
-The application launches with the CpIPOS logo, initializes local database/settings, restores a saved local employee session when present, validates the active shift, then opens Sales. Without a valid local session it shows PIN login first. Without an active shift it shows the shift screen before Sales.
+The application launches with the CpIPOS logo on every start, initializes local database/settings, restores a saved local employee session when present, validates the active shift, then opens Sales. Without a valid local session it shows PIN login first. Without an active shift it shows the shift screen before Sales.
 
-## Sales
+Closing the Windows app does not close the shift. Closing shift is explicit: Sales -> Close Shift -> Shift Summary -> Confirm Close Shift -> persist closed shift -> clear employee POS session -> Login.
 
-The Sales screen supports product grid selling and keyboard-wedge barcode scanning. A scanned barcode is looked up locally. Found products are added to the cart or incremented. Unknown barcodes show a local popup and can route the cashier to product creation.
+## Products and barcode
 
-## Cart
+Product create/edit uses a large touch-friendly modal. User-facing fields are product code, barcode, Thai name, optional English name, category, selling price, cost, unit, current stock, minimum stock, image reference and active flag. UUIDs are internal and not shown as the product code.
 
-Cart rows support quantity increase, decrease and remove. Removing an item records a `CART_ITEM_REMOVED` audit event. Cancelling a bill requires employee PIN re-authentication, Owner or Manager role, a reason and confirmation. The app stores a cancellation/audit record before clearing the cart.
+Barcode scanner input is keyboard-wedge with Enter. Values are normalized before lookup. Duplicate barcode assignment is blocked locally; the UI shows the existing product and can open it for editing. Barcode and product code indexes live in SQLite.
+
+Supported grocery units include piece-like Thai units plus `kg`, `g`, `liter` and `ml`. Quantity uses decimal values to support weighted goods; money is rounded to two decimals.
+
+## Cart and stock accuracy
+
+Adding to cart does not decrement stock. Removing cart items and cancelling a pre-payment cart write audit records only. Stock decrements after final checkout commit. Successful checkout records sale, sale items, payment, receipt, stock movement and audit data locally.
+
+Stock is treated as a ledger. Historical movement rows are not rewritten. Manual movement types are `STOCK_IN`, `STOCK_OUT` and `ADJUSTMENT`; sale flows add `SALE`; returned goods from voided sales add `SALE_VOID_RETURN`.
 
 ## Payment
 
-Cash opens a numeric keypad modal. Confirmation is disabled until received amount is at least the total. Change is calculated from local integer-rounded money values.
+Cash requires the received amount to be at least the total and calculates change locally.
 
-Transfer opens a manual confirmation modal. It records `payment_method = transfer`, paid amount equal to total and an explicit cashier warning. It does not verify PromptPay, bank transfer, card terminal or payment gateway receipt.
+Transfer, PromptPay and Card in V0.1 are payment-method recording only. They do not verify that money was actually received from a bank, PromptPay gateway, card terminal or payment gateway.
 
-## Receipt
+## Receipt and history
 
-A successful sale opens a receipt modal. Reprint opens the same receipt from persisted SQLite sales and sale_items data. Printer hardware is not implemented; print buttons are clearly shown as not configured.
+A successful sale opens a Unicode-safe local receipt modal. Reprint loads the same sale from SQLite. Labels are localizable for Thai/English. Thermal Thai font and printer hardware behavior remain later hardware work.
+
+Sales history keeps the original completed sale. Voiding a completed sale requires authorized PIN and reason, marks the sale cancelled, writes audit, and optionally creates returned-stock ledger movements.
+
+## Verification targets
+
+Development verification should cover splash on launch, login, shift gate, close/relaunch session behavior, close-shift-to-login, product modal, duplicate barcode block, Thai text persistence after restart, cart scan no-stock-change, completed sale stock decrement once, failed checkout/cancel no-stock-change, sale void return movement, language switch and no external Internet/Supabase/Vercel dependency.

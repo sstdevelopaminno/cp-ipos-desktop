@@ -1,4 +1,4 @@
-# CpIPOS Desktop
+﻿# CpIPOS Desktop
 
 Standalone Windows offline-first POS. This repository remains separate from CpIPOS Web and must not depend on Supabase, Vercel or any cloud API to complete a local sale.
 
@@ -6,17 +6,15 @@ Status: development prototype, not production-ready.
 
 ## Current foundation
 
-- Tauri 2 Windows shell with React, TypeScript and Vite.
-- SQLite local database through `@tauri-apps/plugin-sql`.
-- CpIPOS branded splash, login, shift validation and desktop navigation.
-- Sales screen with product grid and keyboard-wedge barcode scanning.
-- Cart increase, decrease, remove and cancel-bill approval flow.
-- Cash payment modal with numeric keypad and change calculation.
-- Transfer payment records cashier manual confirmation only. It does not verify bank or gateway receipt.
-- Receipt modal and reprint from persisted SQLite sale data.
-- Sales history, daily reports, product management, stock movement history, employee management and local settings.
+- Tauri 2 Windows shell with React, TypeScript, Vite and local SQLite.
+- CpIPOS branded splash on every launch, PIN login, shift gate and desktop navigation.
+- Sales screen with product grid, keyboard-wedge barcode scan, cart quantity editing and local-only checkout.
+- Product create/edit uses a touch-friendly modal with user-editable `product_code`, barcode, Thai/English names, grocery units, stock limits, image reference and active flag.
+- Barcode and product-code uniqueness are checked locally. Duplicate barcode lookup opens the existing product instead of assigning the same barcode twice.
+- Cart actions do not decrement stock. Stock decrements only when a sale is successfully completed and recorded locally.
+- Cash, transfer, PromptPay and card are stored as payment methods. PromptPay and card in V0.1 are payment-method recording only and do not verify that money was received from any gateway.
+- Receipt modal, receipt reprint, sales history, daily reports, stock ledger, employee foundation, settings, language switch and local audit history are available for development verification.
 - Product images are stored as local media references under app data `media/products/`, not as large binaries in product rows.
-- Local audit history for login, shift, sale, cancellation, product, stock and settings actions.
 
 ## Run on Windows
 
@@ -35,11 +33,11 @@ npm run desktop:build
 
 ## Payment rules
 
-Cash is a local cash transaction. Transfer is manual payment-method recording by the cashier. PromptPay, transfer and card flows do not verify money received from a bank, card terminal or payment gateway.
+Cash is a local cash transaction. Transfer, PromptPay and Card in V0.1 are payment-method recording only. They do not verify bank transfer, PromptPay status, card terminal approval or gateway receipt.
 
 ## Security note
 
-The current development PIN is temporary/demo-only and is not secure production authentication. Secure PIN hashing remains a separate required task before production use.
+The current development PIN is temporary/demo-only and must not be considered secure authentication. Secure PIN hashing remains a required Phase 1 task before production use.
 
 ## Documentation
 

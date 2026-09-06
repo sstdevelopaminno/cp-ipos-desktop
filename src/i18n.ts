@@ -1,0 +1,20 @@
+﻿import type { Language } from "./domain/types";
+
+export const dict = {
+  th: {
+    sales:"ขาย", products:"สินค้าและสต็อก", history:"รายการขาย", reports:"รายงาน", employees:"พนักงาน", settings:"ตั้งค่า",
+    loading:"กำลังเริ่มฐานข้อมูลและการตั้งค่า", dbError:"เปิดฐานข้อมูลไม่สำเร็จ", loginTitle:"เข้าสู่ระบบขายหน้าร้าน", loginHint:"PIN ปัจจุบันเป็นเดโมชั่วคราวเท่านั้น ยังไม่ใช่ระบบยืนยันตัวตนที่ปลอดภัย", pinWrong:"PIN ไม่ถูกต้อง",
+    openShift:"เปิดกะการขาย", openingCash:"เงินสดตั้งต้น", open:"เปิดกะ", offlineReady:"OFFLINE READY", closeShift:"ปิดกะ", closeShiftTitle:"สรุปก่อนปิดกะ", confirmCloseShift:"ยืนยันปิดกะ", closedToLogin:"ปิดกะแล้ว กลับไปหน้าเข้าสู่ระบบ",
+    scan:"สแกนบาร์โค้ด", search:"ค้นหา", all:"ทั้งหมด", cart:"ตะกร้า", emptyCart:"ยังไม่มีสินค้า", pay:"ชำระเงิน", cancelBill:"ยกเลิกบิล", total:"รวม", cash:"เงินสด", transfer:"โอน", promptpay:"PromptPay", card:"บัตร", recordOnly:"บันทึกวิธีรับชำระเท่านั้น ยังไม่ยืนยันเงินจาก Gateway", received:"รับเงิน", change:"เงินทอน", confirm:"ยืนยัน", close:"ปิด", save:"บันทึก", edit:"แก้ไข", addProduct:"เพิ่มสินค้า", openExisting:"เปิดสินค้านี้", duplicateBarcode:"บาร์โค้ดซ้ำกับสินค้าเดิม", duplicateCode:"รหัสสินค้าซ้ำ", productCode:"รหัสสินค้า", barcode:"บาร์โค้ด", nameTh:"ชื่อไทย", nameEn:"ชื่ออังกฤษ", category:"หมวดหมู่", price:"ราคาขาย", cost:"ต้นทุน", unit:"หน่วย", stock:"คงเหลือ", minStock:"ขั้นต่ำ", active:"เปิดขาย", image:"รูปสินค้า", stockIn:"รับเข้า", stockOut:"ตัดออก", adjustment:"ปรับยอด", reason:"เหตุผล", voidSale:"Void บิล", restockReturned:"รับสินค้ากลับเข้าสต็อก", language:"ภาษา", thai:"ไทย", english:"English", receipt:"ใบเสร็จ", reprint:"พิมพ์ซ้ำ", saleStored:"บันทึกขายใน SQLite แล้ว", noInternet:"ไม่ต้องใช้อินเทอร์เน็ต/Supabase/Vercel สำหรับธุรกรรมนี้", storage:"พื้นที่จัดเก็บ", audit:"Audit", demoPin:"PIN เดโมชั่วคราว ห้ามถือว่าเป็น auth ที่ปลอดภัย"
+  },
+  en: {
+    sales:"Sales", products:"Products & Stock", history:"Sales History", reports:"Reports", employees:"Employees", settings:"Settings",
+    loading:"Starting local database and settings", dbError:"Database could not be opened", loginTitle:"POS Login", loginHint:"The current PIN is temporary demo-only and is not secure authentication", pinWrong:"Wrong PIN",
+    openShift:"Open Shift", openingCash:"Opening cash", open:"Open", offlineReady:"OFFLINE READY", closeShift:"Close Shift", closeShiftTitle:"Shift Summary", confirmCloseShift:"Confirm Close Shift", closedToLogin:"Shift closed. Returning to login.",
+    scan:"Scan barcode", search:"Search", all:"All", cart:"Cart", emptyCart:"Cart is empty", pay:"Pay", cancelBill:"Cancel Bill", total:"Total", cash:"Cash", transfer:"Transfer", promptpay:"PromptPay", card:"Card", recordOnly:"Payment method recording only. No gateway receipt verification.", received:"Received", change:"Change", confirm:"Confirm", close:"Close", save:"Save", edit:"Edit", addProduct:"Add Product", openExisting:"Open existing", duplicateBarcode:"Barcode already belongs to another product", duplicateCode:"Product code already exists", productCode:"Product code", barcode:"Barcode", nameTh:"Thai name", nameEn:"English name", category:"Category", price:"Selling price", cost:"Cost", unit:"Unit", stock:"Stock", minStock:"Min stock", active:"Active", image:"Image", stockIn:"Stock in", stockOut:"Stock out", adjustment:"Adjustment", reason:"Reason", voidSale:"Void sale", restockReturned:"Return goods to stock", language:"Language", thai:"Thai", english:"English", receipt:"Receipt", reprint:"Reprint", saleStored:"Sale stored in local SQLite", noInternet:"No Internet/Supabase/Vercel API is required for this transaction", storage:"Storage", audit:"Audit", demoPin:"Temporary demo PIN. Do not treat as secure auth."
+  }
+} as const;
+
+export type TextKey = keyof typeof dict.th;
+export const t = (language: Language, key: TextKey) => dict[language]?.[key] ?? dict.th[key];
+export const productName = (language: Language, p: { nameTh?: string; nameEn?: string; name?: string }) => language === "en" && p.nameEn ? p.nameEn : p.nameTh || p.name || "";

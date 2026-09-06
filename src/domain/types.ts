@@ -1,11 +1,16 @@
-export type Role = "owner" | "manager" | "staff";
+﻿export type Role = "owner" | "manager" | "staff";
 export type PaymentMethod = "cash" | "transfer" | "promptpay" | "card";
 export type SaleStatus = "completed" | "cancelled";
+export type Language = "th" | "en";
+export type StockMovementType = "STOCK_IN" | "SALE" | "STOCK_OUT" | "ADJUSTMENT" | "SALE_VOID_RETURN";
 
 export type Product = {
   id: string;
+  productCode: string;
   sku: string;
   barcode?: string;
+  nameTh: string;
+  nameEn?: string;
   name: string;
   categoryId: string;
   categoryName: string;
@@ -14,6 +19,7 @@ export type Product = {
   unit: string;
   stockQuantity: number;
   minimumStock: number;
+  quantityScale: number;
   imagePath?: string;
   active: boolean;
 };
@@ -44,10 +50,11 @@ export type Sale = {
   cashierName?: string;
   employeeCode?: string;
   shiftId?: string;
+  cancelledAt?: string;
   cancelledReason?: string;
 };
 
-export type Receipt = Sale & { items: SaleItem[]; settings: AppSettings };
+export type Receipt = Sale & { items: SaleItem[]; settings: AppSettings; receiptLabel?: string };
 
 export type AppSettings = {
   storeName: string;
@@ -64,6 +71,7 @@ export type AppSettings = {
   printerType: string;
   scannerMode: string;
   remoteManagementEnabled: boolean;
+  language: Language;
 };
 
 export type AuditEvent = {
@@ -87,7 +95,7 @@ export type StockMovement = {
   productId: string;
   sku: string;
   name: string;
-  movementType: "in" | "out" | "adjustment" | "sale";
+  movementType: StockMovementType;
   quantity: number;
   beforeQuantity: number;
   afterQuantity: number;

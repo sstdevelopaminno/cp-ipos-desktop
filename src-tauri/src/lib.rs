@@ -80,6 +80,11 @@ pub fn run() {
             description: "retail_core_foundation",
             sql: include_str!("../migrations/0002_retail_core_foundation.sql"),
             kind: MigrationKind::Up,
+        },        Migration {
+            version: 3,
+            description: "retail_localization_voids",
+            sql: include_str!("../migrations/0003_retail_localization_voids.sql"),
+            kind: MigrationKind::Up,
         },
     ];
 
