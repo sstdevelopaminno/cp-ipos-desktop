@@ -4,8 +4,28 @@ import { DEMO_PRODUCTS } from "./seed";
 
 const K = { shift:"cpipos.desktop.demo.shift", sales:"cpipos.desktop.demo.sales", items:"cpipos.desktop.demo.items", products:"cpipos.desktop.demo.products", staff:"cpipos.desktop.demo.staff", settings:"cpipos.desktop.demo.settings", audit:"cpipos.desktop.demo.audit", stock:"cpipos.desktop.demo.stock", session:"cpipos.desktop.demo.session" };
 const DEFAULT_STAFF: Staff = { id:"staff-owner", code:"OWNER", displayName:"ผู้ดูแลร้าน", role:"owner", active:true };
-const DEFAULT_SETTINGS: AppSettings = { storeName:"CpIPOS Store", branchName:"Main Branch", deviceName:"POS-01", deviceId:"browser-pos-01", receiptHeader:"CpIPOS", taxId:"", address:"", phone:"", receiptFooter:"ขอบคุณที่ใช้บริการ", ownerName:"Owner", ownerPinNote:"Demo-only owner PIN. Secure hashing is a later task.", printerType:"ยังไม่ได้ตั้งค่าเครื่องพิมพ์", scannerMode:"keyboard-wedge", remoteManagementEnabled:false, language:"th" };
-const read = <T,>(key:string, fallback:T):T => { const v=localStorage.getItem(key); return v?JSON.parse(v):fallback; };
+const DEFAULT_SETTINGS: AppSettings = {
+  storeName:"CpIPOS Store",
+  branchName:"Main Branch",
+  deviceName:"POS-01",
+  deviceId:"browser-pos-01",
+  receiptHeader:"CpIPOS",
+  taxId:"",
+  address:"",
+  phone:"",
+  receiptFooter:"ขอบคุณที่ใช้บริการ",
+  storeLogoPath:"",
+  ownerName:"Owner",
+  ownerPinNote:"Demo-only owner PIN. Secure hashing is a later task.",
+  printerType:"windows-print-dialog",
+  printerName:"",
+  printerPaperWidthMm:"80",
+  printerConnectionNote:"เลือกเครื่องพิมพ์ 80mm ผ่าน Windows Print Dialog ในการพิมพ์ครั้งแรก",
+  scannerMode:"keyboard-wedge",
+  remoteManagementEnabled:false,
+  language:"th"
+};
+const read = <T,>(key:string, fallback:T):T => { const v=localStorage.getItem(key); return v?{...fallback,...JSON.parse(v)} as T:fallback; };
 const write = (key:string, value:unknown) => localStorage.setItem(key, JSON.stringify(value));
 const money = (n:number) => Math.round((Number(n)||0)*100)/100;
 const qty = (n:number) => Math.round((Number(n)||0)*1000)/1000;
@@ -40,7 +60,7 @@ export class BrowserRepository implements PosRepository {
   async listEmployees() { return read<Staff[]>(K.staff, [DEFAULT_STAFF]); }
   async saveEmployee(input:EmployeeInput, staff:Staff) { const emp={id:input.id || crypto.randomUUID(),code:input.code,displayName:input.displayName,role:input.role,active:input.active}; const all=(await this.listEmployees()).filter(e=>e.id!==emp.id); write(K.staff,[emp,...all]); await this.audit(input.id?"EMPLOYEE_UPDATED":"EMPLOYEE_CREATED", staff, {entityType:"employee",entityId:emp.id}); return emp; }
   async getSettings() { return read<AppSettings>(K.settings, DEFAULT_SETTINGS); }
-  async updateSettings(settings:AppSettings, staff:Staff) { write(K.settings, settings); await this.audit("SETTINGS_CHANGED", staff, {entityType:"settings",entityId:"local",details:JSON.stringify({language:settings.language})}); return settings; }
+  async updateSettings(settings:AppSettings, staff:Staff) { write(K.settings, settings); await this.audit("SETTINGS_CHANGED", staff, {entityType:"settings",entityId:"local",details:JSON.stringify({language:settings.language,printerName:settings.printerName})}); return settings; }
   async getStorageHealth():Promise<StorageHealth> { const sales=await this.listSales(999); const audit=await this.listAuditEvents(999); return {databaseSize:0,mediaSize:0,backupSize:0,appDataSize:0,salesCount:sales.length,auditCount:audit.length,oldestSale:sales.at(-1)?.createdAt,newestSale:sales[0]?.createdAt}; }
   async getAppVersion() { return "0.1.0"; }
   private async audit(action:string, staff?:Staff, data:Partial<AuditEvent>={}) { write(K.audit,[{id:crypto.randomUUID(),timestamp:new Date().toISOString(),employeeId:staff?.id,employeeCode:staff?.code,role:staff?.role,action,...data},...read<AuditEvent[]>(K.audit,[])]); }
