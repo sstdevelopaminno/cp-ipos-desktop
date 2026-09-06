@@ -9,6 +9,7 @@ import "./receipt-print.css";
 import "./grocery-empty-branding.css";
 import "./sales-scan-qty-ui.css";
 import "./inventory-barcode-enhancements.css";
+import "./reports-dashboard-overrides.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
