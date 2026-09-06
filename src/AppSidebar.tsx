@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import "./retail-ui.css";
 
-type NavItem = { id: string; label: string; icon: "sale" | "stock" | "history" | "report" | "staff" | "settings" | "close" };
+type NavItem = { id: string; label: string; icon: "sale" | "stock" | "history" | "report" | "staff" | "settings" | "close" | "logout" };
 
 type Props = {
   collapsed: boolean;
@@ -9,6 +9,8 @@ type Props = {
   items: NavItem[];
   onToggle: () => void;
   onSelect: (id: string) => void;
+  onCloseShift: () => void;
+  onLogout: () => void;
 };
 
 const paths: Record<NavItem["icon"], ReactNode> = {
@@ -18,19 +20,15 @@ const paths: Record<NavItem["icon"], ReactNode> = {
   report: <><path d="M5 20V10M12 20V4M19 20v-7"/><path d="M3 20h18"/></>,
   staff: <><circle cx="9" cy="8" r="3"/><path d="M3 20c0-4 2.5-7 6-7s6 3 6 7"/><path d="M17 8h4M19 6v4"/></>,
   settings: <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.8 1.8 0 0 0 .36 1.98l.05.05-2.83 2.83-.05-.05A1.8 1.8 0 0 0 15 19.4a1.8 1.8 0 0 0-1 .6 1.8 1.8 0 0 0-.4 1.1V21H9.6v-.1A1.8 1.8 0 0 0 8.5 19.4a1.8 1.8 0 0 0-1.98.36l-.05.05-2.83-2.83.05-.05A1.8 1.8 0 0 0 4.6 15a1.8 1.8 0 0 0-.6-1 1.8 1.8 0 0 0-1.1-.4H3V9.6h.1A1.8 1.8 0 0 0 4.6 8.5a1.8 1.8 0 0 0-.36-1.98l-.05-.05 2.83-2.83.05.05A1.8 1.8 0 0 0 9 4.6a1.8 1.8 0 0 0 1-.6 1.8 1.8 0 0 0 .4-1.1V3h4v.1A1.8 1.8 0 0 0 15.5 4.6a1.8 1.8 0 0 0 1.98-.36l.05-.05 2.83 2.83-.05.05A1.8 1.8 0 0 0 19.4 9c.4.3.8.6 1 .6h.6v4h-.6c-.2 0-.6.3-1 .6z"/></>,
-  close: <><path d="M5 4h10a2 2 0 0 1 2 2v2"/><path d="M17 16v2a2 2 0 0 1-2 2H5z"/><path d="M9 12h12"/><path d="m17 8 4 4-4 4"/></>
+  close: <><path d="M6 5h12v4H6z"/><path d="M7 9h10v10H7z"/><path d="M9 13h6M9 16h4"/><path d="M5 19h14"/></>,
+  logout: <><path d="M10 5H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4"/><path d="M14 16l4-4-4-4"/><path d="M18 12H9"/></>
 };
 
 function NavIcon({ name }: { name: NavItem["icon"] }) {
   return <svg className="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
-export function AppSidebar({ collapsed, active, items, onToggle, onSelect }: Props) {
-  const openCloseShift = () => {
-    const topbarCloseButton = document.querySelector<HTMLButtonElement>(".topbar-meta button");
-    topbarCloseButton?.click();
-  };
-
+export function AppSidebar({ collapsed, active, items, onToggle, onSelect, onCloseShift, onLogout }: Props) {
   return <aside className={`side-nav retail-side-nav ${collapsed ? "collapsed" : ""}`}>
     <div className="side-brand retail-side-brand">
       <img src="/icon.png" alt="CpIPOS" />
@@ -46,9 +44,15 @@ export function AppSidebar({ collapsed, active, items, onToggle, onSelect }: Pro
         {!collapsed && <span>{item.label}</span>}
       </button>)}
     </nav>
-    <button className="nav-close-shift-button" onClick={openCloseShift} title={collapsed ? "ปิดยอด" : undefined}>
-      <NavIcon name="close" />
-      {!collapsed && <span>ปิดยอด</span>}
-    </button>
+    <div className="nav-bottom-actions">
+      <button className="nav-close-shift-button" onClick={onCloseShift} title={collapsed ? "ปิดยอด" : undefined} aria-label="ปิดยอด">
+        <NavIcon name="close" />
+        {!collapsed && <span>ปิดยอด</span>}
+      </button>
+      <button className="nav-logout-button" onClick={onLogout} title={collapsed ? "ล็อคเอาท์" : undefined} aria-label="ล็อคเอาท์">
+        <NavIcon name="logout" />
+        {!collapsed && <span>ล็อคเอาท์</span>}
+      </button>
+    </div>
   </aside>;
 }
