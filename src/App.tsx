@@ -6,6 +6,7 @@ import type { AppSettings, Language, Product, Receipt, Sale, SalesSummary, Shift
 import { productName, t } from "./i18n";
 import { RetailSalesScreen } from "./RetailSalesScreen";
 import { AppSidebar } from "./AppSidebar";
+import "./inventory-ui.css";
 
 type View = "sales" | "products" | "salesHistory" | "reports" | "employees" | "settings";
 const money = (n: number) => `฿${Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -123,7 +124,87 @@ function ShiftScreen({ repo, staff, settings, language, onOpen }: { repo: PosRep
 function ProductsScreen({repo,staff,products,language,refreshProducts}:{repo:PosRepository;staff:Staff;products:Product[];language:Language;refreshProducts:()=>Promise<void>}){
   const[editing,setEditing]=useState<Product|ProductInput|null>(null);
   const[stockFor,setStockFor]=useState<Product|null>(null);
-  return <section className="panel"><div className="toolbar"><h1>{t(language,"products")}</h1><button onClick={()=>setEditing(emptyProduct())}>{t(language,"addProduct")}</button></div><div className="stock-list">{products.map(p=><article className="stock-card" key={p.id}><div className="product-thumb">{p.imagePath?<img src={p.imagePath} alt=""/>:productName(language,p).slice(0,1)}</div><div><strong>{productName(language,p)}</strong><small>{p.productCode} · {p.barcode||"-"}</small><small>{money(p.price)} · {p.stockQuantity} {p.unit} · {stockLabel(language,p)}</small></div><span className={`badge ${stockClass(p)}`}>{stockLabel(language,p)}</span><button onClick={()=>setStockFor(p)}>{t(language,"adjustment")}</button><button onClick={()=>setEditing(p)}>{t(language,"edit")}</button></article>)}</div>{editing&&<ProductModal repo={repo} staff={staff} language={language} product={editing} onClose={()=>setEditing(null)} onSaved={async()=>{setEditing(null);await refreshProducts();}}/>}{stockFor&&<StockModal repo={repo} staff={staff} product={stockFor} language={language} onClose={()=>setStockFor(null)} onDone={async()=>{setStockFor(null);await refreshProducts();}}/>}</section>;
+  const[deleting,setDeleting]=useState<Product|null>(null);
+  const[query,setQuery]=useState("");
+  const[status,setStatus]=useState<"all"|"normal"|"low"|"out">("all");
+  const[page,setPage]=useState(1);
+  const pageSize=10;
+  const liveProducts=products.filter(p=>p.active!==false);
+  const q=query.trim().toLowerCase();
+  const filtered=liveProducts.filter(p=>{
+    const haystack=`${productName(language,p)} ${p.nameTh||""} ${p.nameEn||""} ${p.productCode} ${p.barcode||""} ${p.categoryName}`.toLowerCase();
+    const statusOk=status==="all" || stockClass(p)===status;
+    return statusOk && (!q || haystack.includes(q));
+  });
+  const pageCount=Math.max(1,Math.ceil(filtered.length/pageSize));
+  const safePage=Math.min(page,pageCount);
+  const start=(safePage-1)*pageSize;
+  const pageRows=filtered.slice(start,start+pageSize);
+  const pageNumbers=Array.from({length:pageCount},(_,i)=>i+1).filter(n=>pageCount<=7||Math.abs(n-safePage)<=2||n===1||n===pageCount);
+  useEffect(()=>{setPage(1)},[query,status,products.length]);
+  return <section className="panel inventory-page">
+    <div className="inventory-toolbar">
+      <div><h1>{t(language,"products")}</h1><p>จัดการสินค้าแบบตาราง แก้ไข ลบ ปรับยอด และแบ่งหน้าเมื่อรายการเยอะ</p></div>
+      <div className="inventory-toolbar-actions"><button className="inventory-primary" onClick={()=>setEditing(emptyProduct())}>{t(language,"addProduct")}</button></div>
+    </div>
+    <div className="inventory-filters">
+      <label>ค้นหาสินค้า / SKU / บาร์โค้ด<input value={query} onChange={e=>setQuery(e.target.value)} placeholder="พิมพ์ชื่อสินค้า รหัสสินค้า หรือบาร์โค้ด" /></label>
+      <label>สถานะสต๊อก<select value={status} onChange={e=>setStatus(e.target.value as typeof status)}><option value="all">ทั้งหมด</option><option value="normal">ปกติ</option><option value="low">ใกล้หมด</option><option value="out">หมด</option></select></label>
+      <label>จำนวนต่อหน้า<select value={pageSize} disabled><option>{pageSize} รายการ</option></select></label>
+    </div>
+    <div className="inventory-table-shell">
+      <div className="inventory-table-summary"><span>ทั้งหมด <strong>{liveProducts.length}</strong> รายการ · พบ <strong>{filtered.length}</strong> รายการ</span><span>หน้า {safePage} / {pageCount}</span></div>
+      <div className="inventory-table-wrap">
+        <table className="inventory-table">
+          <thead><tr><th>สินค้า</th><th>รหัสสินค้า</th><th>บาร์โค้ด</th><th>หมวดหมู่</th><th className="inventory-number">ราคาขาย</th><th className="inventory-number">ต้นทุน</th><th className="inventory-number">คงเหลือ</th><th className="inventory-number">แจ้งเตือน</th><th>สถานะ</th><th></th></tr></thead>
+          <tbody>{pageRows.map(p=><tr key={p.id}>
+            <td><div className="inventory-product-cell"><div className="inventory-product-thumb">{p.imagePath?<img src={p.imagePath} alt=""/>:productName(language,p).slice(0,1)}</div><div className="inventory-product-name"><strong>{productName(language,p)}</strong><small>{p.nameEn||"-"}</small></div></div></td>
+            <td><strong>{p.productCode}</strong><small className="inventory-muted">SKU: {p.sku||p.productCode}</small></td>
+            <td>{p.barcode||"-"}</td>
+            <td>{p.categoryName}</td>
+            <td className="inventory-number">{money(p.price)}</td>
+            <td className="inventory-number">{money(p.cost)}</td>
+            <td className="inventory-number"><strong>{p.stockQuantity}</strong> {p.unit}</td>
+            <td className="inventory-number">{p.minimumStock} {p.unit}</td>
+            <td><span className={`badge ${stockClass(p)}`}>{stockLabel(language,p)}</span></td>
+            <td><div className="inventory-actions"><button className="inventory-action stock" onClick={()=>setStockFor(p)}>{t(language,"adjustment")}</button><button className="inventory-action edit" onClick={()=>setEditing(p)}>{t(language,"edit")}</button><button className="inventory-action delete" onClick={()=>setDeleting(p)}>ลบ</button></div></td>
+          </tr>)}</tbody>
+        </table>
+        {!pageRows.length&&<EmptyState text={t(language,"empty")}/>} 
+      </div>
+    </div>
+    <div className="inventory-pagination">
+      <span>แสดง {filtered.length?start+1:0}-{Math.min(start+pageSize,filtered.length)} จาก {filtered.length} รายการ</span>
+      <div className="inventory-pages"><button disabled={safePage<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>ก่อนหน้า</button>{pageNumbers.map((n,i)=><button key={`${n}-${i}`} className={n===safePage?"active":""} onClick={()=>setPage(n)}>{n}</button>)}<button disabled={safePage>=pageCount} onClick={()=>setPage(p=>Math.min(pageCount,p+1))}>ถัดไป</button></div>
+    </div>
+    {editing&&<ProductModal repo={repo} staff={staff} language={language} product={editing} onClose={()=>setEditing(null)} onSaved={async()=>{setEditing(null);await refreshProducts();}}/>}
+    {stockFor&&<StockModal repo={repo} staff={staff} product={stockFor} language={language} onClose={()=>setStockFor(null)} onDone={async()=>{setStockFor(null);await refreshProducts();}}/>}
+    {deleting&&<DeleteProductModal repo={repo} staff={staff} product={deleting} language={language} onClose={()=>setDeleting(null)} onDone={async()=>{setDeleting(null);await refreshProducts();}}/>}
+  </section>;
+}
+
+function DeleteProductModal({repo,staff,product,language,onClose,onDone}:{repo:PosRepository;staff:Staff;product:Product;language:Language;onClose:()=>void;onDone:()=>void}){
+  const[busy,setBusy]=useState(false);
+  const[error,setError]=useState("");
+  const submit=async()=>{
+    try{
+      setBusy(true);
+      setError("");
+      await repo.updateProduct({...product,active:false},staff);
+      onDone();
+    }catch(e){
+      setError(e instanceof Error?e.message:"ลบสินค้าไม่สำเร็จ");
+      setBusy(false);
+    }
+  };
+  return <Modal title="ยืนยันลบสินค้า" onClose={busy?()=>{}:onClose}>
+    <div className="inventory-delete-box">
+      <div className="inventory-delete-warning"><strong>ต้องการลบสินค้านี้ใช่หรือไม่?</strong><p>ระบบจะซ่อนสินค้าออกจากหน้าขายและตารางสินค้า แต่ประวัติการขายเดิมจะยังคงอยู่เพื่อความถูกต้องของรายงานย้อนหลัง</p></div>
+      <div className="inventory-delete-product"><div className="inventory-product-thumb">{product.imagePath?<img src={product.imagePath} alt=""/>:productName(language,product).slice(0,1)}</div><div><strong>{productName(language,product)}</strong><small>{product.productCode} · {product.barcode||"-"}</small><small>{money(product.price)} · คงเหลือ {product.stockQuantity} {product.unit}</small></div></div>
+      {error&&<ErrorMessage text={error}/>} 
+      <div className="actions modal-footer"><button className="secondary" disabled={busy} onClick={onClose}>{t(language,"back")}</button><button className="danger" disabled={busy} onClick={()=>void submit()}>{busy?t(language,"submitBusy"):"ยืนยันลบ"}</button></div>
+    </div>
+  </Modal>;
 }
 
 function ProductModal({repo,staff,language,product,onClose,onSaved}:{repo:PosRepository;staff:Staff;language:Language;product:Product|ProductInput;onClose:()=>void;onSaved:()=>void}){
