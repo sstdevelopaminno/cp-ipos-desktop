@@ -65,6 +65,7 @@
 
 .nav-bottom-actions{
   margin-top:auto;
+  flex:0 0 auto;
   display:grid;
   gap:10px;
   padding-top:14px;

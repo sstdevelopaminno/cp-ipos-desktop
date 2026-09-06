@@ -42,6 +42,8 @@ Development verification should cover splash on launch, login, shift gate, close
 
 The desktop shell now uses one CpIPOS blue/white visual system for splash, login, shift, sales, payment, product, stock, history, reports, employees and settings screens. Controls are sized for touch, the cart remains visible during product browsing, checkout opens a payment selection modal first, and cash entry uses quick amounts plus a numeric keypad.
 
+Reports use the workspace body as the vertical scroll area so the lower charts remain reachable on shorter desktop screens. The left navigation can also scroll internally while keeping close-shift and logout actions available at the bottom.
+
 Barcode scan input keeps focus after successful scans, unknown scans and completed payments. Unknown barcode flow preserves the scanned code and pre-fills Add Product.
 
 Settings uses section navigation and marks backup/restore and remote management as not ready instead of showing fake success.

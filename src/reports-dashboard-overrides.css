@@ -1,6 +1,7 @@
 /* Focused overrides for the reports dashboard.
    The app shell intentionally hides overflow for POS screens, so reports need
    their own scroll surface at the view-body level. */
+.view-body.reports-view,
 .view-body:has(.reports-dashboard-page){
   min-height:0!important;
   overflow-y:auto!important;
@@ -9,25 +10,30 @@
   scrollbar-gutter:stable;
 }
 
+.view-body.reports-view::-webkit-scrollbar,
 .view-body:has(.reports-dashboard-page)::-webkit-scrollbar{
   width:11px;
 }
 
+.view-body.reports-view::-webkit-scrollbar-thumb,
 .view-body:has(.reports-dashboard-page)::-webkit-scrollbar-thumb{
   background:#b9cbe0;
   border-radius:999px;
   border:3px solid #eef4fb;
 }
 
+.view-body.reports-view::-webkit-scrollbar-track,
 .view-body:has(.reports-dashboard-page)::-webkit-scrollbar-track{
   background:#eef4fb;
 }
 
+.view-body.reports-view>.reports-dashboard-page,
 .view-body:has(.reports-dashboard-page)>.reports-dashboard-page,
 .reports-dashboard-page.panel{
+  width:100%!important;
   height:auto!important;
   max-height:none!important;
-  min-height:max-content!important;
+  min-height:auto!important;
   overflow:visible!important;
 }
 
@@ -93,6 +99,7 @@
 }
 
 @media(max-height:760px){
+  .view-body.reports-view,
   .view-body:has(.reports-dashboard-page){
     padding:12px!important;
   }

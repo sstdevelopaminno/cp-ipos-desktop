@@ -31,8 +31,9 @@ const focusInventorySearch = () => {
 };
 
 window.addEventListener("focusin", event => {
-  if (!isInventorySearchInput(event.target)) return;
-  window.setTimeout(() => event.target.select(), 20);
+  const target = event.target;
+  if (!isInventorySearchInput(target)) return;
+  window.setTimeout(() => target.select(), 20);
 });
 
 window.addEventListener("keydown", event => {

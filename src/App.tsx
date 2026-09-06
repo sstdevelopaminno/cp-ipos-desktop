@@ -116,7 +116,7 @@ export default function App() {
         <div><strong>CpIPOS</strong><span>{settings.storeName} / {settings.branchName}</span></div>
         <div className="topbar-meta"><span>{t(language, "cashier")}: {staff.displayName}</span><span>{t(language, "role")}: {staff.role}</span><span>{t(language, "currentShift")}: {shift.id.slice(0, 8)}</span><span>{clock}</span><button onClick={() => setCloseShift(true)}>{t(language, "closeShift")}</button></div>
       </header>
-      <div className={`view-body ${view === "sales" ? "sales-view" : ""}`}>
+      <div className={`view-body ${view === "sales" ? "sales-view" : ""} ${view === "reports" ? "reports-view" : ""}`}>
         {view === "sales" && <RetailSalesScreen repo={repo} staff={staff} shift={shift} settings={settings} products={products} language={language} refreshProducts={() => refreshProducts(repo)} />}
         {view === "products" && <ProductsScreenV2 repo={repo} staff={staff} products={products} language={language} refreshProducts={() => refreshProducts(repo)} requestStockNotification={requestStockNotification} />}
         {view === "salesHistory" && <SalesHistoryScreenV2 repo={repo} staff={staff} shift={shift} settings={settings} language={language} />}
