@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { createRepository } from "./data";
 import type { PosRepository, ProductInput } from "./data/repository";
@@ -15,8 +15,31 @@ const nowTime = () => new Date().toLocaleTimeString("th-TH", { hour: "2-digit", 
 const units = ["ชิ้น", "ขวด", "กระป๋อง", "ถุง", "กล่อง", "แพ็ค", "ลัง", "kg", "g", "liter", "ml"];
 const emptyProduct = (barcode = ""): ProductInput => ({ productCode:"", barcode, nameTh:"", nameEn:"", categoryId:"retail", categoryName:"ค้าปลีก", price:0, cost:0, unit:"ชิ้น", stockQuantity:0, minimumStock:0, quantityScale:1, imagePath:"", active:true });
 const SYSTEM_LOGO = "/icon.png";
+const LOW_STOCK_NOTICE_KEY = "cpipos.inventory.lowStock.notice";
 const completeStartupSplash = async () => { try { await invoke("complete_startup_splash"); } catch { /* Browser preview fallback. */ } };
 const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result || "")); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); });
+const lowStockProducts = (products: Product[]) => products.filter(p => p.active !== false && (p.stockQuantity <= 0 || (p.minimumStock > 0 && p.stockQuantity <= p.minimumStock)));
+const lowStockBody = (products: Product[], language: Language) => {
+  const names = products.slice(0, 4).map(p => `${productName(language, p)} เหลือ ${p.stockQuantity} ${p.unit}`).join(" · ");
+  return products.length ? `มีสินค้าใกล้หมด/หมด ${products.length} รายการ${names ? `: ${names}` : ""}` : "";
+};
+const requestStockNotification = async (products: Product[], language: Language) => {
+  if (!products.length || !("Notification" in window)) return;
+  const body = lowStockBody(products, language);
+  const title = "CpIPOS แจ้งเตือนสต็อกต่ำ";
+  try {
+    if (Notification.permission === "granted") {
+      new Notification(title, { body, icon: SYSTEM_LOGO });
+      return;
+    }
+    if (Notification.permission === "default") {
+      const permission = await Notification.requestPermission();
+      if (permission === "granted") new Notification(title, { body, icon: SYSTEM_LOGO });
+    }
+  } catch {
+    // Browser/Tauri preview can still show the in-app notice below.
+  }
+};
 
 export default function App() {
   const [repo, setRepo] = useState<PosRepository | null>(null);
@@ -128,8 +151,9 @@ function ProductsScreen({repo,staff,products,language,refreshProducts}:{repo:Pos
   const[query,setQuery]=useState("");
   const[status,setStatus]=useState<"all"|"normal"|"low"|"out">("all");
   const[page,setPage]=useState(1);
-  const pageSize=10;
+  const[pageSize,setPageSize]=useState(6);
   const liveProducts=products.filter(p=>p.active!==false);
+  const lowItems=useMemo(()=>lowStockProducts(liveProducts),[liveProducts]);
   const q=query.trim().toLowerCase();
   const filtered=liveProducts.filter(p=>{
     const haystack=`${productName(language,p)} ${p.nameTh||""} ${p.nameEn||""} ${p.productCode} ${p.barcode||""} ${p.categoryName}`.toLowerCase();
@@ -141,7 +165,16 @@ function ProductsScreen({repo,staff,products,language,refreshProducts}:{repo:Pos
   const start=(safePage-1)*pageSize;
   const pageRows=filtered.slice(start,start+pageSize);
   const pageNumbers=Array.from({length:pageCount},(_,i)=>i+1).filter(n=>pageCount<=7||Math.abs(n-safePage)<=2||n===1||n===pageCount);
-  useEffect(()=>{setPage(1)},[query,status,products.length]);
+  const stockNotice=lowStockBody(lowItems,language);
+  useEffect(()=>{setPage(1)},[query,status,products.length,pageSize]);
+  useEffect(()=>{
+    if(!lowItems.length) return;
+    const signature=lowItems.map(p=>`${p.id}:${p.stockQuantity}:${p.minimumStock}`).join("|");
+    if(localStorage.getItem(LOW_STOCK_NOTICE_KEY)===signature) return;
+    localStorage.setItem(LOW_STOCK_NOTICE_KEY,signature);
+    void requestStockNotification(lowItems,language);
+  },[lowItems,language]);
+  const Pager=()=> <div className="inventory-pages"><button disabled={safePage<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>ก่อนหน้า</button>{pageNumbers.map((n,i)=><button key={`${n}-${i}`} className={n===safePage?"active":""} onClick={()=>setPage(n)}>{n}</button>)}<button disabled={safePage>=pageCount} onClick={()=>setPage(p=>Math.min(pageCount,p+1))}>ถัดไป</button></div>;
   return <section className="panel inventory-page">
     <div className="inventory-toolbar">
       <div><h1>{t(language,"products")}</h1><p>จัดการสินค้าแบบตาราง แก้ไข ลบ ปรับยอด และแบ่งหน้าเมื่อรายการเยอะ</p></div>
@@ -150,10 +183,11 @@ function ProductsScreen({repo,staff,products,language,refreshProducts}:{repo:Pos
     <div className="inventory-filters">
       <label>ค้นหาสินค้า / SKU / บาร์โค้ด<input value={query} onChange={e=>setQuery(e.target.value)} placeholder="พิมพ์ชื่อสินค้า รหัสสินค้า หรือบาร์โค้ด" /></label>
       <label>สถานะสต๊อก<select value={status} onChange={e=>setStatus(e.target.value as typeof status)}><option value="all">ทั้งหมด</option><option value="normal">ปกติ</option><option value="low">ใกล้หมด</option><option value="out">หมด</option></select></label>
-      <label>จำนวนต่อหน้า<select value={pageSize} disabled><option>{pageSize} รายการ</option></select></label>
+      <label>จำนวนต่อหน้า<select value={pageSize} onChange={e=>setPageSize(Number(e.target.value))}><option value="6">6 รายการ</option><option value="8">8 รายการ</option><option value="10">10 รายการ</option><option value="20">20 รายการ</option></select></label>
     </div>
+    {lowItems.length>0&&<div className="inventory-low-stock-alert" role="status" aria-live="polite"><div><strong>แจ้งเตือนสต็อกต่ำ</strong><span>{stockNotice}</span></div><div><button onClick={()=>setStatus("low")}>ดูใกล้หมด</button><button onClick={()=>setStatus("out")}>ดูสินค้าหมด</button></div></div>}
     <div className="inventory-table-shell">
-      <div className="inventory-table-summary"><span>ทั้งหมด <strong>{liveProducts.length}</strong> รายการ · พบ <strong>{filtered.length}</strong> รายการ</span><span>หน้า {safePage} / {pageCount}</span></div>
+      <div className="inventory-table-summary"><span>ทั้งหมด <strong>{liveProducts.length}</strong> รายการ · พบ <strong>{filtered.length}</strong> รายการ · แสดง <strong>{pageRows.length}</strong> รายการ</span><div className="inventory-top-pages"><span>หน้า {safePage} / {pageCount}</span><Pager/></div></div>
       <div className="inventory-table-wrap">
         <table className="inventory-table">
           <thead><tr><th>สินค้า</th><th>รหัสสินค้า</th><th>บาร์โค้ด</th><th>หมวดหมู่</th><th className="inventory-number">ราคาขาย</th><th className="inventory-number">ต้นทุน</th><th className="inventory-number">คงเหลือ</th><th className="inventory-number">แจ้งเตือน</th><th>สถานะ</th><th></th></tr></thead>
@@ -175,7 +209,7 @@ function ProductsScreen({repo,staff,products,language,refreshProducts}:{repo:Pos
     </div>
     <div className="inventory-pagination">
       <span>แสดง {filtered.length?start+1:0}-{Math.min(start+pageSize,filtered.length)} จาก {filtered.length} รายการ</span>
-      <div className="inventory-pages"><button disabled={safePage<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>ก่อนหน้า</button>{pageNumbers.map((n,i)=><button key={`${n}-${i}`} className={n===safePage?"active":""} onClick={()=>setPage(n)}>{n}</button>)}<button disabled={safePage>=pageCount} onClick={()=>setPage(p=>Math.min(pageCount,p+1))}>ถัดไป</button></div>
+      <Pager/>
     </div>
     {editing&&<ProductModal repo={repo} staff={staff} language={language} product={editing} onClose={()=>setEditing(null)} onSaved={async()=>{setEditing(null);await refreshProducts();}}/>}
     {stockFor&&<StockModal repo={repo} staff={staff} product={stockFor} language={language} onClose={()=>setStockFor(null)} onDone={async()=>{setStockFor(null);await refreshProducts();}}/>}
