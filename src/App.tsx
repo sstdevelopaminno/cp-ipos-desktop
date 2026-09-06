@@ -1,4 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { createRepository } from "./data";
 import type { CancelBillInput, PosRepository, ProductInput } from "./data/repository";
 import type { AppSettings, CartLine, Language, PaymentMethod, Product, Receipt, Sale, SalesSummary, Shift, Staff, StockMovement, StorageHealth } from "./domain/types";
@@ -11,6 +12,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const nowTime = () => new Date().toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" });
 const units = ["ชิ้น", "ขวด", "กระป๋อง", "ถุง", "กล่อง", "แพ็ค", "ลัง", "kg", "g", "liter", "ml"];
 const emptyProduct = (barcode = ""): ProductInput => ({ productCode:"", barcode, nameTh:"", nameEn:"", categoryId:"retail", categoryName:"ค้าปลีก", price:0, cost:0, unit:"ชิ้น", stockQuantity:0, minimumStock:0, quantityScale:1, imagePath:"", active:true });
+const completeStartupSplash = async () => { try { await invoke("complete_startup_splash"); } catch { /* Browser preview fallback. */ } };
 
 export default function App() {
   const [repo, setRepo] = useState<PosRepository | null>(null);
@@ -31,7 +33,7 @@ export default function App() {
 
   useEffect(() => { const id=window.setInterval(()=>setClock(nowTime()), 30000); return()=>window.clearInterval(id); }, []);
   useEffect(() => { const id=window.setInterval(()=>setSplashStep(s=>Math.min(2,s+1)), 260); return()=>window.clearInterval(id); }, []);
-  useEffect(() => { let alive = true; (async () => { try { const r = await createRepository(); await r.initialize(); const [saved, activeShift, currentSettings, currentProducts] = await Promise.all([r.getSavedSession(), r.getActiveShift(), r.getSettings(), r.listProducts()]); if (!alive) return; setRepo(r); setStaff(saved); setShift(activeShift); setSettings(currentSettings); setProducts(currentProducts); window.setTimeout(() => alive && setSplashStep(3), 640); } catch { setError(t(language,"dbError")); window.setTimeout(() => alive && setSplashStep(3), 640); } })(); return () => { alive = false; }; }, []);
+  useEffect(() => { let alive = true; const finishStartup = () => window.setTimeout(() => { if (alive) { setSplashStep(3); void completeStartupSplash(); } }, 1700); (async () => { try { const r = await createRepository(); await r.initialize(); const [saved, activeShift, currentSettings, currentProducts] = await Promise.all([r.getSavedSession(), r.getActiveShift(), r.getSettings(), r.listProducts()]); if (!alive) return; setRepo(r); setStaff(saved); setShift(activeShift); setSettings(currentSettings); setProducts(currentProducts); finishStartup(); } catch { setError(t(language,"dbError")); finishStartup(); } })(); return () => { alive = false; }; }, []);
 
   if (splashStep < 3) return <main className="splash"><div className="splash-card"><img src="/icon.png" alt="CpIPOS" /><h1>CpIPOS Desktop</h1><p>{splashTexts[splashStep]}</p></div></main>;
   if (error || !repo || !settings) return <main className="center-screen"><section className="error-card"><h1>{t(language,"dbError")}</h1><p>{error || t(language,"dbError")}</p></section></main>;

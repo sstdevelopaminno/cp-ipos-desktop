@@ -2,6 +2,12 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-capability",
   "description": "CpIPOS desktop local POS capability",
-  "windows": ["main"],
-  "permissions": ["core:default", "sql:default", "sql:allow-execute"]
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "sql:default",
+    "sql:allow-execute"
+  ]
 }

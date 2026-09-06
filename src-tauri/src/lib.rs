@@ -66,6 +66,20 @@ fn get_local_storage_metrics<R: Runtime>(app: tauri::AppHandle<R>) -> Result<Loc
     })
 }
 
+#[tauri::command]
+fn complete_startup_splash<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    if let Some(main) = app.get_webview_window("main") {
+        main.show().map_err(|e| e.to_string())?;
+        main.set_focus().map_err(|e| e.to_string())?;
+    }
+
+    if let Some(splash) = app.get_webview_window("splash") {
+        splash.close().map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let migrations = vec![
@@ -94,7 +108,7 @@ pub fn run() {
                 .add_migrations("sqlite:cpipos.db", migrations)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![save_product_image, get_local_storage_metrics])
+        .invoke_handler(tauri::generate_handler![save_product_image, get_local_storage_metrics, complete_startup_splash])
         .run(tauri::generate_context!())
         .expect("error while running CpIPOS Desktop");
 }

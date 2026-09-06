@@ -12,22 +12,56 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "CpIPOS Desktop",
         "width": 1366,
         "height": 768,
         "minWidth": 1024,
         "minHeight": 650,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "visible": false,
+        "center": true
+      },
+      {
+        "label": "splash",
+        "title": "CpIPOS Desktop",
+        "url": "splash.html",
+        "width": 520,
+        "height": 340,
+        "resizable": false,
+        "fullscreen": false,
+        "decorations": false,
+        "visible": true,
+        "center": true
       }
     ],
-    "security": { "csp": null }
+    "security": {
+      "csp": null
+    }
   },
-  "plugins": { "sql": { "preload": ["sqlite:cpipos.db"] } },
+  "plugins": {
+    "sql": {
+      "preload": [
+        "sqlite:cpipos.db"
+      ]
+    }
+  },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
-    "icon": ["icons/icon.ico", "icons/icon.png"],
-    "windows": { "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true } }
+    "targets": [
+      "nsis",
+      "msi"
+    ],
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      }
+    }
   }
 }
