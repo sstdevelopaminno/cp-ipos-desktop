@@ -1,31 +1,45 @@
 # CpIPOS Desktop Architecture
 
 ```text
-React CpIPOS UI
+React CpIPOS Desktop UI
       |
   PosRepository
       |
 TauriRepository -------- BrowserRepository (UI-only development)
       |
-SQLite cpipos.db
+SQLite cpipos.db + local AppData media
       |
-Sales / Shift / Receipt / Sync Queue
+Sales / Receipt / Stock / Audit / Settings
 ```
 
 ## Offline invariant
-Creating a sale, taking payment, opening/closing shift and reading the local catalog must not require Internet, Vercel or Supabase.
 
-## Prototype limits
-V0.1 PromptPay and Card are PAYMENT METHOD RECORDING ONLY: no payment gateway verifies that money was received. The temporary development PIN is demo-only and is not secure authentication.
+Creating a sale, taking payment, scanning barcode, managing cart, opening or closing shift, writing stock movement, reading sales history and showing reports must not require Internet, Vercel, Supabase or a remote API.
 
-This prototype is not production-ready. Phase 1 requires secure PIN hashing, receipt screen, receipt reprint, sales history, backup/restore and offline Tauri verification. Browser fallback uses localStorage; it cannot prove native launch or SQLite persistence.
+## Retail foundation
 
-## Next boundaries
-1. `PrinterService` — 58/80mm ESC/POS + Windows spooler.
-2. `BackupService` — consistent SQLite backup to AppData backup folder.
-3. Secure local staff PIN hashing.
-4. Receipt/history screens.
-5. Optional cloud sync worker only after local transaction commit.
+The desktop app now has a CpIPOS splash, restored local session flow, shift validation, main navigation and local sections for Sales, Products and Stock, Sales History, Reports, Employees and Settings.
 
-## Checkout atomicity
-`tauri-plugin-sql` does not expose a first-class JavaScript transaction API. Desktop V0.1 therefore commits a sale using one `INSERT` into `sales`; a SQLite trigger expands `items_json` into `sale_items` in the same SQLite statement transaction. Do not replace this with separate JavaScript `BEGIN` / multiple `execute()` / `COMMIT` calls.
+Barcode scanners are treated as keyboard-wedge input. A completed barcode lookup reads local SQLite products and adds or increments the cart item. Unknown barcodes show a local popup.
+
+Checkout remains behind an explicit payment flow. Cash requires a numeric payment modal and blocks confirmation until received amount is enough. Transfer records cashier manual confirmation only and never claims bank or gateway verification.
+
+## Data boundaries
+
+React components call `PosRepository`; raw SQL belongs in repository implementations. Product images are saved under the app local data directory and the product row stores only a relative media reference.
+
+Sale checkout uses one `INSERT` into `sales`. SQLite triggers expand line items, create stock sale movements and record the sale audit event in the same database statement.
+
+## Security limits
+
+The current PIN is demo-only and not production secure authentication. The employee model keeps a credential abstraction so secure hashing can replace `pin_demo` later. Sensitive actions such as bill cancellation already require local re-authentication and role checks.
+
+## Future boundaries
+
+- Secure PIN hashing.
+- Real printer integration.
+- Backup and restore implementation.
+- Optional cloud/device management after local transaction commit.
+- Windows enterprise MDM integration as a separate layer.
+
+This application is not production-ready.

@@ -1,36 +1,48 @@
 # Desktop Roadmap
 
-Status: development prototype; not production-ready. Phase 0 evidence: [BOOTSTRAP.md](BOOTSTRAP.md).
+Status: retail core foundation active; not production-ready. Phase 0 evidence: [BOOTSTRAP.md](BOOTSTRAP.md).
 
-## Phase 1 — Offline core (active)
-- [x] Separate source tree / repository boundary
-- [x] CpIPOS POS UI primitives ported
-- [x] Tauri + SQLite scaffold
-- [x] Local login/shift/sale transaction prototype
-- [ ] Replace demo PIN with secure hash
-- [ ] Receipt screen
-- [ ] Receipt reprint
-- [ ] Sale history
-- [ ] Backup/restore
-- [ ] Offline Tauri verification: native launch, demo login, shift, POS/cart, CASH checkout and SQLite persistence without external APIs
+## Phase 1 — Offline retail foundation
 
-Phase 1 is incomplete until all six items above (secure PIN hashing through offline Tauri verification) are complete. The development PIN is temporary/demo-only and is not secure authentication. PromptPay/Card record payment methods only; they do not verify that money was received from a payment gateway.
+- [x] Standalone repository boundary
+- [x] CpIPOS branding and Windows icons
+- [x] Splash/startup and local session restore
+- [x] Desktop navigation
+- [x] Product grid sales and barcode scan lookup
+- [x] Cart edit/remove/cancel bill approval flow
+- [x] Cash payment keypad and transfer manual confirmation
+- [x] Receipt modal and reprint from SQLite sale data
+- [x] Sales history and daily summary reports
+- [x] Product management and local image media reference
+- [x] Stock movements and minimum-stock warning
+- [x] Employee management foundation
+- [x] Settings, storage health and About/version section
+- [x] Local audit history
+- [ ] Secure PIN hashing for production
+- [ ] Real printer hardware integration
+- [ ] Backup/restore implementation
+- [ ] Full installer/signing release verification
 
 ## Phase 2 — Hardware
+
 - [ ] Windows printer enumeration
-- [ ] ESC/POS 58/80mm
+- [ ] ESC/POS 58/80mm printing
 - [ ] Cash drawer pulse
-- [ ] Barcode keyboard scanner
+- [ ] Barcode scanner device profile tuning
 
 ## Phase 3 — Distribution
+
 - [x] Windows GitHub Actions skeleton
 - [ ] Signing certificate/secrets
 - [ ] GitHub Release artifact
 - [ ] Existing CpIPOS website download link
 - [ ] Updater manifest/signing
 
-## Phase 4 — Optional cloud sync
-- [ ] Sync protocol/idempotency
-- [ ] Catalog pull
-- [ ] Sales push
-- [ ] Conflict policy
+## Phase 4 — Optional device/cloud management
+
+- [ ] Device health reporting
+- [ ] User-consented remote support workflow
+- [ ] Backup status reporting
+- [ ] Optional catalog sync after local commit
+
+Offline sales must never depend on cloud/device management.
