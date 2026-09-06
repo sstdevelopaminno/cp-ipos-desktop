@@ -51,3 +51,7 @@ The current development PIN is temporary/demo-only and must not be considered se
 ## Repository rule
 
 Work only in `E:\cp-ipos-desktop`. Do not move this project into the CpIPOS Web monorepo. Do not configure a remote or push unless explicitly requested.
+
+## UI polish baseline
+
+The current desktop UI is styled as a dedicated Windows POS with large touch-friendly controls, persistent sales cart, barcode-first input, payment selection popup, cash keypad, product/stock modals, sales-history filters and settings subnavigation.

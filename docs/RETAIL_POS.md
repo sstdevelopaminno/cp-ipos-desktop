@@ -37,3 +37,11 @@ Sales history keeps the original completed sale. Voiding a completed sale requir
 ## Verification targets
 
 Development verification should cover splash on launch, login, shift gate, close/relaunch session behavior, close-shift-to-login, product modal, duplicate barcode block, Thai text persistence after restart, cart scan no-stock-change, completed sale stock decrement once, failed checkout/cancel no-stock-change, sale void return movement, language switch and no external Internet/Supabase/Vercel dependency.
+
+## UI polish baseline
+
+The desktop shell now uses one CpIPOS blue/white visual system for splash, login, shift, sales, payment, product, stock, history, reports, employees and settings screens. Controls are sized for touch, the cart remains visible during product browsing, checkout opens a payment selection modal first, and cash entry uses quick amounts plus a numeric keypad.
+
+Barcode scan input keeps focus after successful scans, unknown scans and completed payments. Unknown barcode flow preserves the scanned code and pre-fills Add Product.
+
+Settings uses section navigation and marks backup/restore and remote management as not ready instead of showing fake success.
