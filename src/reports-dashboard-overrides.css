@@ -1,0 +1,115 @@
+/* Focused overrides for the reports dashboard.
+   The app shell intentionally hides overflow for POS screens, so reports need
+   their own scroll surface at the view-body level. */
+.view-body:has(.reports-dashboard-page){
+  min-height:0!important;
+  overflow-y:auto!important;
+  overflow-x:hidden!important;
+  overscroll-behavior:contain;
+  scrollbar-gutter:stable;
+}
+
+.view-body:has(.reports-dashboard-page)::-webkit-scrollbar{
+  width:11px;
+}
+
+.view-body:has(.reports-dashboard-page)::-webkit-scrollbar-thumb{
+  background:#b9cbe0;
+  border-radius:999px;
+  border:3px solid #eef4fb;
+}
+
+.view-body:has(.reports-dashboard-page)::-webkit-scrollbar-track{
+  background:#eef4fb;
+}
+
+.view-body:has(.reports-dashboard-page)>.reports-dashboard-page,
+.reports-dashboard-page.panel{
+  height:auto!important;
+  max-height:none!important;
+  min-height:max-content!important;
+  overflow:visible!important;
+}
+
+.reports-dashboard-page{
+  padding-bottom:34px!important;
+}
+
+.reports-content-grid,
+.reports-kpi-grid,
+.reports-hero,
+.reports-line-card{
+  flex-shrink:0!important;
+}
+
+.reports-chart-card{
+  min-height:300px!important;
+}
+
+.reports-bar-chart{
+  min-height:0!important;
+  height:240px!important;
+}
+
+.reports-line-card{
+  min-height:320px!important;
+  grid-template-rows:auto 250px!important;
+}
+
+.reports-line-chart{
+  height:250px!important;
+}
+
+.reports-line-chart svg{
+  min-height:190px!important;
+}
+
+.report-kpi-card.danger{
+  border-color:#d92d3e!important;
+  background:
+    radial-gradient(circle at 84% 16%,rgba(255,255,255,.28),transparent 34%),
+    linear-gradient(135deg,#ef4050,#c9152b)!important;
+  box-shadow:0 14px 28px rgba(201,21,43,.20)!important;
+}
+
+.report-kpi-card.danger small,
+.report-kpi-card.danger strong,
+.report-kpi-card.danger div{
+  color:#fff!important;
+}
+
+.report-kpi-card.danger .report-kpi-icon{
+  background:rgba(255,255,255,.94)!important;
+  color:#d7263d!important;
+  box-shadow:0 10px 22px rgba(85,0,12,.18)!important;
+  font-size:0!important;
+}
+
+.report-kpi-card.danger .report-kpi-icon::before{
+  content:"↩";
+  font-size:21px;
+  font-weight:1000;
+  line-height:1;
+}
+
+@media(max-height:760px){
+  .view-body:has(.reports-dashboard-page){
+    padding:12px!important;
+  }
+  .reports-chart-card{
+    min-height:245px!important;
+  }
+  .reports-bar-chart{
+    height:190px!important;
+  }
+  .reports-line-card{
+    min-height:285px!important;
+    grid-template-rows:auto 220px!important;
+  }
+  .reports-line-chart{
+    height:220px!important;
+  }
+  .reports-line-chart svg{
+    min-height:160px!important;
+  }
+}
