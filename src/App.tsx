@@ -222,22 +222,95 @@ function DeleteEmployeeModal({ repo, staff, employee, onClose, onDeleted }: { re
   </Modal>;
 }
 
+type SettingsSection = "store" | "branch" | "language" | "owner" | "receipt" | "printer" | "scanner" | "storage" | "backup" | "remote" | "about";
+type SettingsNavItem = { id: SettingsSection; label: string; description: string; meta: string; tone: string };
+
 function SettingsScreen({ repo, staff, settings, language, refreshSettings }: { repo: PosRepository; staff: Staff; settings: AppSettings; language: Language; refreshSettings: () => Promise<void> }) {
   const [form, setForm] = useState(settings);
-  const [section, setSection] = useState("store");
+  const [openSection, setOpenSection] = useState<SettingsSection | null>(null);
   const [health, setHealth] = useState<StorageHealth | null>(null);
   const [logoError, setLogoError] = useState("");
+  const [saveError, setSaveError] = useState("");
+  const [busy, setBusy] = useState(false);
   useEffect(() => { setForm(settings); void repo.getStorageHealth().then(setHealth); }, [settings]);
   const set = (key: keyof AppSettings, value: string | boolean) => setForm(f => ({ ...f, [key]: value }));
-  const nav = [['store', t(language, 'storeInfo')], ['branch', t(language, 'branchDevice')], ['language', t(language, 'language')], ['owner', t(language, 'owner')], ['receipt', t(language, 'receiptSettings')], ['printer', t(language, 'printer')], ['scanner', t(language, 'scanner')], ['storage', t(language, 'storage')], ['backup', t(language, 'backupRestore')], ['remote', t(language, 'remoteManagement')], ['about', t(language, 'versionAbout')]];
-  const save = async () => { await repo.updateSettings(form, staff); await refreshSettings(); };
-  return <section className="split"><div className="panel settings-nav">{nav.map(([id, label]) => <button key={id} className={section === id ? "active" : ""} onClick={() => setSection(id)}>{label}</button>)}</div><div className="panel"><h1>{nav.find(n => n[0] === section)?.[1]}</h1>
-    {section === "language" && <label>{t(language, "language")}<select value={form.language} onChange={e => set("language", e.target.value as Language)}><option value="th">{t(language, "thai")}</option><option value="en">{t(language, "english")}</option></select></label>}
-    {section === "store" && <div className="form-grid"><label>ชื่อร้าน<input value={form.storeName} onChange={e => set("storeName", e.target.value)} /></label><label>สาขา<input value={form.branchName} onChange={e => set("branchName", e.target.value)} /></label><label>ที่อยู่<textarea value={form.address} onChange={e => set("address", e.target.value)} /></label><label>เบอร์โทรศัพท์<input value={form.phone} onChange={e => set("phone", e.target.value)} /></label><label>เลขผู้เสียภาษี<input value={form.taxId} onChange={e => set("taxId", e.target.value)} /></label><div className="settings-logo-preview"><img src={form.storeLogoPath || SYSTEM_LOGO} alt="โลโก้ใบเสร็จ" onError={e => { e.currentTarget.src = SYSTEM_LOGO; }} /><div><strong>โลโก้ใบเสร็จ</strong><small>{form.storeLogoPath ? "ใช้โลโก้ร้านจากการตั้งค่า" : "ยังไม่ใส่โลโก้ร้าน จะแสดงโลโก้ระบบ CpIPOS"}</small><input type="file" accept="image/png,image/jpeg,image/webp" onChange={async e => { const file = e.target.files?.[0]; if (!file) return; try { setLogoError(""); set("storeLogoPath", await readFileAsDataUrl(file)); } catch { setLogoError("อ่านไฟล์โลโก้ไม่สำเร็จ"); } }} /><button type="button" className="secondary" onClick={() => set("storeLogoPath", "")}>ใช้โลโก้ระบบ</button></div>{logoError && <ErrorMessage text={logoError} />}</div></div>}
-    {section === "branch" && <div className="form-grid"><label>Device<input value={form.deviceName} onChange={e => set("deviceName", e.target.value)} /></label><label>Device ID<input value={form.deviceId} onChange={e => set("deviceId", e.target.value)} /></label></div>}
-    {section === "receipt" && <div className="form-grid"><label>ชื่อหัวใบเสร็จ<input value={form.receiptHeader} onChange={e => set("receiptHeader", e.target.value)} /></label><label>ข้อความท้ายใบเสร็จ<input value={form.receiptFooter} onChange={e => set("receiptFooter", e.target.value)} /></label><label>ที่อยู่บนใบเสร็จ<textarea value={form.address} onChange={e => set("address", e.target.value)} /></label><label>เบอร์โทรบนใบเสร็จ<input value={form.phone} onChange={e => set("phone", e.target.value)} /></label><label>เลขผู้เสียภาษี<input value={form.taxId} onChange={e => set("taxId", e.target.value)} /></label></div>}
-    {section === "printer" && <div className="printer-setup-card"><strong>ตั้งค่าเครื่องพิมพ์ใบเสร็จ 80mm</strong><p className="warning">โหมดนี้ใช้ Windows Print Dialog เพื่อเลือกเครื่องพิมพ์จริงที่ติดตั้งใน Windows แล้ว เช่น thermal printer 80mm. ตั้งค่าครั้งแรกแล้ว Windows จะจำค่าเครื่องพิมพ์ตามระบบ</p><div className="form-grid"><label>ชื่อเครื่องพิมพ์<input placeholder="เช่น XP-80C / POS-80 / Rongta 80mm" value={form.printerName} onChange={e => set("printerName", e.target.value)} /></label><label>ชนิดการพิมพ์<select value={form.printerType} onChange={e => set("printerType", e.target.value)}><option value="windows-print-dialog">Windows Print Dialog</option><option value="not-configured">ยังไม่ได้ตั้งค่า</option></select></label><label>ขนาดกระดาษ<select value={form.printerPaperWidthMm} onChange={e => set("printerPaperWidthMm", e.target.value)}><option value="80">80mm</option><option value="58">58mm</option></select></label><label>หมายเหตุการเชื่อมต่อ<input value={form.printerConnectionNote} onChange={e => set("printerConnectionNote", e.target.value)} /></label></div><p>เมื่อกดปุ่ม <strong>พิมพ์ใบเสร็จ 80mm</strong> ระบบจะเปิดหน้าต่างพิมพ์ของ Windows ให้เลือกเครื่องพิมพ์จริง</p></div>}
-    {section === "scanner" && <p>{form.scannerMode}</p>}{section === "storage" && <StoragePanel health={health} />} {['backup', 'remote'].includes(section) && <p className="warning">{t(language, "notReady")}</p>} {section === "owner" && <p className="warning">{t(language, "demoPin")}</p>} {section === "about" && <p>CpIPOS Desktop 0.1.0</p>}<p className="warning">{t(language, "recordOnly")}</p><button onClick={() => void save()}>{t(language, "save")}</button></div></section>;
+  const nav: SettingsNavItem[] = [
+    { id: "store", label: t(language, "storeInfo"), description: "ชื่อร้าน โลโก้ ที่อยู่ และเลขผู้เสียภาษี", meta: form.storeName || "ยังไม่ระบุชื่อร้าน", tone: "blue" },
+    { id: "branch", label: t(language, "branchDevice"), description: "ชื่อสาขา เครื่องขาย และรหัสอุปกรณ์", meta: form.deviceName || form.deviceId, tone: "cyan" },
+    { id: "language", label: t(language, "language"), description: "ภาษาแสดงผลของหน้าจอ POS", meta: form.language === "th" ? t(language, "thai") : t(language, "english"), tone: "green" },
+    { id: "owner", label: t(language, "owner"), description: "ข้อมูลเจ้าของร้านและบันทึก PIN เดโม", meta: form.ownerName || "Owner", tone: "violet" },
+    { id: "receipt", label: t(language, "receiptSettings"), description: "ข้อความหัวท้ายใบเสร็จและข้อมูลร้านบนใบเสร็จ", meta: form.receiptHeader || "CpIPOS", tone: "amber" },
+    { id: "printer", label: t(language, "printer"), description: "เครื่องพิมพ์ใบเสร็จและขนาดกระดาษ", meta: form.printerName || "ยังไม่ได้เลือกเครื่องพิมพ์", tone: "slate" },
+    { id: "scanner", label: t(language, "scanner"), description: "โหมดรับค่าจากเครื่องอ่านบาร์โค้ด", meta: form.scannerMode, tone: "teal" },
+    { id: "storage", label: t(language, "storage"), description: "พื้นที่จัดเก็บ ฐานข้อมูล ยอดขาย และ audit", meta: health ? health.salesCount.toLocaleString("th-TH") + " sales" : "กำลังตรวจสอบ", tone: "indigo" },
+    { id: "backup", label: t(language, "backupRestore"), description: "สำรองและกู้คืนข้อมูลเครื่องขาย", meta: t(language, "notReady"), tone: "orange" },
+    { id: "remote", label: t(language, "remoteManagement"), description: "การจัดการระยะไกลและสถานะการเชื่อมต่อ", meta: t(language, "notReady"), tone: "pink" },
+    { id: "about", label: t(language, "versionAbout"), description: "เวอร์ชันแอปและข้อมูลระบบ", meta: "CpIPOS Desktop 0.1.0", tone: "gray" },
+  ];
+  const selected = nav.find(item => item.id === openSection) || null;
+  const open = (id: SettingsSection) => { setForm(settings); setLogoError(""); setSaveError(""); setOpenSection(id); if (id === "storage") void repo.getStorageHealth().then(setHealth); };
+  const close = () => { if (busy) return; setForm(settings); setLogoError(""); setSaveError(""); setOpenSection(null); };
+  const save = async () => {
+    setBusy(true);
+    setSaveError("");
+    try {
+      await repo.updateSettings(form, staff);
+      await refreshSettings();
+      setOpenSection(null);
+    } catch {
+      setSaveError("บันทึกการตั้งค่าไม่สำเร็จ");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <section className="panel settings-page">
+    <div className="settings-page-head"><div><span className="settings-kicker">CpIPOS Settings</span><h1>{t(language, "settings")}</h1><p>เลือกหมวดที่ต้องการตั้งค่า ระบบจะแสดงฟอร์มเป็น POP UP เพื่อแก้ไขทีละส่วน</p></div></div>
+    <div className="settings-menu-grid">{nav.map(item => <button key={item.id} className={"settings-menu-card " + item.tone} onClick={() => open(item.id)}>
+      <span className="settings-menu-icon"><SettingsIcon section={item.id} /></span>
+      <span className="settings-menu-copy"><strong>{item.label}</strong><small>{item.description}</small><em>{item.meta}</em></span>
+      <span className="settings-menu-arrow">›</span>
+    </button>)}</div>
+    {selected && <SettingsModal item={selected} section={selected.id} form={form} health={health} language={language} logoError={logoError} saveError={saveError} busy={busy} set={set} setLogoError={setLogoError} onSave={save} onClose={close} />}
+  </section>;
+}
+
+function SettingsModal({ item, section, form, health, language, logoError, saveError, busy, set, setLogoError, onSave, onClose }: { item: SettingsNavItem; section: SettingsSection; form: AppSettings; health: StorageHealth | null; language: Language; logoError: string; saveError: string; busy: boolean; set: (key: keyof AppSettings, value: string | boolean) => void; setLogoError: (value: string) => void; onSave: () => Promise<void>; onClose: () => void }) {
+  const editable = !["storage", "backup", "remote", "about"].includes(section);
+  return <Modal title={item.label} onClose={busy ? () => {} : onClose}>
+    <div className={"settings-modal-body " + item.tone}>
+      <div className="settings-modal-intro"><span className="settings-menu-icon"><SettingsIcon section={section} /></span><div><strong>{item.description}</strong><small>{item.meta}</small></div></div>
+      {section === "language" && <label>{t(language, "language")}<select value={form.language} onChange={e => set("language", e.target.value as Language)}><option value="th">{t(language, "thai")}</option><option value="en">{t(language, "english")}</option></select></label>}
+      {section === "store" && <div className="settings-form-grid"><label>ชื่อร้าน<input value={form.storeName} onChange={e => set("storeName", e.target.value)} /></label><label>สาขา<input value={form.branchName} onChange={e => set("branchName", e.target.value)} /></label><label>ที่อยู่<textarea value={form.address} onChange={e => set("address", e.target.value)} /></label><label>เบอร์โทรศัพท์<input value={form.phone} onChange={e => set("phone", e.target.value)} /></label><label>เลขผู้เสียภาษี<input value={form.taxId} onChange={e => set("taxId", e.target.value)} /></label><div className="settings-logo-preview"><img src={form.storeLogoPath || SYSTEM_LOGO} alt="โลโก้ใบเสร็จ" onError={e => { e.currentTarget.src = SYSTEM_LOGO; }} /><div><strong>โลโก้ใบเสร็จ</strong><small>{form.storeLogoPath ? "ใช้โลโก้ร้านจากการตั้งค่า" : "ยังไม่ใส่โลโก้ร้าน จะแสดงโลโก้ระบบ CpIPOS"}</small><input type="file" accept="image/png,image/jpeg,image/webp" onChange={async e => { const file = e.target.files?.[0]; if (!file) return; try { setLogoError(""); set("storeLogoPath", await readFileAsDataUrl(file)); } catch { setLogoError("อ่านไฟล์โลโก้ไม่สำเร็จ"); } }} /><button type="button" className="secondary" onClick={() => set("storeLogoPath", "")}>ใช้โลโก้ระบบ</button></div>{logoError && <ErrorMessage text={logoError} />}</div></div>}
+      {section === "branch" && <div className="settings-form-grid"><label>ชื่อสาขา<input value={form.branchName} onChange={e => set("branchName", e.target.value)} /></label><label>Device<input value={form.deviceName} onChange={e => set("deviceName", e.target.value)} /></label><label>Device ID<input value={form.deviceId} onChange={e => set("deviceId", e.target.value)} /></label></div>}
+      {section === "owner" && <div className="settings-form-grid"><label>ชื่อเจ้าของร้าน<input value={form.ownerName} onChange={e => set("ownerName", e.target.value)} /></label><label>บันทึก PIN เดโม<input value={form.ownerPinNote} onChange={e => set("ownerPinNote", e.target.value)} /></label><p className="warning settings-wide">{t(language, "demoPin")}</p></div>}
+      {section === "receipt" && <div className="settings-form-grid"><label>ชื่อหัวใบเสร็จ<input value={form.receiptHeader} onChange={e => set("receiptHeader", e.target.value)} /></label><label>ข้อความท้ายใบเสร็จ<input value={form.receiptFooter} onChange={e => set("receiptFooter", e.target.value)} /></label><label>ที่อยู่บนใบเสร็จ<textarea value={form.address} onChange={e => set("address", e.target.value)} /></label><label>เบอร์โทรบนใบเสร็จ<input value={form.phone} onChange={e => set("phone", e.target.value)} /></label><label>เลขผู้เสียภาษี<input value={form.taxId} onChange={e => set("taxId", e.target.value)} /></label></div>}
+      {section === "printer" && <div className="printer-setup-card"><strong>ตั้งค่าเครื่องพิมพ์ใบเสร็จ 80mm</strong><p className="warning">โหมดนี้ใช้ Windows Print Dialog เพื่อเลือกเครื่องพิมพ์จริงที่ติดตั้งใน Windows แล้ว เช่น thermal printer 80mm. ตั้งค่าครั้งแรกแล้ว Windows จะจำค่าเครื่องพิมพ์ตามระบบ</p><div className="settings-form-grid"><label>ชื่อเครื่องพิมพ์<input placeholder="เช่น XP-80C / POS-80 / Rongta 80mm" value={form.printerName} onChange={e => set("printerName", e.target.value)} /></label><label>ชนิดการพิมพ์<select value={form.printerType} onChange={e => set("printerType", e.target.value)}><option value="windows-print-dialog">Windows Print Dialog</option><option value="not-configured">ยังไม่ได้ตั้งค่า</option></select></label><label>ขนาดกระดาษ<select value={form.printerPaperWidthMm} onChange={e => set("printerPaperWidthMm", e.target.value)}><option value="80">80mm</option><option value="58">58mm</option></select></label><label>หมายเหตุการเชื่อมต่อ<input value={form.printerConnectionNote} onChange={e => set("printerConnectionNote", e.target.value)} /></label></div><p>เมื่อกดปุ่ม <strong>พิมพ์ใบเสร็จ 80mm</strong> ระบบจะเปิดหน้าต่างพิมพ์ของ Windows ให้เลือกเครื่องพิมพ์จริง</p></div>}
+      {section === "scanner" && <div className="settings-form-grid"><label>โหมดเครื่องอ่านบาร์โค้ด<select value={form.scannerMode} onChange={e => set("scannerMode", e.target.value)}><option value="keyboard-wedge">Keyboard wedge / กด Enter หลังสแกน</option><option value="manual">Manual input / พิมพ์เอง</option></select></label><p className="warning settings-wide">เครื่องอ่านบาร์โค้ดทั่วไปควรใช้โหมด keyboard-wedge เพื่อส่งค่าเข้าช่องค้นหาเหมือนแป้นพิมพ์</p></div>}
+      {section === "storage" && <StoragePanel health={health} />}
+      {section === "backup" && <p className="warning">{t(language, "notReady")} - ฟังก์ชันสำรองและกู้คืนจะเปิดใช้เมื่อระบบ backup local storage เสร็จสมบูรณ์</p>}
+      {section === "remote" && <div className="settings-form-grid"><label className="inline-check settings-wide"><input type="checkbox" checked={form.remoteManagementEnabled} disabled readOnly /> เปิด Remote Management</label><p className="warning settings-wide">{t(language, "notReady")} - ยังไม่เปิดการจัดการระยะไกลในรุ่นนี้</p></div>}
+      {section === "about" && <div className="metric-grid"><Metric label="App" value="CpIPOS Desktop" /><Metric label="Version" value="0.1.0" /><Metric label="Mode" value="Offline POS" /></div>}
+      {editable && <p className="warning">{t(language, "recordOnly")}</p>}
+      {saveError && <ErrorMessage text={saveError} />}
+      <div className="actions modal-footer">{editable && <button disabled={busy} onClick={() => void onSave()}>{busy ? t(language, "submitBusy") : t(language, "save")}</button>}<button className="secondary" disabled={busy} onClick={onClose}>{t(language, "back")}</button></div>
+    </div>
+  </Modal>;
+}
+
+function SettingsIcon({ section }: { section: SettingsSection }) {
+  switch (section) {
+    case "store": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5"/><path d="M6 10v9h12v-9"/><path d="M9 19v-5h6v5"/></svg>;
+    case "branch": return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="11" rx="2"/><path d="M9 20h6"/><path d="M12 16v4"/></svg>;
+    case "language": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h10"/><path d="M9 5v14"/><path d="M5 19c3-3 5-7 6-14"/><path d="M12 12c-1.5-1-3-3-4-5"/><path d="m15 19 3-8 3 8"/><path d="M16 16h4"/></svg>;
+    case "owner": return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M5 20c1.5-4 12.5-4 14 0"/></svg>;
+    case "receipt": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10v16l-2-1.2-2 1.2-2-1.2-2 1.2-2-1.2z"/><path d="M9 9h6"/><path d="M9 13h6"/></svg>;
+    case "printer": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8V4h10v4"/><rect x="5" y="8" width="14" height="8" rx="2"/><path d="M8 14h8v6H8z"/></svg>;
+    case "scanner": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7V5h4"/><path d="M15 5h4v2"/><path d="M19 17v2h-4"/><path d="M9 19H5v-2"/><path d="M7 12h10"/><path d="M9 9v6"/><path d="M12 9v6"/><path d="M15 9v6"/></svg>;
+    case "storage": return <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>;
+    case "backup": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7a7 7 0 1 1-1 9"/><path d="M7 7H3V3"/><path d="M12 8v5l3 2"/></svg>;
+    case "remote": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9a12 12 0 0 1 16 0"/><path d="M7 12a7.5 7.5 0 0 1 10 0"/><path d="M10 15a3 3 0 0 1 4 0"/><circle cx="12" cy="18" r="1"/></svg>;
+    case "about": return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg>;
+  }
 }
 
 function LogoutModal({ repo, staff, shift, settings, onClose, onConfirm }: { repo: PosRepository; staff: Staff; shift: Shift; settings: AppSettings; onClose: () => void; onConfirm: () => Promise<void> }) {

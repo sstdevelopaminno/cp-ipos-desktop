@@ -46,4 +46,4 @@ Reports use the workspace body as the vertical scroll area on shorter desktop sc
 
 Barcode scan input keeps focus after successful scans, unknown scans and completed payments. Unknown barcode flow preserves the scanned code and pre-fills Add Product.
 
-Settings uses section navigation and marks backup/restore and remote management as not ready instead of showing fake success.
+Settings uses icon-based section cards. Each section opens in a modal, and backup/restore plus remote management remain marked as not ready instead of showing fake success.
