@@ -18,6 +18,15 @@ const nowTime = () => new Date().toLocaleTimeString("th-TH", { hour: "2-digit", 
 const SYSTEM_LOGO = "/icon.png";
 const completeStartupSplash = async () => { try { await invoke("complete_startup_splash"); } catch { /* Browser preview fallback. */ } };
 const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result || "")); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); });
+type ScreenProfile = { width: number; height: number; shortNav: boolean; compactNav: boolean };
+const detectScreenProfile = (): ScreenProfile => {
+  if (typeof window === "undefined") return { width: 1366, height: 768, shortNav: false, compactNav: false };
+  const viewport = window.visualViewport;
+  const width = Math.round(viewport?.width || window.innerWidth || 1366);
+  const height = Math.round(viewport?.height || window.innerHeight || 768);
+  return { width, height, shortNav: height <= 820, compactNav: width < 1180 || height < 700 };
+};
+
 const lowStockBody = (products: Product[], language: Language) => {
   const names = products.slice(0, 4).map(p => `${productName(language, p)} เหลือ ${p.stockQuantity} ${p.unit}`).join(" · ");
   return products.length ? `มีสินค้าใกล้หมด/หมด ${products.length} รายการ${names ? `: ${names}` : ""}` : "";
@@ -49,9 +58,13 @@ export default function App() {
   const [view, setView] = useState<View>("sales");
   const [error, setError] = useState("");
   const [splashStep, setSplashStep] = useState(0);
+  const [screenProfile, setScreenProfile] = useState<ScreenProfile>(() => detectScreenProfile());
   const [closeShift, setCloseShift] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
-  const [navCollapsed, setNavCollapsed] = useState(() => localStorage.getItem("cpipos.nav.collapsed") === "1");
+  const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
+    const saved = localStorage.getItem("cpipos.nav.collapsed");
+    return saved === null ? detectScreenProfile().compactNav : saved === "1";
+  });
   const [clock, setClock] = useState(nowTime());
   const language: Language = settings?.language || "th";
   const splashTexts = [t(language, "loading"), t(language, "loadingDb"), t(language, "loadingShift")];
@@ -60,6 +73,21 @@ export default function App() {
   const refreshShift = async (r = repo) => { if (r) setShift(await r.getActiveShift()); };
 
   useEffect(() => { const id = window.setInterval(() => setClock(nowTime()), 30000); return () => window.clearInterval(id); }, []);
+  useEffect(() => {
+    const applyProfile = () => {
+      const next = detectScreenProfile();
+      setScreenProfile(next);
+      document.documentElement.style.setProperty("--app-vh", next.height + "px");
+      localStorage.setItem("cpipos.screen.currentProfile", JSON.stringify({ ...next, capturedAt: new Date().toISOString() }));
+      if (!localStorage.getItem("cpipos.screen.initialProfile")) {
+        localStorage.setItem("cpipos.screen.initialProfile", JSON.stringify({ ...next, devicePixelRatio: window.devicePixelRatio || 1, capturedAt: new Date().toISOString() }));
+      }
+    };
+    applyProfile();
+    window.addEventListener("resize", applyProfile);
+    window.visualViewport?.addEventListener("resize", applyProfile);
+    return () => { window.removeEventListener("resize", applyProfile); window.visualViewport?.removeEventListener("resize", applyProfile); };
+  }, []);
   useEffect(() => { const id = window.setInterval(() => setSplashStep(s => s >= 3 ? s : Math.min(2, s + 1)), 260); return () => window.clearInterval(id); }, []);
   useEffect(() => { localStorage.setItem("cpipos.nav.collapsed", navCollapsed ? "1" : "0"); }, [navCollapsed]);
   useEffect(() => {
@@ -109,8 +137,11 @@ export default function App() {
     { id: "settings", label: t(language, "settings"), icon: "settings" as const },
   ];
 
-  return <main className={`app-shell ${navCollapsed ? "nav-collapsed" : ""}`}>
-    <AppSidebar collapsed={navCollapsed} active={view} items={nav} onToggle={() => setNavCollapsed(v => !v)} onSelect={id => setView(id as View)} onCloseShift={() => setCloseShift(true)} onLogout={() => setLogoutOpen(true)} />
+  const effectiveNavCollapsed = screenProfile.compactNav || navCollapsed;
+  const shellClassName = "app-shell " + (effectiveNavCollapsed ? "nav-collapsed " : "") + (screenProfile.shortNav ? "nav-short " : "") + (screenProfile.compactNav ? "nav-auto-compact" : "");
+
+  return <main className={shellClassName}>
+    <AppSidebar collapsed={effectiveNavCollapsed} compactLocked={screenProfile.compactNav} active={view} items={nav} onToggle={() => { if (!screenProfile.compactNav) setNavCollapsed(v => !v); }} onSelect={id => setView(id as View)} onCloseShift={() => setCloseShift(true)} onLogout={() => setLogoutOpen(true)} />
     <section className="workspace">
       <header className="topbar">
         <div><strong>CpIPOS</strong><span>{settings.storeName} / {settings.branchName}</span></div>

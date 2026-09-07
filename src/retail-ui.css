@@ -10,9 +10,9 @@
   --retail-danger:#e23b45;
 }
 
-.app-shell{grid-template-columns:232px minmax(0,1fr);transition:grid-template-columns .18s ease}
+.app-shell{height:var(--app-vh,100vh);min-height:0;grid-template-columns:232px minmax(0,1fr);transition:grid-template-columns .18s ease}
 .app-shell.nav-collapsed{grid-template-columns:78px minmax(0,1fr)}
-.retail-side-nav{position:relative;min-height:0;padding:14px 12px;background:linear-gradient(180deg,var(--retail-nav),var(--retail-nav-2));gap:8px;transition:width .18s ease,padding .18s ease}
+.retail-side-nav{position:relative;height:var(--app-vh,100vh);max-height:var(--app-vh,100vh);min-height:0;padding:14px 12px;background:linear-gradient(180deg,var(--retail-nav),var(--retail-nav-2));gap:8px;overflow:hidden;transition:width .18s ease,padding .18s ease}
 .retail-side-nav.collapsed{padding-left:9px;padding-right:9px}
 .retail-side-brand{min-height:68px;padding:4px 6px 10px}
 .retail-side-brand img{width:44px;height:44px;flex:0 0 auto}
@@ -20,7 +20,7 @@
 .retail-side-brand small{font-size:12px}
 .nav-collapse-button{display:flex!important;align-items:center!important;justify-content:center!important;gap:8px!important;min-height:42px!important;flex:0 0 auto!important;padding:8px 10px!important;margin:0 2px 5px!important;border:1px solid rgba(255,255,255,.12)!important;background:rgba(255,255,255,.07)!important;color:#d9ebff!important;text-align:center!important}
 .nav-collapse-button svg{width:20px;height:20px;flex:0 0 auto}
-.retail-nav-list{min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:7px;padding-right:2px;scrollbar-gutter:stable}
+.retail-nav-list{min-height:0;flex:1 1 auto;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:7px;padding-right:2px;scrollbar-gutter:stable}
 .retail-nav-list::-webkit-scrollbar{width:7px}
 .retail-nav-list::-webkit-scrollbar-thumb{background:rgba(217,235,255,.34);border-radius:999px}
 .retail-nav-list::-webkit-scrollbar-track{background:transparent}
@@ -29,6 +29,26 @@
 .nav-icon{width:22px;height:22px;flex:0 0 auto}
 .retail-side-nav.collapsed .retail-nav-list button{justify-content:center;padding:11px 8px!important}
 .retail-side-nav.collapsed .nav-collapse-button{padding:8px!important}
+.nav-bottom-actions{position:sticky;bottom:0;z-index:3;flex:0 0 auto;display:grid;gap:10px;margin-top:auto;padding-top:10px;background:linear-gradient(180deg,rgba(10,50,107,0),var(--retail-nav-2) 22%)}
+.nav-bottom-actions button{display:flex;align-items:center;gap:12px;min-height:54px;width:100%;padding:12px 15px!important;border:1px solid rgba(255,255,255,.18)!important;border-radius:16px!important;background:rgba(255,255,255,.08)!important;color:#f4f8ff!important;font-weight:900;text-align:left;white-space:nowrap;overflow:hidden}
+.nav-bottom-actions button span{overflow:hidden;text-overflow:ellipsis}
+.nav-bottom-actions button:hover{background:rgba(255,255,255,.14)!important}
+.nav-close-shift-button{border-color:rgba(255,179,94,.7)!important;background:rgba(255,179,94,.12)!important}
+.nav-logout-button{background:rgba(96,165,250,.12)!important}
+.retail-side-nav.collapsed .nav-bottom-actions button{justify-content:center;padding:10px 8px!important}
+.retail-side-nav.compact-locked .nav-collapse-button{opacity:.65}
+.app-shell.nav-short .retail-side-nav{padding-top:10px;padding-bottom:10px;gap:6px}
+.app-shell.nav-short .retail-side-brand{min-height:52px;padding-bottom:4px}
+.app-shell.nav-short .retail-side-brand img{width:38px;height:38px}
+.app-shell.nav-short .retail-side-brand strong{font-size:20px}
+.app-shell.nav-short .retail-side-brand small{font-size:11px}
+.app-shell.nav-short .nav-collapse-button{min-height:38px!important;margin-bottom:2px!important;padding-top:7px!important;padding-bottom:7px!important}
+.app-shell.nav-short .retail-nav-list{gap:4px}
+.app-shell.nav-short .retail-nav-list button{min-height:42px;padding-top:8px!important;padding-bottom:8px!important}
+.app-shell.nav-short .nav-bottom-actions{gap:7px;padding-top:8px}
+.app-shell.nav-short .nav-bottom-actions button{min-height:42px;padding-top:8px!important;padding-bottom:8px!important;border-radius:14px!important}
+@media(max-height:700px){.retail-side-brand small{display:none}.app-shell:not(.nav-collapsed) .retail-nav-list button{min-height:39px}.app-shell:not(.nav-collapsed) .nav-bottom-actions button{min-height:40px}}
+
 
 .view-body.sales-view{padding:10px;background:#f1f5f9}
 .retail-sale-layout{height:100%;display:grid;grid-template-columns:minmax(0,1fr) 365px;gap:10px;min-width:0;overflow:hidden}

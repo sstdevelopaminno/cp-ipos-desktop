@@ -5,6 +5,7 @@ type NavItem = { id: string; label: string; icon: "sale" | "stock" | "history" |
 
 type Props = {
   collapsed: boolean;
+  compactLocked?: boolean;
   active: string;
   items: NavItem[];
   onToggle: () => void;
@@ -28,13 +29,14 @@ function NavIcon({ name }: { name: NavItem["icon"] }) {
   return <svg className="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
-export function AppSidebar({ collapsed, active, items, onToggle, onSelect, onCloseShift, onLogout }: Props) {
-  return <aside className={`side-nav retail-side-nav ${collapsed ? "collapsed" : ""}`}>
+export function AppSidebar({ collapsed, compactLocked = false, active, items, onToggle, onSelect, onCloseShift, onLogout }: Props) {
+  const toggleLabel = compactLocked ? "หน้าจอเล็ก ระบบย่อเมนูให้อัตโนมัติ" : collapsed ? "ขยายเมนู" : "ย่อเมนู";
+  return <aside className={"side-nav retail-side-nav " + (collapsed ? "collapsed " : "") + (compactLocked ? "compact-locked" : "")}>
     <div className="side-brand retail-side-brand">
       <img src="/icon.png" alt="CpIPOS" />
       {!collapsed && <div><strong>CpIPOS</strong><small>Desktop POS</small></div>}
     </div>
-    <button className="nav-collapse-button" onClick={onToggle} title={collapsed ? "ขยายเมนู" : "ย่อเมนู"} aria-label={collapsed ? "ขยายเมนู" : "ย่อเมนู"}>
+    <button className="nav-collapse-button" onClick={onToggle} disabled={compactLocked} title={toggleLabel} aria-label={toggleLabel}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d={collapsed ? "m9 18 6-6-6-6" : "m15 18-6-6 6-6"}/></svg>
       {!collapsed && <span>ย่อเมนู</span>}
     </button>
@@ -44,7 +46,7 @@ export function AppSidebar({ collapsed, active, items, onToggle, onSelect, onClo
         {!collapsed && <span>{item.label}</span>}
       </button>)}
     </nav>
-    <div className="nav-bottom-actions">
+    <div className="nav-bottom-actions" aria-label="คำสั่งท้ายเมนู">
       <button className="nav-close-shift-button" onClick={onCloseShift} title={collapsed ? "ปิดยอด" : undefined} aria-label="ปิดยอด">
         <NavIcon name="close" />
         {!collapsed && <span>ปิดยอด</span>}

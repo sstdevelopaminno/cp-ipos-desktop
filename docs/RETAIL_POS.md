@@ -46,4 +46,4 @@ Reports use the workspace body as the vertical scroll area on shorter desktop sc
 
 Barcode scan input keeps focus after successful scans, unknown scans and completed payments. Unknown barcode flow preserves the scanned code and pre-fills Add Product.
 
-Settings uses icon-based section cards. Each section opens in a modal, and backup/restore plus remote management remain marked as not ready instead of showing fake success.
+Settings uses icon-based section cards. Each section opens in a modal, and backup/restore plus remote management remain marked as not ready instead of showing fake success. The sidebar records the first detected viewport profile, applies the real visual viewport height, and keeps close-shift/logout actions locked inside the visible screen on short displays.
