@@ -151,13 +151,75 @@ function ReportsScreen({ repo, language }: { repo: PosRepository; language: Lang
 
 function EmployeesScreen({ repo, staff, language }: { repo: PosRepository; staff: Staff; language: Language }) {
   const [rows, setRows] = useState<Staff[]>([]);
-  const [code, setCode] = useState("");
-  const [name, setName] = useState("");
-  const [pin, setPin] = useState("");
-  const [role, setRole] = useState<Staff["role"]>("staff");
+  const [formTarget, setFormTarget] = useState<Staff | "new" | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Staff | null>(null);
   const load = async () => setRows(await repo.listEmployees());
   useEffect(() => { void load(); }, []);
-  return <section className="panel"><div className="toolbar"><h1>{t(language, "employees")}</h1></div><p className="warning">{t(language, "demoPin")}</p><div className="form-grid"><input placeholder={t(language, "employeeCode")} value={code} onChange={e => setCode(e.target.value)} /><input placeholder="Name" value={name} onChange={e => setName(e.target.value)} /><input placeholder="Demo PIN" value={pin} onChange={e => setPin(e.target.value)} /><select value={role} onChange={e => setRole(e.target.value as Staff["role"])}><option value="staff">staff</option><option value="manager">manager</option><option value="owner">owner</option></select></div><button onClick={async () => { await repo.saveEmployee({ code, displayName: name, role, active: true, demoPin: pin }, staff); setCode(""); setName(""); setPin(""); await load(); }}>{t(language, "save")}</button><table><tbody>{rows.map(r => <tr key={r.id}><td>{r.displayName}</td><td>{r.code}</td><td>{r.role}</td><td>{r.active !== false ? t(language, "active") : t(language, "inactive")}</td></tr>)}</tbody></table></section>;
+  return <section className="panel employees-page">
+    <div className="employees-toolbar">
+      <div><h1>{t(language, "employees")}</h1><p>{t(language, "demoPin")}</p></div>
+      <button className="inventory-primary" onClick={() => setFormTarget("new")}>เพิ่มพนักงาน</button>
+    </div>
+    <div className="employees-table-shell">
+      <div className="employees-table-summary"><strong>{rows.length.toLocaleString("th-TH")} รายการ</strong><span>จัดการรหัสพนักงาน สิทธิ์ และสถานะใช้งาน</span></div>
+      <div className="employees-table-wrap">
+        <table className="employees-table"><thead><tr><th>ชื่อพนักงาน</th><th>รหัส</th><th>สิทธิ์</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>{rows.map(row => {
+          const isCurrent = row.id === staff.id;
+          return <tr key={row.id}><td><strong>{row.displayName}</strong>{isCurrent && <small>ผู้ใช้งานปัจจุบัน</small>}</td><td>{row.code}</td><td>{row.role}</td><td><span className={row.active !== false ? "badge normal" : "badge cancelled"}>{row.active !== false ? t(language, "active") : t(language, "inactive")}</span></td><td><div className="inventory-actions"><button className="inventory-action edit" onClick={() => setFormTarget(row)}>แก้ไข</button><button className="inventory-action delete" disabled={isCurrent} onClick={() => setDeleteTarget(row)}>ลบ</button></div></td></tr>;
+        })}</tbody></table>
+      </div>
+    </div>
+    {formTarget && <EmployeeFormModal repo={repo} staff={staff} language={language} initial={formTarget === "new" ? undefined : formTarget} onClose={() => setFormTarget(null)} onSaved={async () => { setFormTarget(null); await load(); }} />}
+    {deleteTarget && <DeleteEmployeeModal repo={repo} staff={staff} employee={deleteTarget} onClose={() => setDeleteTarget(null)} onDeleted={async () => { setDeleteTarget(null); await load(); }} />}
+  </section>;
+}
+
+function EmployeeFormModal({ repo, staff, language, initial, onClose, onSaved }: { repo: PosRepository; staff: Staff; language: Language; initial?: Staff; onClose: () => void; onSaved: () => Promise<void> }) {
+  const [code, setCode] = useState(initial?.code || "");
+  const [name, setName] = useState(initial?.displayName || "");
+  const [pin, setPin] = useState("");
+  const [role, setRole] = useState<Staff["role"]>(initial?.role || "staff");
+  const [active, setActive] = useState(initial?.active !== false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const submit = async () => {
+    if (!code.trim() || !name.trim()) { setError("กรอกรหัสพนักงานและชื่อพนักงาน"); return; }
+    setBusy(true);
+    setError("");
+    try {
+      await repo.saveEmployee({ id: initial?.id, code, displayName: name, role, active, demoPin: pin || undefined }, staff);
+      await onSaved();
+    } catch (err) {
+      setError(err instanceof Error && err.message === "EMPLOYEE_CODE_EXISTS" ? "รหัสพนักงานนี้ถูกใช้แล้ว" : "บันทึกพนักงานไม่สำเร็จ");
+      setBusy(false);
+    }
+  };
+  return <Modal title={initial ? "แก้ไขพนักงาน" : "เพิ่มพนักงาน"} onClose={busy ? () => {} : onClose}>
+    <div className="employee-form-grid"><label>{t(language, "employeeCode")}<input value={code} onChange={e => setCode(e.target.value)} autoFocus /></label><label>Name<input value={name} onChange={e => setName(e.target.value)} /></label><label>Demo PIN<input value={pin} onChange={e => setPin(e.target.value)} placeholder={initial ? "เว้นว่างเพื่อใช้ PIN เดิม" : "Demo PIN"} /></label><label>{t(language, "role")}<select value={role} onChange={e => setRole(e.target.value as Staff["role"])}><option value="staff">staff</option><option value="manager">manager</option><option value="owner">owner</option></select></label><label>{t(language, "status")}<select value={active ? "1" : "0"} onChange={e => setActive(e.target.value === "1")}><option value="1">{t(language, "active")}</option><option value="0">{t(language, "inactive")}</option></select></label></div>
+    {error && <ErrorMessage text={error} />}
+    <div className="actions modal-footer"><button disabled={busy} onClick={() => void submit()}>{busy ? t(language, "submitBusy") : t(language, "save")}</button><button className="secondary" disabled={busy} onClick={onClose}>{t(language, "back")}</button></div>
+  </Modal>;
+}
+
+function DeleteEmployeeModal({ repo, staff, employee, onClose, onDeleted }: { repo: PosRepository; staff: Staff; employee: Staff; onClose: () => void; onDeleted: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const confirm = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await repo.deleteEmployee(employee.id, staff);
+      await onDeleted();
+    } catch {
+      setError("ลบพนักงานไม่สำเร็จ");
+      setBusy(false);
+    }
+  };
+  return <Modal title="ลบพนักงาน" onClose={busy ? () => {} : onClose}>
+    <div className="employee-delete-card"><strong>{employee.displayName}</strong><span>{employee.code} · {employee.role}</span><p>ระบบจะปิดใช้งานพนักงานนี้เพื่อรักษาประวัติรายการขายและ audit เดิม</p></div>
+    {error && <ErrorMessage text={error} />}
+    <div className="actions modal-footer"><button className="danger" disabled={busy} onClick={() => void confirm()}>{busy ? "กำลังลบ..." : "ยืนยันลบ"}</button><button className="secondary" disabled={busy} onClick={onClose}>กลับ</button></div>
+  </Modal>;
 }
 
 function SettingsScreen({ repo, staff, settings, language, refreshSettings }: { repo: PosRepository; staff: Staff; settings: AppSettings; language: Language; refreshSettings: () => Promise<void> }) {

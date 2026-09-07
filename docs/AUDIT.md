@@ -21,6 +21,9 @@ Recorded actions include:
 - SALE
 - SALE_VOID_RETURN
 - SETTINGS_CHANGED
+- EMPLOYEE_CREATED
+- EMPLOYEE_UPDATED
+- EMPLOYEE_DELETED
 
 Minimum fields are id, timestamp, employee id/code, role, action, entity type/id, shift id, device id, reason, status and details JSON.
 

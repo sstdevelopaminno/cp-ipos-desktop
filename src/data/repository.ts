@@ -58,6 +58,7 @@ export interface PosRepository {
   applyStockMovement(input: StockInput): Promise<StockMovement>;
   listEmployees(): Promise<Staff[]>;
   saveEmployee(input: EmployeeInput, staff: Staff): Promise<Staff>;
+  deleteEmployee(id: string, staff: Staff): Promise<void>;
   getSettings(): Promise<AppSettings>;
   updateSettings(settings: AppSettings, staff: Staff): Promise<AppSettings>;
   getStorageHealth(): Promise<StorageHealth>;
