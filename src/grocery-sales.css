@@ -163,7 +163,7 @@
 .grocery-checkout-summary .grand-total span{font-size:15px;font-weight:900;color:#28384e}
 .grocery-checkout-summary .grand-total strong{font-size:32px;line-height:1;color:var(--grocery-orange)}
 
-.grocery-shortcuts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
+.grocery-shortcuts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
 .grocery-shortcuts button{
   min-width:0;
   height:76px;
@@ -231,7 +231,7 @@
 @media(max-width:1366px){
   .grocery-pos-layout{grid-template-columns:minmax(0,1fr) 310px}
   .grocery-scan-row{grid-template-columns:minmax(260px,560px) auto auto}
-  .grocery-shortcuts button{height:70px}
+  .grocery-shortcuts button{height:64px}
   .grocery-checkout-summary .grand-total{min-height:72px}
   .grocery-checkout-summary .grand-total strong{font-size:29px}
   .grocery-pay-button{height:64px}
@@ -242,7 +242,7 @@
 @media(max-width:1120px){
   .grocery-pos-layout{grid-template-columns:minmax(0,1fr) 280px}
   .grocery-scan-row{grid-template-columns:minmax(220px,1fr) auto}.scanner-ready{display:none}.scan-clear-all{padding:0 10px!important}
-  .grocery-shortcuts button{height:64px}.grocery-shortcuts button>strong{font-size:12px}
+  .grocery-shortcuts button{height:60px}.grocery-shortcuts button>strong{font-size:12px}
   .grocery-toast{right:300px}
 }
 @media(min-width:1600px){
@@ -256,3 +256,12 @@
   .receipt-paper-80,.receipt-paper-80 *{visibility:visible!important}
   .receipt-paper-80{position:absolute;left:0;top:0;width:80mm;max-width:80mm;padding:4mm;box-shadow:none;font-size:11px}
 }
+
+
+.parked-bill-list{display:grid;gap:10px;max-height:min(58vh,520px);overflow:auto;padding-right:3px}
+.parked-bill-card{width:100%;display:grid;grid-template-columns:48px minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:12px;border:1px solid #d6e3f0;border-radius:14px;background:#fff;text-align:left;color:#16243b}
+.parked-bill-card:hover{border-color:#78b8ff;background:#f8fbff}
+.parked-bill-icon{width:48px;height:48px;border-radius:13px;display:grid;place-items:center;background:#edf6ff;color:#0969da;font-size:20px;font-weight:900}
+.parked-bill-copy{min-width:0;display:grid;gap:3px}.parked-bill-copy strong{font-size:16px}.parked-bill-copy small,.parked-bill-copy em{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#66768b;font-style:normal}.parked-bill-copy em{color:#0b6ff6;font-weight:900}
+.parked-bill-total{font-size:20px;font-weight:900;color:var(--grocery-orange);white-space:nowrap}.parked-bill-actions{display:grid;gap:5px;justify-items:end}.parked-bill-actions span,.parked-bill-actions i{padding:7px 10px;border-radius:999px;font-style:normal;font-size:12px;font-weight:900;white-space:nowrap}.parked-bill-actions span{background:#eaf4ff;color:#0969da}.parked-bill-actions i{background:#fff0f1;color:#c72833}
+@media(max-width:720px){.parked-bill-card{grid-template-columns:44px minmax(0,1fr);align-items:start}.parked-bill-total,.parked-bill-actions{justify-self:start}.parked-bill-actions{display:flex}}

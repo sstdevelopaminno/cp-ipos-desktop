@@ -14,7 +14,7 @@ import "./inventory-ui.css";
 type View = "sales" | "products" | "salesHistory" | "reports" | "employees" | "settings";
 const money = (n: number) => `฿${Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const today = () => new Date().toISOString().slice(0, 10);
-const nowTime = () => new Date().toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" });
+const nowTime = () => new Date().toLocaleString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const SYSTEM_LOGO = "/icon.png";
 const completeStartupSplash = async () => { try { await invoke("complete_startup_splash"); } catch { /* Browser preview fallback. */ } };
 const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result || "")); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); });
@@ -72,7 +72,7 @@ export default function App() {
   const refreshSettings = async (r = repo) => { if (r) setSettings(await r.getSettings()); };
   const refreshShift = async (r = repo) => { if (r) setShift(await r.getActiveShift()); };
 
-  useEffect(() => { const id = window.setInterval(() => setClock(nowTime()), 30000); return () => window.clearInterval(id); }, []);
+  useEffect(() => { const id = window.setInterval(() => setClock(nowTime()), 1000); return () => window.clearInterval(id); }, []);
   useEffect(() => {
     const applyProfile = () => {
       const next = detectScreenProfile();
@@ -145,7 +145,7 @@ export default function App() {
     <section className="workspace">
       <header className="topbar">
         <div><strong>CpIPOS</strong><span>{settings.storeName} / {settings.branchName}</span></div>
-        <div className="topbar-meta"><span>{t(language, "cashier")}: {staff.displayName}</span><span>{t(language, "role")}: {staff.role}</span><span>{t(language, "currentShift")}: {shift.id.slice(0, 8)}</span><span>{clock}</span><button onClick={() => setCloseShift(true)}>{t(language, "closeShift")}</button></div>
+        <div className="topbar-meta"><span>{t(language, "cashier")}: {staff.displayName}</span><span>{t(language, "role")}: {staff.role}</span><span>{t(language, "currentShift")}: {shift.id.slice(0, 8)}</span><span>วันที่/เวลา: {clock}</span><button onClick={() => setCloseShift(true)}>{t(language, "closeShift")}</button></div>
       </header>
       <div className={`view-body ${view === "sales" ? "sales-view" : ""} ${view === "reports" ? "reports-view" : ""}`}>
         {view === "sales" && <RetailSalesScreen repo={repo} staff={staff} shift={shift} settings={settings} products={products} language={language} refreshProducts={() => refreshProducts(repo)} />}

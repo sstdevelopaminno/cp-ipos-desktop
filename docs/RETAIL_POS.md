@@ -18,7 +18,7 @@ Supported grocery units include piece-like Thai units plus `kg`, `g`, `liter` an
 
 ## Cart and stock accuracy
 
-Adding to cart does not decrement stock. Removing cart items and cancelling a pre-payment cart write audit records only. Stock decrements after final checkout commit. Successful checkout records sale, sale items, payment, receipt, stock movement and audit data locally.
+Adding to cart does not decrement stock. Removing cart items, parking bills and cancelling a pre-payment cart do not decrement stock; cancel writes audit records only. Parked bills are stored locally by device and shift, can be restored from a popup list, and stock decrements after final checkout commit. Successful checkout records sale, sale items, payment, receipt, stock movement and audit data locally.
 
 Stock is treated as a ledger. Historical movement rows are not rewritten. Manual movement types are `STOCK_IN`, `STOCK_OUT` and `ADJUSTMENT`; sale flows add `SALE`; returned goods from voided sales add `SALE_VOID_RETURN`.
 

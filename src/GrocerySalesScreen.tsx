@@ -33,6 +33,21 @@ type CheckoutLine = {
   discountValue: number;
 };
 
+type ParkedBill = {
+  id: string;
+  label: string;
+  createdAt: string;
+  cashierName: string;
+  shiftId: string;
+  deviceId: string;
+  cart: CartLine[];
+  discount: Discount;
+  itemCount: number;
+  totalQty: number;
+  subtotal: number;
+  total: number;
+};
+
 const moneyNumber = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
 const money = (n: number) => `฿${moneyNumber(n).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const roundQty = (n: number) => Math.round((Number(n) || 0) * 1000) / 1000;
@@ -40,6 +55,17 @@ const cleanCode = (value: string) => value.trim().replace(/\s+/g, "");
 const normalizeCode = (value: string) => cleanCode(value).toLowerCase();
 const safeScanQty = (value: number | string) => Math.max(0.001, roundQty(Number(value) || 1));
 const SYSTEM_LOGO = "/icon.png";
+const parkedBillKey = (deviceId: string, shiftId: string) => `cpipos.sales.parked.${deviceId || "device"}.${shiftId || "shift"}`;
+const readParkedBills = (key: string): ParkedBill[] => {
+  try {
+    const raw = localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter(bill => bill && Array.isArray(bill.cart)) as ParkedBill[] : [];
+  } catch {
+    return [];
+  }
+};
+const writeParkedBills = (key: string, bills: ParkedBill[]) => localStorage.setItem(key, JSON.stringify(bills));
 
 function priceCart(cart: CartLine[], discount: Discount, language: Language) {
   const subtotal = moneyNumber(cart.reduce((sum, line) => sum + line.quantity * line.price, 0));
@@ -80,12 +106,15 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
   const [receipt, setReceipt] = useState<PricedReceipt | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
+  const [parkListOpen, setParkListOpen] = useState(false);
+  const [parkedBills, setParkedBills] = useState<ParkedBill[]>(() => readParkedBills(parkedBillKey(settings.deviceId, shift.id)));
   const [unknownBarcode, setUnknownBarcode] = useState("");
   const [quickAddBarcode, setQuickAddBarcode] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const totalQty = cart.reduce((sum, line) => sum + line.quantity, 0);
   const pricing = useMemo(() => priceCart(cart, discount, language), [cart, discount, language]);
+  const parkedStorageKey = useMemo(() => parkedBillKey(settings.deviceId, shift.id), [settings.deviceId, shift.id]);
 
   const productIndex = useMemo(() => {
     const index = new Map<string, Product>();
@@ -99,10 +128,19 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
     return index;
   }, [products]);
 
+  useEffect(() => {
+    setParkedBills(readParkedBills(parkedStorageKey));
+  }, [parkedStorageKey]);
+
   const replaceCart = (rows: CartLine[]) => {
     cartRef.current = rows;
     setCart(rows);
     if (!rows.length) setDiscount(null);
+  };
+
+  const persistParkedBills = (bills: ParkedBill[]) => {
+    setParkedBills(bills);
+    writeParkedBills(parkedStorageKey, bills);
   };
 
   const focusScanner = () => window.setTimeout(() => scanRef.current?.focus(), 20);
@@ -158,6 +196,54 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
     } catch {
       // Keep the checkout UI responsive even if a non-financial audit write fails.
     }
+  };
+
+  const createParkedBill = (rows: CartLine[], currentDiscount: Discount, label?: string): ParkedBill => {
+    const priced = priceCart(rows, currentDiscount, language);
+    return {
+      id: crypto.randomUUID(),
+      label: label || `บิลพัก #${parkedBills.length + 1}`,
+      createdAt: new Date().toISOString(),
+      cashierName: staff.displayName,
+      shiftId: shift.id,
+      deviceId: settings.deviceId,
+      cart: rows.map(line => ({ ...line })),
+      discount: currentDiscount ? { ...currentDiscount } : null,
+      itemCount: rows.length,
+      totalQty: roundQty(rows.reduce((sum, line) => sum + line.quantity, 0)),
+      subtotal: priced.subtotal,
+      total: priced.total,
+    };
+  };
+
+  const parkCurrentBill = () => {
+    if (busy || !cartRef.current.length) { notify("warn", "ยังไม่มีสินค้าให้พักบิล"); return; }
+    const bill = createParkedBill([...cartRef.current], discount);
+    persistParkedBills([bill, ...parkedBills]);
+    replaceCart([]);
+    setDiscount(null);
+    setPaymentChoice(false);
+    setCashOpen(false);
+    setTransferOpen(false);
+    notify("ok", `พักบิล ${bill.itemCount} รายการแล้ว`);
+    focusScanner();
+  };
+
+  const restoreParkedBill = (bill: ParkedBill) => {
+    if (busy) return;
+    const remaining = parkedBills.filter(item => item.id !== bill.id);
+    const nextParked = cartRef.current.length ? [createParkedBill([...cartRef.current], discount, "พักจากตะกร้าปัจจุบัน"), ...remaining] : remaining;
+    persistParkedBills(nextParked);
+    replaceCart(bill.cart.map(line => ({ ...line })));
+    setDiscount(bill.discount ? { ...bill.discount } : null);
+    setParkListOpen(false);
+    notify("ok", `เรียกบิลพัก ${bill.itemCount} รายการกลับมาแล้ว`);
+    focusScanner();
+  };
+
+  const removeParkedBill = (id: string) => {
+    persistParkedBills(parkedBills.filter(bill => bill.id !== id));
+    notify("ok", "ลบรายการพักบิลแล้ว");
   };
 
   const resolveScan = async (raw: string, showUnknown = true) => {
@@ -383,7 +469,8 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
         <div className="grand-total"><span>ยอดชำระ</span><strong>{money(pricing.total)}</strong></div>
       </div>
       <div className="grocery-shortcuts">
-        <button disabled title="พักบิลจะพัฒนาในรอบถัดไป"><span>▣</span><strong>พักบิล</strong></button>
+        <button disabled={!cart.length || busy} onClick={parkCurrentBill}><span>▣</span><strong>พักบิล</strong></button>
+        <button className={parkedBills.length ? "active" : ""} disabled={busy} onClick={() => setParkListOpen(true)}><span>☰</span><strong>บิลพัก</strong>{parkedBills.length > 0 && <small>{parkedBills.length} บิล</small>}</button>
         <button disabled title="ระบบสมาชิกจะพัฒนาในรอบถัดไป"><span>♙</span><strong>สมาชิก</strong></button>
         <button className={discount ? "active" : ""} disabled={!cart.length || busy} onClick={() => setDiscountOpen(true)}><span>%</span><strong>ส่วนลด</strong>{pricing.discountAmount > 0 && <small>{money(pricing.discountAmount)}</small>}</button>
       </div>
@@ -396,12 +483,25 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
     {cashOpen && <CashPayment total={pricing.total} busy={busy} onClose={() => setCashOpen(false)} onConfirm={paid => completeSale("cash", paid)} />}
     {transferOpen && <TransferPayment total={pricing.total} busy={busy} onClose={() => setTransferOpen(false)} onConfirm={() => completeSale("transfer", pricing.total)} />}
     {discountOpen && <DiscountModal subtotal={pricing.subtotal} current={discount} onClose={() => setDiscountOpen(false)} onApply={next => { setDiscount(next); setDiscountOpen(false); focusScanner(); }} />}
+    {parkListOpen && <ParkedBillsModal bills={parkedBills} onClose={() => { setParkListOpen(false); focusScanner(); }} onRestore={restoreParkedBill} onRemove={removeParkedBill} />}
     {receipt && <ReceiptView receipt={receipt} onClose={() => { setReceipt(null); focusScanner(); }} />}
     {clearOpen && <ClearCartModal count={cart.length} onClose={() => setClearOpen(false)} onConfirm={() => void clearAll()} />}
     {cancelOpen && <CancelCart repo={repo} cart={cart} staff={staff} shift={shift} settings={settings} onClose={() => setCancelOpen(false)} onDone={() => { replaceCart([]); setDiscount(null); setCancelOpen(false); focusScanner(); }} />}
     {unknownBarcode && <SimpleModal title="ไม่พบสินค้า" onClose={() => { setUnknownBarcode(""); focusScanner(); }}><div className="grocery-unknown-code">{unknownBarcode}</div><p>ยังไม่มีบาร์โค้ด/SKU นี้ในฐานข้อมูลเครื่อง</p><div className="grocery-modal-actions"><button className="secondary-action" onClick={() => { setUnknownBarcode(""); focusScanner(); }}>ปิด</button><button onClick={() => { setQuickAddBarcode(unknownBarcode); setUnknownBarcode(""); }}>เพิ่มสินค้าใหม่</button></div></SimpleModal>}
     {quickAddBarcode !== null && <QuickAddProduct repo={repo} staff={staff} barcode={quickAddBarcode} onClose={() => { setQuickAddBarcode(null); focusScanner(); }} onSaved={async product => { setQuickAddBarcode(null); await refreshProducts(); addProduct(product); }} />}
   </section>;
+}
+
+function ParkedBillsModal({ bills, onClose, onRestore, onRemove }: { bills: ParkedBill[]; onClose: () => void; onRestore: (bill: ParkedBill) => void; onRemove: (id: string) => void }) {
+  return <SimpleModal title="รายการพักบิล" onClose={onClose}>
+    <div className="parked-bill-list">{bills.length ? bills.map(bill => <button key={bill.id} className="parked-bill-card" onClick={() => onRestore(bill)}>
+      <span className="parked-bill-icon">▣</span>
+      <span className="parked-bill-copy"><strong>{bill.label}</strong><small>{new Date(bill.createdAt).toLocaleString("th-TH")} · {bill.cashierName}</small><em>{bill.itemCount} รายการ · {bill.totalQty} ชิ้น</em></span>
+      <span className="parked-bill-total">{money(bill.total)}</span>
+      <span className="parked-bill-actions"><span>เรียกบิล</span><i onClick={event => { event.stopPropagation(); onRemove(bill.id); }}>ลบ</i></span>
+    </button>) : <div className="grocery-empty-table"><strong>ยังไม่มีรายการพักบิล</strong><span>กดพักบิลจากตะกร้าปัจจุบันเพื่อเก็บไว้ชั่วคราว</span></div>}</div>
+    <div className="grocery-modal-actions"><button className="secondary-action" onClick={onClose}>ปิด</button></div>
+  </SimpleModal>;
 }
 
 function PaymentChoice({ total, onClose, onCash, onTransfer }: { total: number; onClose: () => void; onCash: () => void; onTransfer: () => void }) {
