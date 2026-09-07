@@ -123,6 +123,7 @@ export function ReportsDashboardScreen({ repo, language }: { repo: PosRepository
   const [sales, setSales] = useState<Sale[]>([]);
   const [receiptMap, setReceiptMap] = useState<Record<string, Receipt>>({});
   const [loading, setLoading] = useState(false);
+  const [trendOpen, setTrendOpen] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -170,6 +171,8 @@ export function ReportsDashboardScreen({ repo, language }: { repo: PosRepository
         <h1>{t(language, "reports")}</h1>
         <p>สรุปยอดขาย จำนวนบิล วิธีชำระ บิลยกเลิก สินค้าขายดี และแนวโน้มยอดขายแบบออฟไลน์</p>
       </div>
+      <div className="reports-hero-actions">
+        <button type="button" className="reports-trend-button" onClick={() => setTrendOpen(true)}><span aria-hidden="true">↗</span>แนวโน้มยอดขาย</button>
       <div className="reports-period-card">
         <div className="reports-period-tabs" role="tablist" aria-label="ช่วงรายงาน">
           <button className={period === "day" ? "active" : ""} onClick={() => setPeriod("day")}>รายวัน</button>
@@ -179,6 +182,7 @@ export function ReportsDashboardScreen({ repo, language }: { repo: PosRepository
         {period === "day" && <input type="date" value={date} onChange={event => setDate(event.target.value)} />}
         {period === "month" && <input type="month" value={month} onChange={event => setMonth(event.target.value)} />}
         {period === "year" && <input inputMode="numeric" value={year} onChange={event => setYear(event.target.value.replace(/\D/g, "").slice(0, 4) || currentYear())} />}
+      </div>
       </div>
     </div>
 
@@ -208,11 +212,31 @@ export function ReportsDashboardScreen({ repo, language }: { repo: PosRepository
       </section>
     </div>
 
-    <section className="reports-card reports-line-card">
-      <div className="reports-card-head"><div><h2>แนวโน้มยอดขาย</h2><p>กราฟเส้นสำหรับดูทิศทางยอดขาย {periodText}</p></div><strong>{money(data.totalSales)}</strong></div>
-      <LineChart buckets={data.buckets} max={maxBucket} />
-    </section>
+    {trendOpen && <TrendModal buckets={data.buckets} max={maxBucket} periodText={periodText} total={money(data.totalSales)} title="แนวโน้มยอดขาย" caption="กราฟเส้นสำหรับดูทิศทางยอดขาย" onClose={() => setTrendOpen(false)} />}
   </section>;
+}
+
+function TrendModal({ buckets, max, periodText, total, title, caption, onClose }: { buckets: ChartBucket[]; max: number; periodText: string; total: string; title: string; caption: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
+  return <div className="reports-modal-backdrop" onClick={onClose}>
+    <section className="reports-trend-modal" role="dialog" aria-modal="true" aria-label={title} onClick={event => event.stopPropagation()}>
+      <header className="reports-trend-modal-head">
+        <div><h2>{title}</h2><p>{caption} {periodText}</p></div>
+        <strong>{total}</strong>
+        <button type="button" onClick={onClose} aria-label="Close">x</button>
+      </header>
+      <div className="reports-trend-modal-body">
+        <LineChart buckets={buckets} max={max} />
+      </div>
+    </section>
+  </div>;
 }
 
 function ReportKpi({ icon, label, value, tone = "normal" }: { icon: string; label: string; value: string; tone?: "normal" | "primary" | "danger" }) {

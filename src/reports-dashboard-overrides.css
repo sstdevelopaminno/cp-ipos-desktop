@@ -120,3 +120,20 @@
     min-height:160px!important;
   }
 }
+
+.reports-trend-modal-body .reports-line-chart{
+  height:360px!important;
+}
+
+.reports-trend-modal-body .reports-line-chart svg{
+  min-height:280px!important;
+}
+
+@media(max-height:760px){
+  .reports-trend-modal-body .reports-line-chart{
+    height:300px!important;
+  }
+  .reports-trend-modal-body .reports-line-chart svg{
+    min-height:230px!important;
+  }
+}
