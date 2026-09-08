@@ -12,6 +12,7 @@ import "./sales-scan-qty-ui.css";
 import "./inventory-barcode-enhancements.css";
 import "./reports-dashboard-overrides.css";
 import "./sales-history-desktop-scroll.css";
+import "./settings-desktop-scroll.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
