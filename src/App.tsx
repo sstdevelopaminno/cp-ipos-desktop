@@ -203,14 +203,32 @@ export default function App() {
 }
 
 function LoginScreen({ repo, settings, language, onLogin }: { repo: PosRepository; settings: AppSettings; language: Language; onLogin: (staff: Staff) => void }) {
-  const [code, setCode] = useState("");
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
-  const submit = async () => { const employeeCode = cleanEmployeeCode(code); if (!employeeCode || pin.length !== 4) { setError("กรอกรหัสพนักงานและ PIN 4 ตัว"); return; } const s = await repo.verifyPin(pin, employeeCode); if (s) onLogin(s); else { setError(t(language, "pinWrong")); setPin(""); } };
-  const press = (v: string) => { if (v === "back") setPin(pin.slice(0, -1)); else if (v === "ok") void submit(); else if (pin.length < 4) setPin(pin + v); };
-  return <main className="center-screen"><section className="login-card pos-card"><img className="brand-logo" src="/icon.png" alt="CpIPOS" /><h1>{settings.storeName}</h1><p>{settings.branchName}</p><label>{t(language, "employeeCode")}<input value={code} maxLength={4} onChange={e => setCode(cleanEmployeeCode(e.target.value))} autoFocus /></label><p>{t(language, "loginHint")}</p><div className="pin-dots">{[0, 1, 2, 3].map(i => <span key={i} className={pin.length > i ? "filled" : ""} />)}</div>{error && <ErrorMessage text={error} />}<div className="keypad">{"123456789".split("").map(n => <button key={n} onClick={() => press(n)}>{n}</button>)}<button onClick={() => press("0")}>0</button><button onClick={() => press("back")}>⌫</button><button className="primary" onClick={() => press("ok")}>OK</button></div><p className="warning">{t(language, "demoPin")}</p></section></main>;
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    const loginPin = cleanPin(pin);
+    if (loginPin.length !== 4) {
+      setError("กรอก PIN 4 ตัว");
+      return;
+    }
+    try {
+      setBusy(true);
+      setError("");
+      const s = await repo.verifyPin(loginPin);
+      if (s) onLogin(s);
+      else {
+        setError("PIN ไม่ถูกต้อง ใช้รหัสชั่วคราว 1234 สำหรับเครื่องใหม่");
+        setPin("");
+        setBusy(false);
+      }
+    } catch {
+      setError("เข้าสู่ระบบไม่สำเร็จ");
+      setBusy(false);
+    }
+  };
+  return <main className="center-screen"><section className="login-card pos-card"><img className="brand-logo" src="/icon.png" alt="CpIPOS" /><h1>{settings.storeName}</h1><p>{settings.branchName}</p><label>รหัสเข้าระบบ / PIN<input value={pin} maxLength={4} inputMode="numeric" type="password" onChange={e => { setPin(cleanPin(e.target.value)); setError(""); }} onKeyDown={e => { if (e.key === "Enter") void submit(); }} autoFocus placeholder="กรอก PIN 4 ตัว" /></label>{error && <ErrorMessage text={error} />}<button className="big-primary" disabled={busy || pin.length !== 4} onClick={() => void submit()}>{busy ? t(language, "submitBusy") : "ยืนยันเข้าระบบ"}</button><p className="warning">รหัสชั่วคราวเริ่มต้น: 1234</p></section></main>;
 }
-
 function ShiftScreen({ repo, staff, settings, language, onOpen }: { repo: PosRepository; staff: Staff; settings: AppSettings; language: Language; onOpen: (shift: Shift) => void }) {
   const [cash, setCash] = useState("0");
   const [busy, setBusy] = useState(false);
