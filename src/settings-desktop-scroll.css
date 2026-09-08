@@ -1,0 +1,78 @@
+/* Desktop/Tauri scroll guard for the Settings screen.
+   In Browser Preview the page can scroll, but the installed Windows shell hides
+   document overflow. Make the settings panel itself the vertical scroll area. */
+
+.view-body:has(.settings-nav),
+.view-body:has([class*="setting"]),
+.view-body:has([class*="Setting"]){
+  height:100%;
+  min-height:0;
+  overflow:hidden!important;
+  display:flex;
+  flex-direction:column;
+}
+
+.view-body > .panel:has(.settings-nav),
+.view-body > .panel:has([class*="setting"]),
+.view-body > .panel:has([class*="Setting"]){
+  flex:1 1 auto;
+  min-height:0!important;
+  height:100%!important;
+  max-height:100%!important;
+  overflow-y:auto!important;
+  overflow-x:hidden!important;
+  scrollbar-gutter:stable;
+  overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+  padding-bottom:28px;
+}
+
+.view-body > .panel:has([class*="setting"])::-webkit-scrollbar,
+.view-body > .panel:has([class*="Setting"])::-webkit-scrollbar{
+  width:12px;
+}
+
+.view-body > .panel:has([class*="setting"])::-webkit-scrollbar-track,
+.view-body > .panel:has([class*="Setting"])::-webkit-scrollbar-track{
+  background:#eef4fb;
+  border-radius:999px;
+}
+
+.view-body > .panel:has([class*="setting"])::-webkit-scrollbar-thumb,
+.view-body > .panel:has([class*="Setting"])::-webkit-scrollbar-thumb{
+  background:#8a99aa;
+  border:3px solid #eef4fb;
+  border-radius:999px;
+}
+
+.view-body > .panel:has([class*="setting"])::-webkit-scrollbar-thumb:hover,
+.view-body > .panel:has([class*="Setting"])::-webkit-scrollbar-thumb:hover{
+  background:#64748b;
+}
+
+/* The settings overview uses card rows. Keep card spacing compact enough for
+   1366x768 Windows windows and let overflow stay inside the settings panel. */
+.view-body > .panel:has([class*="setting"]) h1,
+.view-body > .panel:has([class*="Setting"]) h1{
+  margin-top:0;
+}
+
+.view-body > .panel:has([class*="setting"]) [class*="grid"],
+.view-body > .panel:has([class*="Setting"]) [class*="grid"]{
+  min-height:0;
+}
+
+@media(max-height:820px){
+  .view-body > .panel:has(.settings-nav),
+  .view-body > .panel:has([class*="setting"]),
+  .view-body > .panel:has([class*="Setting"]){
+    padding-top:14px;
+    padding-bottom:22px;
+  }
+
+  .view-body > .panel:has([class*="setting"]) h1,
+  .view-body > .panel:has([class*="Setting"]) h1{
+    font-size:30px;
+    line-height:1.08;
+  }
+}
