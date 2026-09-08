@@ -1,8 +1,11 @@
 ﻿use serde::Serialize;
 use serde_json::Value;
-use std::{fs, path::Path, process::Command};
+use std::{ffi::{c_void, CString}, fs, path::Path, process::Command};
 use tauri::{Manager, Runtime};
 use tauri_plugin_sql::{Migration, MigrationKind};
+use windows_sys::Win32::Graphics::Printing::{ClosePrinter, EndDocPrinter, EndPagePrinter, OpenPrinterA, StartDocPrinterA, StartPagePrinter, WritePrinter, DOC_INFO_1A, PRINTER_HANDLE};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,7 +45,9 @@ fn dir_size(path: &Path) -> u64 {
 
 fn run_powershell(script: &str, envs: &[(&str, String)]) -> Result<String, String> {
     let mut cmd = Command::new("powershell");
-    cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script]);
+    cmd.args(["-NoProfile", "-WindowStyle", "Hidden", "-ExecutionPolicy", "Bypass", "-Command", script]);
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000);
     for (key, value) in envs {
         cmd.env(key, value);
     }
@@ -88,18 +93,70 @@ Get-Printer | Select-Object Name,PrinterStatus,WorkOffline,@{Name='IsDefault';Ex
         .collect())
 }
 
-fn print_windows_text(printer_name: String, text: String) -> Result<(), String> {
+fn last_windows_error(prefix: &str) -> String {
+    let detail = std::io::Error::last_os_error().to_string();
+    format!("{}: {}", prefix, detail)
+}
+
+fn cp874_bytes(text: &str) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(text.len() + 16);
+    for ch in text.replace("\r\n", "\n").replace('\r', "\n").chars() {
+        match ch {
+            '\n' => bytes.push(b'\n'),
+            '\t' => bytes.push(b' '),
+            c if c.is_ascii() => bytes.push(c as u8),
+            '\u{2013}' | '\u{2014}' | '\u{2212}' => bytes.push(b'-'),
+            '\u{2022}' => bytes.push(b'*'),
+            c if ('\u{0E01}'..='\u{0E5B}').contains(&c) => bytes.push((c as u32 - 0x0E00 + 0xA0) as u8),
+            _ => bytes.push(b'?'),
+        }
+    }
+    bytes
+}
+
+fn print_raw_bytes(printer_name: &str, job_name: &str, payload: &[u8]) -> Result<(), String> {
     if printer_name.trim().is_empty() {
         return Err("PRINTER_NOT_CONFIGURED".into());
     }
-    let script = r#"
-$printer=$env:CPIPOS_PRINTER_NAME
-$text=$env:CPIPOS_PRINT_TEXT
-if([string]::IsNullOrWhiteSpace($printer)){ throw 'PRINTER_NOT_CONFIGURED' }
-$text | Out-Printer -Name $printer
-"#;
-    run_powershell(script, &[("CPIPOS_PRINTER_NAME", printer_name), ("CPIPOS_PRINT_TEXT", text)])?;
+    let printer = CString::new(printer_name).map_err(|_| "PRINTER_NAME_INVALID".to_string())?;
+    let doc_name = CString::new(job_name).map_err(|_| "PRINT_JOB_INVALID".to_string())?;
+    let data_type = CString::new("RAW").map_err(|_| "PRINT_DATATYPE_INVALID".to_string())?;
+    let mut handle = PRINTER_HANDLE { Value: std::ptr::null_mut() };
+    unsafe {
+        if OpenPrinterA(printer.as_ptr() as *const u8, &mut handle, std::ptr::null()) == 0 {
+            return Err(last_windows_error("OPEN_PRINTER_FAILED"));
+        }
+        let doc = DOC_INFO_1A {
+            pDocName: doc_name.as_ptr() as *mut u8,
+            pOutputFile: std::ptr::null_mut(),
+            pDatatype: data_type.as_ptr() as *mut u8,
+        };
+        if StartDocPrinterA(handle, 1, &doc) == 0 {
+            ClosePrinter(handle);
+            return Err(last_windows_error("START_PRINT_JOB_FAILED"));
+        }
+        if StartPagePrinter(handle) == 0 {
+            EndDocPrinter(handle);
+            ClosePrinter(handle);
+            return Err(last_windows_error("START_PRINT_PAGE_FAILED"));
+        }
+        let mut written = 0u32;
+        let ok = WritePrinter(handle, payload.as_ptr() as *const c_void, payload.len() as u32, &mut written);
+        EndPagePrinter(handle);
+        EndDocPrinter(handle);
+        ClosePrinter(handle);
+        if ok == 0 || written != payload.len() as u32 {
+            return Err(last_windows_error("WRITE_PRINTER_FAILED"));
+        }
+    }
     Ok(())
+}
+
+fn print_windows_text(printer_name: String, text: String) -> Result<(), String> {
+    let mut bytes = vec![0x1B, 0x40, 0x1B, 0x21, 0x00];
+    bytes.extend(cp874_bytes(&text));
+    bytes.extend([b'\n', b'\n', b'\n', 0x1D, 0x56, 0x42, 0x00]);
+    print_raw_bytes(&printer_name, "CpIPOS Receipt", &bytes)
 }
 
 #[tauri::command]
@@ -142,8 +199,11 @@ Add-Type -TypeDefinition $code
 [byte[]]$bytes=27,112,0,25,250
 if(-not [RawPrinterHelper]::SendBytes($env:CPIPOS_PRINTER_NAME,$bytes)){ throw 'CASH_DRAWER_FAILED' }
 "#;
-    run_powershell(script, &[("CPIPOS_PRINTER_NAME", printer_name)])?;
-    Ok(())
+    let bytes = [0x1B, 0x70, 0x00, 0x19, 0xFA];
+    print_raw_bytes(&printer_name, "CpIPOS Cash Drawer", &bytes).or_else(|_| {
+        run_powershell(script, &[("CPIPOS_PRINTER_NAME", printer_name)])?;
+        Ok(())
+    })
 }
 
 #[tauri::command]
