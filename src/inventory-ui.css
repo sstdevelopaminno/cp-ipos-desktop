@@ -648,6 +648,7 @@
 .settings-menu-card.orange .settings-menu-icon{background:#fff1e8;color:#bf5b12}
 .settings-menu-card.pink .settings-menu-icon{background:#fff0f6;color:#c03475}
 .settings-menu-card.gray .settings-menu-icon{background:#f1f5f9;color:#475569}
+.settings-menu-card.rose .settings-menu-icon{background:#fff1f2;color:#be123c}
 
 .settings-modal-body{
   display:grid;
@@ -723,5 +724,17 @@
   .settings-menu-grid{grid-template-columns:1fr;overflow:visible}
   .settings-page-head h1{font-size:30px}
   .settings-form-grid{grid-template-columns:1fr}
-  .settings-logo-preview{grid-template-columns:1fr}
+  .settings-logo-preview,.license-status-panel{grid-template-columns:1fr}
 }
+
+.license-settings{display:grid;gap:14px}
+.license-status-panel{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.license-status-panel>div{border:1px solid #dbeafe;border-radius:16px;background:#f8fbff;padding:14px}
+.license-status-panel span,.license-status-panel small{display:block;color:#64748b;font-size:12px}
+.license-status-panel strong{display:block;margin:5px 0;color:#0b6ff6;font-size:18px}
+.license-device-code{font-family:Consolas,monospace;letter-spacing:0}
+.license-security-list{display:grid;gap:8px;padding:14px;border:1px solid #ffd7a8;border-radius:16px;background:#fff8ed;color:#784300}
+.license-security-list strong,.license-security-list span{display:block}
+.license-security-list span{font-size:13px}
+.license-prepare-button{justify-self:start}
+@media(max-width:820px){.license-status-panel{grid-template-columns:1fr}}

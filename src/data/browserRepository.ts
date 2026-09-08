@@ -23,6 +23,16 @@ const DEFAULT_SETTINGS: AppSettings = {
   printerConnectionNote:"เลือกเครื่องพิมพ์ 80mm ผ่าน Windows Print Dialog ในการพิมพ์ครั้งแรก",
   scannerMode:"keyboard-wedge",
   remoteManagementEnabled:false,
+  programLicenseKey: "",
+  programLicenseToken: "",
+  programLicenseStatus: "not_configured",
+  programLicensePlan: "",
+  programLicenseDeviceLimit: "1",
+  programLicenseDeviceFingerprint: "",
+  programLicenseBackendUrl: "",
+  programLicenseActivatedAt: "",
+  programLicenseExpiresAt: "",
+  programLicenseLastCheckedAt: "",
   language:"th"
 };
 const read = <T,>(key:string, fallback:T):T => {
@@ -67,7 +77,7 @@ export class BrowserRepository implements PosRepository {
   async saveEmployee(input:EmployeeInput, staff:Staff) { const id=input.id || crypto.randomUUID(); const code=input.code.trim(); const displayName=input.displayName.trim(); const employees=await this.listEmployees(); if(employees.some(e=>e.id!==id && e.code.toLowerCase()===code.toLowerCase())) throw new Error("EMPLOYEE_CODE_EXISTS"); const emp={id,code,displayName,role:input.role,active:input.active}; const all=employees.filter(e=>e.id!==emp.id); write(K.staff,[emp,...all]); await this.audit(input.id?"EMPLOYEE_UPDATED":"EMPLOYEE_CREATED", staff, {entityType:"employee",entityId:emp.id}); return emp; }
   async deleteEmployee(id:string, staff:Staff) { if(id===staff.id) throw new Error("EMPLOYEE_SELF_DELETE"); const employees=await this.listEmployees(); const target=employees.find(e=>e.id===id); if(!target) throw new Error("EMPLOYEE_NOT_FOUND"); write(K.staff, employees.map(e=>e.id===id?{...e,active:false}:e)); await this.audit("EMPLOYEE_DELETED", staff, {entityType:"employee",entityId:id,status:"inactive"}); }
   async getSettings() { return read<AppSettings>(K.settings, DEFAULT_SETTINGS); }
-  async updateSettings(settings:AppSettings, staff:Staff) { write(K.settings, settings); await this.audit("SETTINGS_CHANGED", staff, {entityType:"settings",entityId:"local",details:JSON.stringify({language:settings.language,printerName:settings.printerName})}); return settings; }
+  async updateSettings(settings:AppSettings, staff:Staff) { write(K.settings, settings); await this.audit("SETTINGS_CHANGED", staff, {entityType:"settings",entityId:"local",details:JSON.stringify({language:settings.language,printerName:settings.printerName,programLicenseStatus:settings.programLicenseStatus})}); return settings; }
   async getStorageHealth():Promise<StorageHealth> { const sales=await this.listSales(999); const audit=await this.listAuditEvents(999); return {databaseSize:0,mediaSize:0,backupSize:0,appDataSize:0,salesCount:sales.length,auditCount:audit.length,oldestSale:sales.at(-1)?.createdAt,newestSale:sales[0]?.createdAt}; }
   async getAppVersion() { return "0.1.0"; }
   private async audit(action:string, staff?:Staff, data:Partial<AuditEvent>={}) { write(K.audit,[{id:crypto.randomUUID(),timestamp:new Date().toISOString(),employeeId:staff?.id,employeeCode:staff?.code,role:staff?.role,action,...data},...read<AuditEvent[]>(K.audit,[])]); }

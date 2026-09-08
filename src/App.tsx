@@ -18,6 +18,25 @@ const nowTime = () => new Date().toLocaleString("th-TH", { day: "2-digit", month
 const SYSTEM_LOGO = "/icon.png";
 const completeStartupSplash = async () => { try { await invoke("complete_startup_splash"); } catch { /* Browser preview fallback. */ } };
 const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result || "")); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); });
+const INSTALL_ID_KEY = "cpipos.installation.id";
+const getInstallationId = () => {
+  if (typeof localStorage === "undefined") return "preview-installation";
+  const saved = localStorage.getItem(INSTALL_ID_KEY);
+  if (saved) return saved;
+  const id = crypto.randomUUID();
+  localStorage.setItem(INSTALL_ID_KEY, id);
+  return id;
+};
+const shortHash = (value: string) => {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).toUpperCase().padStart(8, "0");
+};
+const licenseDeviceFingerprint = (settings: AppSettings) => "CP-" + shortHash(settings.deviceId + "|" + settings.deviceName + "|" + getInstallationId());
+const licenseStatusText = (status: string) => status === "active" ? "เปิดใช้งานแล้ว" : status === "pending_activation" ? "รอเปิดใช้งานกับ CpIPOS-IT" : status === "revoked" ? "ถูกระงับ" : status === "expired" ? "หมดอายุ" : "ยังไม่ใส่ลายเส้น";
 type ScreenProfile = { width: number; height: number; shortNav: boolean; compactNav: boolean };
 const detectScreenProfile = (): ScreenProfile => {
   if (typeof window === "undefined") return { width: 1366, height: 768, shortNav: false, compactNav: false };
@@ -253,7 +272,7 @@ function DeleteEmployeeModal({ repo, staff, employee, onClose, onDeleted }: { re
   </Modal>;
 }
 
-type SettingsSection = "store" | "branch" | "language" | "owner" | "receipt" | "printer" | "scanner" | "storage" | "backup" | "remote" | "about";
+type SettingsSection = "store" | "branch" | "license" | "language" | "owner" | "receipt" | "printer" | "scanner" | "storage" | "backup" | "remote" | "about";
 type SettingsNavItem = { id: SettingsSection; label: string; description: string; meta: string; tone: string };
 
 function SettingsScreen({ repo, staff, settings, language, refreshSettings }: { repo: PosRepository; staff: Staff; settings: AppSettings; language: Language; refreshSettings: () => Promise<void> }) {
@@ -268,6 +287,7 @@ function SettingsScreen({ repo, staff, settings, language, refreshSettings }: { 
   const nav: SettingsNavItem[] = [
     { id: "store", label: t(language, "storeInfo"), description: "ชื่อร้าน โลโก้ ที่อยู่ และเลขผู้เสียภาษี", meta: form.storeName || "ยังไม่ระบุชื่อร้าน", tone: "blue" },
     { id: "branch", label: t(language, "branchDevice"), description: "ชื่อสาขา เครื่องขาย และรหัสอุปกรณ์", meta: form.deviceName || form.deviceId, tone: "cyan" },
+    { id: "license", label: "ลายเส้นโปรแกรม", description: "License และการผูกเครื่องกับ CpIPOS-IT", meta: licenseStatusText(form.programLicenseStatus), tone: "rose" },
     { id: "language", label: t(language, "language"), description: "ภาษาแสดงผลของหน้าจอ POS", meta: form.language === "th" ? t(language, "thai") : t(language, "english"), tone: "green" },
     { id: "owner", label: t(language, "owner"), description: "ข้อมูลเจ้าของร้านและบันทึก PIN เดโม", meta: form.ownerName || "Owner", tone: "violet" },
     { id: "receipt", label: t(language, "receiptSettings"), description: "ข้อความหัวท้ายใบเสร็จและข้อมูลร้านบนใบเสร็จ", meta: form.receiptHeader || "CpIPOS", tone: "amber" },
@@ -313,6 +333,7 @@ function SettingsModal({ item, section, form, health, language, logoError, saveE
       {section === "language" && <label>{t(language, "language")}<select value={form.language} onChange={e => set("language", e.target.value as Language)}><option value="th">{t(language, "thai")}</option><option value="en">{t(language, "english")}</option></select></label>}
       {section === "store" && <div className="settings-form-grid"><label>ชื่อร้าน<input value={form.storeName} onChange={e => set("storeName", e.target.value)} /></label><label>สาขา<input value={form.branchName} onChange={e => set("branchName", e.target.value)} /></label><label>ที่อยู่<textarea value={form.address} onChange={e => set("address", e.target.value)} /></label><label>เบอร์โทรศัพท์<input value={form.phone} onChange={e => set("phone", e.target.value)} /></label><label>เลขผู้เสียภาษี<input value={form.taxId} onChange={e => set("taxId", e.target.value)} /></label><div className="settings-logo-preview"><img src={form.storeLogoPath || SYSTEM_LOGO} alt="โลโก้ใบเสร็จ" onError={e => { e.currentTarget.src = SYSTEM_LOGO; }} /><div><strong>โลโก้ใบเสร็จ</strong><small>{form.storeLogoPath ? "ใช้โลโก้ร้านจากการตั้งค่า" : "ยังไม่ใส่โลโก้ร้าน จะแสดงโลโก้ระบบ CpIPOS"}</small><input type="file" accept="image/png,image/jpeg,image/webp" onChange={async e => { const file = e.target.files?.[0]; if (!file) return; try { setLogoError(""); set("storeLogoPath", await readFileAsDataUrl(file)); } catch { setLogoError("อ่านไฟล์โลโก้ไม่สำเร็จ"); } }} /><button type="button" className="secondary" onClick={() => set("storeLogoPath", "")}>ใช้โลโก้ระบบ</button></div>{logoError && <ErrorMessage text={logoError} />}</div></div>}
       {section === "branch" && <div className="settings-form-grid"><label>ชื่อสาขา<input value={form.branchName} onChange={e => set("branchName", e.target.value)} /></label><label>Device<input value={form.deviceName} onChange={e => set("deviceName", e.target.value)} /></label><label>Device ID<input value={form.deviceId} onChange={e => set("deviceId", e.target.value)} /></label></div>}
+      {section === "license" && <LicenseSettingsPanel form={form} set={set} />}
       {section === "owner" && <div className="settings-form-grid"><label>ชื่อเจ้าของร้าน<input value={form.ownerName} onChange={e => set("ownerName", e.target.value)} /></label><label>บันทึก PIN เดโม<input value={form.ownerPinNote} onChange={e => set("ownerPinNote", e.target.value)} /></label><p className="warning settings-wide">{t(language, "demoPin")}</p></div>}
       {section === "receipt" && <div className="settings-form-grid"><label>ชื่อหัวใบเสร็จ<input value={form.receiptHeader} onChange={e => set("receiptHeader", e.target.value)} /></label><label>ข้อความท้ายใบเสร็จ<input value={form.receiptFooter} onChange={e => set("receiptFooter", e.target.value)} /></label><label>ที่อยู่บนใบเสร็จ<textarea value={form.address} onChange={e => set("address", e.target.value)} /></label><label>เบอร์โทรบนใบเสร็จ<input value={form.phone} onChange={e => set("phone", e.target.value)} /></label><label>เลขผู้เสียภาษี<input value={form.taxId} onChange={e => set("taxId", e.target.value)} /></label></div>}
       {section === "printer" && <div className="printer-setup-card"><strong>ตั้งค่าเครื่องพิมพ์ใบเสร็จ 80mm</strong><p className="warning">โหมดนี้ใช้ Windows Print Dialog เพื่อเลือกเครื่องพิมพ์จริงที่ติดตั้งใน Windows แล้ว เช่น thermal printer 80mm. ตั้งค่าครั้งแรกแล้ว Windows จะจำค่าเครื่องพิมพ์ตามระบบ</p><div className="settings-form-grid"><label>ชื่อเครื่องพิมพ์<input placeholder="เช่น XP-80C / POS-80 / Rongta 80mm" value={form.printerName} onChange={e => set("printerName", e.target.value)} /></label><label>ชนิดการพิมพ์<select value={form.printerType} onChange={e => set("printerType", e.target.value)}><option value="windows-print-dialog">Windows Print Dialog</option><option value="not-configured">ยังไม่ได้ตั้งค่า</option></select></label><label>ขนาดกระดาษ<select value={form.printerPaperWidthMm} onChange={e => set("printerPaperWidthMm", e.target.value)}><option value="80">80mm</option><option value="58">58mm</option></select></label><label>หมายเหตุการเชื่อมต่อ<input value={form.printerConnectionNote} onChange={e => set("printerConnectionNote", e.target.value)} /></label></div><p>เมื่อกดปุ่ม <strong>พิมพ์ใบเสร็จ 80mm</strong> ระบบจะเปิดหน้าต่างพิมพ์ของ Windows ให้เลือกเครื่องพิมพ์จริง</p></div>}
@@ -328,10 +349,42 @@ function SettingsModal({ item, section, form, health, language, logoError, saveE
   </Modal>;
 }
 
+
+function LicenseSettingsPanel({ form, set }: { form: AppSettings; set: (key: keyof AppSettings, value: string | boolean) => void }) {
+  const fingerprint = form.programLicenseDeviceFingerprint || licenseDeviceFingerprint(form);
+  const markPending = () => {
+    set("programLicenseStatus", form.programLicenseKey.trim() ? "pending_activation" : "not_configured");
+    set("programLicenseDeviceFingerprint", fingerprint);
+    set("programLicenseLastCheckedAt", new Date().toISOString());
+  };
+  return <div className="license-settings">
+    <div className="license-status-panel">
+      <div><span>สถานะลายเส้น</span><strong>{licenseStatusText(form.programLicenseStatus)}</strong><small>ต้องตรวจจริงจาก CpIPOS-IT ก่อนปลดล็อกสิทธิ์การใช้งาน</small></div>
+      <div><span>รหัสเครื่อง</span><strong className="license-device-code">{fingerprint}</strong><small>ใช้ผูก license กับ Windows เครื่องนี้</small></div>
+    </div>
+    <div className="settings-form-grid">
+      <label className="settings-wide">License Key<input value={form.programLicenseKey} onChange={e => set("programLicenseKey", e.target.value.trim())} placeholder="เช่น CPIPOS-XXXX-XXXX-XXXX" /></label>
+      <label>CpIPOS-IT API URL<input value={form.programLicenseBackendUrl} onChange={e => set("programLicenseBackendUrl", e.target.value.trim())} placeholder="https://cpipos-it.vercel.app" /></label>
+      <label>จำนวนเครื่องที่อนุญาต<input value={form.programLicenseDeviceLimit} onChange={e => set("programLicenseDeviceLimit", e.target.value.replace(/[^0-9]/g, ""))} placeholder="1" /></label>
+      <label>แพ็กเกจ / แผนใช้งาน<input value={form.programLicensePlan} onChange={e => set("programLicensePlan", e.target.value)} placeholder="เช่น Standard / Pro" /></label>
+      <label>หมดอายุ<input value={form.programLicenseExpiresAt} onChange={e => set("programLicenseExpiresAt", e.target.value)} placeholder="YYYY-MM-DD" /></label>
+      <label className="settings-wide">Signed License Token<textarea value={form.programLicenseToken} onChange={e => set("programLicenseToken", e.target.value.trim())} placeholder="token ที่ CpIPOS-IT เซ็นกลับมาในเฟสเชื่อมต่อจริง" /></label>
+    </div>
+    <div className="license-security-list">
+      <strong>แนวทางป้องกันการปลอม license</strong>
+      <span>Desktop ต้องตรวจ token ด้วย public key เท่านั้น และห้ามฝัง private key ในโปรแกรม</span>
+      <span>Backend ต้องเป็นผู้คุมจำนวนเครื่อง เปิด/ปิด license และการ revoke</span>
+      <span>ถ้า copy token ไปเครื่องอื่น ระบบต้องเทียบรหัสเครื่องแล้วไม่ผ่าน</span>
+    </div>
+    <button type="button" className="secondary license-prepare-button" onClick={markPending}>เตรียมเปิดใช้งานกับ CpIPOS-IT</button>
+  </div>;
+}
+
 function SettingsIcon({ section }: { section: SettingsSection }) {
   switch (section) {
     case "store": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5"/><path d="M6 10v9h12v-9"/><path d="M9 19v-5h6v5"/></svg>;
     case "branch": return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="11" rx="2"/><path d="M9 20h6"/><path d="M12 16v4"/></svg>;
+    case "license": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 19 6v5c0 4.5-2.9 8.5-7 10-4.1-1.5-7-5.5-7-10V6z"/><path d="M9 12h6"/><path d="M12 9v6"/></svg>;
     case "language": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h10"/><path d="M9 5v14"/><path d="M5 19c3-3 5-7 6-14"/><path d="M12 12c-1.5-1-3-3-4-5"/><path d="m15 19 3-8 3 8"/><path d="M16 16h4"/></svg>;
     case "owner": return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M5 20c1.5-4 12.5-4 14 0"/></svg>;
     case "receipt": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10v16l-2-1.2-2 1.2-2-1.2-2 1.2-2-1.2z"/><path d="M9 9h6"/><path d="M9 13h6"/></svg>;

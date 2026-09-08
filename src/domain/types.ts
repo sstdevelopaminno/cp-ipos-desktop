@@ -84,6 +84,16 @@ export type AppSettings = {
   printerConnectionNote: string;
   scannerMode: string;
   remoteManagementEnabled: boolean;
+  programLicenseKey: string;
+  programLicenseToken: string;
+  programLicenseStatus: string;
+  programLicensePlan: string;
+  programLicenseDeviceLimit: string;
+  programLicenseDeviceFingerprint: string;
+  programLicenseBackendUrl: string;
+  programLicenseActivatedAt: string;
+  programLicenseExpiresAt: string;
+  programLicenseLastCheckedAt: string;
   language: Language;
 };
 

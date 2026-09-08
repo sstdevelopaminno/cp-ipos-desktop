@@ -30,6 +30,16 @@ const DEFAULT_SETTINGS: AppSettings = {
   printerConnectionNote: "เลือกเครื่องพิมพ์ 80mm ผ่าน Windows Print Dialog ในการพิมพ์ครั้งแรก",
   scannerMode: "keyboard-wedge",
   remoteManagementEnabled: false,
+  programLicenseKey: "",
+  programLicenseToken: "",
+  programLicenseStatus: "not_configured",
+  programLicensePlan: "",
+  programLicenseDeviceLimit: "1",
+  programLicenseDeviceFingerprint: "",
+  programLicenseBackendUrl: "",
+  programLicenseActivatedAt: "",
+  programLicenseExpiresAt: "",
+  programLicenseLastCheckedAt: "",
   language: "th",
 };
 
@@ -201,7 +211,7 @@ export class TauriRepository implements PosRepository {
   async saveEmployee(input:EmployeeInput, staff:Staff) { const db=await this.conn(); const id=input.id || crypto.randomUUID(); const code=input.code.trim(); const displayName=input.displayName.trim(); const existing=await db.select<DbStaff[]>("SELECT id,code,display_name,role,active FROM staff WHERE lower(code)=lower($1) AND id<>$2 LIMIT 1", [code,id]); if(existing[0]) throw new Error("EMPLOYEE_CODE_EXISTS"); await db.execute("INSERT INTO staff(id,code,display_name,role,pin_demo,active) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(id) DO UPDATE SET code=excluded.code,display_name=excluded.display_name,role=excluded.role,pin_demo=COALESCE(excluded.pin_demo,pin_demo),active=excluded.active", [id,code,displayName,input.role,input.demoPin?.trim() || null,input.active?1:0]); await this.audit(input.id?"EMPLOYEE_UPDATED":"EMPLOYEE_CREATED", staff, {entityType:"employee",entityId:id}); const rows=await db.select<DbStaff[]>("SELECT id,code,display_name,role,active FROM staff WHERE id=$1", [id]); return this.staff(rows[0]); }
   async deleteEmployee(id:string, staff:Staff) { if(id===staff.id) throw new Error("EMPLOYEE_SELF_DELETE"); const db=await this.conn(); const rows=await db.select<DbStaff[]>("SELECT id,code,display_name,role,active FROM staff WHERE id=$1 LIMIT 1", [id]); if(!rows[0]) throw new Error("EMPLOYEE_NOT_FOUND"); await db.execute("UPDATE staff SET active=0 WHERE id=$1", [id]); await this.audit("EMPLOYEE_DELETED", staff, {entityType:"employee",entityId:id,status:"inactive"}); }
   async getSettings() { const db=await this.conn(); await this.ensureSettings(db); const rows=await db.select<Array<{key:string;value:string}>>("SELECT key,value FROM app_settings"); return this.rowsToSettings(rows); }
-  async updateSettings(settings:AppSettings, staff:Staff) { const db=await this.conn(); for(const [key,value] of Object.entries(this.settingsToRows(settings))) await db.execute("INSERT INTO app_settings(key,value,updated_at) VALUES($1,$2,CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=CURRENT_TIMESTAMP", [key,value]); await this.audit("SETTINGS_CHANGED", staff, {entityType:"settings",entityId:"local",details:JSON.stringify({language:settings.language,printerName:settings.printerName})}); return settings; }
+  async updateSettings(settings:AppSettings, staff:Staff) { const db=await this.conn(); for(const [key,value] of Object.entries(this.settingsToRows(settings))) await db.execute("INSERT INTO app_settings(key,value,updated_at) VALUES($1,$2,CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=CURRENT_TIMESTAMP", [key,value]); await this.audit("SETTINGS_CHANGED", staff, {entityType:"settings",entityId:"local",details:JSON.stringify({language:settings.language,printerName:settings.printerName,programLicenseStatus:settings.programLicenseStatus})}); return settings; }
   async getStorageHealth() { const db=await this.conn(); const metrics=await invoke<Omit<StorageHealth,"salesCount"|"auditCount"|"oldestSale"|"newestSale">>("get_local_storage_metrics"); const sales=await db.select<Array<{count:number;oldest?:string|null;newest?:string|null}>>("SELECT COUNT(*) as count, MIN(created_at) as oldest, MAX(created_at) as newest FROM sales"); const audit=await db.select<Array<{count:number}>>("SELECT COUNT(*) as count FROM audit_events"); return {...metrics,salesCount:Number(sales[0]?.count || 0),auditCount:Number(audit[0]?.count || 0),oldestSale:sales[0]?.oldest || undefined,newestSale:sales[0]?.newest || undefined}; }
   async getAppVersion() { return "0.1.0"; }
 }
