@@ -4,6 +4,7 @@ import "./browser-printer-preview-unblock";
 import App from "./App";
 import "./pos-keyboard-shortcuts";
 import "./inventory-barcode-enhancements";
+import "./desktop-scroll-runtime";
 import "./styles.css";
 import "./retail-ui.css";
 import "./receipt-print.css";
