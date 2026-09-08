@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings, CartLine, Language, Product, Receipt, Shift, Staff } from "./domain/types";
 import type { PosRepository, ProductInput } from "./data/repository";
 import { productName } from "./i18n";
@@ -66,6 +67,9 @@ const readParkedBills = (key: string): ParkedBill[] => {
   }
 };
 const writeParkedBills = (key: string, bills: ParkedBill[]) => localStorage.setItem(key, JSON.stringify(bills));
+const receiptText = (receipt: PricedReceipt) => [receipt.settings.receiptHeader || receipt.settings.storeName, receipt.settings.branchName, `Receipt: ${receipt.receiptNo}`, `Time: ${new Date(receipt.createdAt).toLocaleString("th-TH")}`, `Cashier: ${receipt.cashierName || receipt.employeeCode || "-"}`, "------------------------------", ...receipt.items.map(item => `${item.name} ${item.quantity} x ${money(item.unitPrice)} = ${money(item.lineTotal)}`), "------------------------------", `Total: ${money(receipt.total)}`, `Paid: ${money(receipt.paid)}`, `Change: ${money(receipt.changeAmount)}`, receipt.settings.receiptFooter || "", "", ""].join("\n");
+const printReceiptNative = async (receipt: PricedReceipt) => { if (!receipt.settings.printerName) throw new Error("PRINTER_NOT_CONFIGURED"); await invoke("print_receipt_text", { printerName: receipt.settings.printerName, text: receiptText(receipt) }); };
+const openDrawerNative = async (settings: AppSettings) => { if (!settings.printerName) throw new Error("PRINTER_NOT_CONFIGURED"); await invoke("open_cash_drawer", { printerName: settings.printerName }); };
 
 function priceCart(cart: CartLine[], discount: Discount, language: Language) {
   const subtotal = moneyNumber(cart.reduce((sum, line) => sum + line.quantity * line.price, 0));
@@ -107,6 +111,7 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
   const [cancelOpen, setCancelOpen] = useState(false);
   const [clearOpen, setClearOpen] = useState(false);
   const [parkListOpen, setParkListOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [parkedBills, setParkedBills] = useState<ParkedBill[]>(() => readParkedBills(parkedBillKey(settings.deviceId, shift.id)));
   const [unknownBarcode, setUnknownBarcode] = useState("");
   const [quickAddBarcode, setQuickAddBarcode] = useState<string | null>(null);
@@ -358,6 +363,12 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
       setTransferOpen(false);
       setReceipt(preview);
       await refreshProducts();
+      if (settings.printerAutoPrintReceipt !== false) {
+        try { await printReceiptNative(preview); } catch { notify("warn", "พิมพ์ใบเสร็จอัตโนมัติไม่สำเร็จ"); }
+      }
+      if (method === "cash" && settings.cashDrawerEnabled !== false) {
+        try { await openDrawerNative(settings); } catch { notify("warn", "เปิดลิ้นชักอัตโนมัติไม่สำเร็จ"); }
+      }
       notify("ok", `บันทึกบิล ${sale.receiptNo} แล้ว`);
     } catch (error) {
       notify("error", error instanceof Error ? error.message : "บันทึกการขายไม่สำเร็จ");
@@ -473,6 +484,7 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
         <button className={parkedBills.length ? "active" : ""} disabled={busy} onClick={() => setParkListOpen(true)}><span>☰</span><strong>บิลพัก</strong>{parkedBills.length > 0 && <small>{parkedBills.length} บิล</small>}</button>
         <button disabled title="ระบบสมาชิกจะพัฒนาในรอบถัดไป"><span>♙</span><strong>สมาชิก</strong></button>
         <button className={discount ? "active" : ""} disabled={!cart.length || busy} onClick={() => setDiscountOpen(true)}><span>%</span><strong>ส่วนลด</strong>{pricing.discountAmount > 0 && <small>{money(pricing.discountAmount)}</small>}</button>
+        <button disabled={busy || !settings.cashDrawerEnabled} onClick={() => setDrawerOpen(true)}><span>▤</span><strong>เปิดลิ้นชัก</strong></button>
       </div>
       <button className="grocery-pay-button" disabled={!cart.length || busy} onClick={() => setPaymentChoice(true)}>{busy ? "กำลังบันทึก..." : "ชำระเงิน"}</button>
       <button className="grocery-cancel-button" disabled={!cart.length || busy} onClick={() => setCancelOpen(true)}>ยกเลิกบิล</button>
@@ -487,6 +499,7 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
     {receipt && <ReceiptView receipt={receipt} onClose={() => { setReceipt(null); focusScanner(); }} />}
     {clearOpen && <ClearCartModal count={cart.length} onClose={() => setClearOpen(false)} onConfirm={() => void clearAll()} />}
     {cancelOpen && <CancelCart repo={repo} cart={cart} staff={staff} shift={shift} settings={settings} onClose={() => setCancelOpen(false)} onDone={() => { replaceCart([]); setDiscount(null); setCancelOpen(false); focusScanner(); }} />}
+    {drawerOpen && <CashDrawerModal repo={repo} settings={settings} onClose={() => { setDrawerOpen(false); focusScanner(); }} onDone={() => { setDrawerOpen(false); notify("ok", "เปิดลิ้นชักแล้ว"); focusScanner(); }} />}
     {unknownBarcode && <SimpleModal title="ไม่พบสินค้า" onClose={() => { setUnknownBarcode(""); focusScanner(); }}><div className="grocery-unknown-code">{unknownBarcode}</div><p>ยังไม่มีบาร์โค้ด/SKU นี้ในฐานข้อมูลเครื่อง</p><div className="grocery-modal-actions"><button className="secondary-action" onClick={() => { setUnknownBarcode(""); focusScanner(); }}>ปิด</button><button onClick={() => { setQuickAddBarcode(unknownBarcode); setUnknownBarcode(""); }}>เพิ่มสินค้าใหม่</button></div></SimpleModal>}
     {quickAddBarcode !== null && <QuickAddProduct repo={repo} staff={staff} barcode={quickAddBarcode} onClose={() => { setQuickAddBarcode(null); focusScanner(); }} onSaved={async product => { setQuickAddBarcode(null); await refreshProducts(); addProduct(product); }} />}
   </section>;
@@ -584,6 +597,21 @@ function CancelCart({ repo, cart, staff, shift, settings, onClose, onDone }: { r
     } catch (e) { setError(e instanceof Error ? e.message : "ยกเลิกบิลไม่สำเร็จ"); setBusy(false); }
   };
   return <SimpleModal title="ยกเลิกบิลปัจจุบัน" onClose={busy ? () => {} : onClose}><div className="grocery-transfer-warning"><strong>ยกเลิกก่อนชำระเงิน</strong><p>ระบบจะไม่ตัดสต๊อกและจะบันทึกผู้ทำรายการกับเหตุผลไว้ใน Audit</p></div><label className="grocery-field">PIN พนักงาน<input type="password" value={pin} onChange={e => setPin(e.target.value)} /></label><label className="grocery-field">เหตุผล<input value={reason} onChange={e => setReason(e.target.value)} placeholder="ระบุเหตุผลการยกเลิก" /></label>{error && <p className="grocery-error">{error}</p>}<div className="grocery-modal-actions"><button className="secondary-action" disabled={busy} onClick={onClose}>กลับ</button><button className="danger-action" disabled={busy || !pin || !reason} onClick={() => void submit()}>{busy ? "กำลังบันทึก..." : "ยืนยันยกเลิกบิล"}</button></div></SimpleModal>;
+}
+
+
+function CashDrawerModal({ repo, settings, onClose, onDone }: { repo: PosRepository; settings: AppSettings; onClose: () => void; onDone: () => void }) {
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true); setError("");
+    const auth = await repo.verifyPin(pin);
+    if (!auth || !["owner", "manager"].includes(auth.role)) { setError("ต้องใช้ PIN ผู้จัดการหรือเจ้าของร้าน"); setBusy(false); return; }
+    try { await openDrawerNative(settings); onDone(); }
+    catch { setError("เปิดลิ้นชักไม่สำเร็จ ตรวจสอบเครื่องพิมพ์และสายลิ้นชัก"); setBusy(false); }
+  };
+  return <SimpleModal title="เปิดลิ้นชัก" onClose={busy ? () => {} : onClose}><div className="grocery-transfer-warning"><strong>ต้องยืนยันสิทธิ์</strong><p>การเปิดลิ้นชักด้วยปุ่มนี้ต้องใช้ PIN ของผู้จัดการหรือเจ้าของร้าน ยกเว้นรับเงินสดหลังปิดบิลที่จะเปิดอัตโนมัติ</p></div><label className="grocery-field">PIN ผู้จัดการ/เจ้าของร้าน<input type="password" inputMode="numeric" maxLength={4} value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))} autoFocus /></label>{error && <p className="grocery-error">{error}</p>}<div className="grocery-modal-actions"><button className="secondary-action" disabled={busy} onClick={onClose}>กลับ</button><button className="danger-action" disabled={busy || pin.length !== 4} onClick={() => void submit()}>{busy ? "กำลังเปิด..." : "ยืนยันเปิดลิ้นชัก"}</button></div></SimpleModal>;
 }
 
 function QuickAddProduct({ repo, staff, barcode, onClose, onSaved }: { repo: PosRepository; staff: Staff; barcode: string; onClose: () => void; onSaved: (product: Product) => void }) {

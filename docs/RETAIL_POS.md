@@ -30,7 +30,7 @@ Transfer, PromptPay and Card in V0.1 are payment-method recording only. They do 
 
 ## Receipt and history
 
-A successful sale opens a Unicode-safe local receipt modal. Reprint loads the same sale from SQLite. Labels are localizable for Thai/English. Thermal Thai font and printer hardware behavior remain later hardware work.
+A successful sale opens a Unicode-safe local receipt modal. Reprint loads the same sale from SQLite. Labels are localizable for Thai/English. Printer setup is now a required first-run gate: CpIPOS detects Windows printers, chooses a default printer when available, requires one test print before normal use, and stores printer automation settings locally. After checkout, receipts are sent to the configured printer automatically. Cash payments also pulse the cash drawer automatically when enabled. Manual drawer opening is available from Sales but requires manager or owner PIN.
 
 Sales history keeps the original completed sale. Voiding a completed sale requires authorized PIN and reason, marks the sale cancelled, writes audit, and optionally creates returned-stock ledger movements.
 

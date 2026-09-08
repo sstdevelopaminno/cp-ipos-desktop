@@ -42,6 +42,9 @@ const shortHash = (value: string) => {
 };
 const licenseDeviceFingerprint = (settings: AppSettings) => "CP-" + shortHash(settings.deviceId + "|" + settings.deviceName + "|" + getInstallationId());
 const licenseStatusText = (status: string) => status === "active" ? "เปิดใช้งานแล้ว" : status === "pending_activation" ? "รอเปิดใช้งานกับ CpIPOS-IT" : status === "revoked" ? "ถูกระงับ" : status === "expired" ? "หมดอายุ" : "ยังไม่ใส่ลายเส้น";
+const listPrinters = async (): Promise<PrinterInfo[]> => { try { return await invoke<PrinterInfo[]>("list_windows_printers"); } catch { return [{ name: "Browser Preview Printer", status: "preview", isDefault: true, isOffline: false }]; } };
+const testPrinter = async (printerName: string) => { try { await invoke("print_test_receipt", { printerName }); } catch { window.print(); } };
+type PrinterInfo = { name: string; status: string; isDefault: boolean; isOffline: boolean };
 type ScreenProfile = { width: number; height: number; shortNav: boolean; compactNav: boolean };
 const detectScreenProfile = (): ScreenProfile => {
   if (typeof window === "undefined") return { width: 1366, height: 768, shortNav: false, compactNav: false };
@@ -151,6 +154,7 @@ export default function App() {
   if (splashStep < 3) return <main className="splash"><div className="splash-card"><img src="/icon.png" alt="CpIPOS" /><h1>CpIPOS Desktop</h1><p>{splashTexts[splashStep]}</p></div></main>;
   if (error || !repo || !settings) return <main className="center-screen"><section className="error-card"><h1>{t(language, "dbError")}</h1><p>{error || t(language, "dbError")}</p></section></main>;
   if (!staff) return <LoginScreen repo={repo} settings={settings} language={language} onLogin={async s => { await repo.saveSession(s); setStaff(s); await refreshShift(repo); }} />;
+  if (!settings.printerSetupConfirmed) return <PrinterSetupRequiredScreen repo={repo} staff={staff} settings={settings} language={language} refreshSettings={() => refreshSettings(repo)} onLogout={async () => { await repo.clearSession(staff, shift || undefined, settings.deviceId); setStaff(null); }} />;
   if (!shift) return <ShiftScreen repo={repo} staff={staff} settings={settings} language={language} onOpen={async s => { setShift(s); setView("sales"); }} />;
 
   const nav = [
@@ -348,7 +352,7 @@ function SettingsModal({ item, section, form, health, language, logoError, saveE
       {section === "license" && <LicenseSettingsPanel form={form} set={set} />}
       {section === "owner" && <div className="settings-form-grid"><label>ชื่อเจ้าของร้าน<input value={form.ownerName} onChange={e => set("ownerName", e.target.value)} /></label><label>บันทึก PIN เดโม<input value={form.ownerPinNote} onChange={e => set("ownerPinNote", e.target.value)} /></label><p className="warning settings-wide">{t(language, "demoPin")}</p></div>}
       {section === "receipt" && <div className="settings-form-grid"><label>ชื่อหัวใบเสร็จ<input value={form.receiptHeader} onChange={e => set("receiptHeader", e.target.value)} /></label><label>ข้อความท้ายใบเสร็จ<input value={form.receiptFooter} onChange={e => set("receiptFooter", e.target.value)} /></label><label>ที่อยู่บนใบเสร็จ<textarea value={form.address} onChange={e => set("address", e.target.value)} /></label><label>เบอร์โทรบนใบเสร็จ<input value={form.phone} onChange={e => set("phone", e.target.value)} /></label><label>เลขผู้เสียภาษี<input value={form.taxId} onChange={e => set("taxId", e.target.value)} /></label></div>}
-      {section === "printer" && <div className="printer-setup-card"><strong>ตั้งค่าเครื่องพิมพ์ใบเสร็จ 80mm</strong><p className="warning">โหมดนี้ใช้ Windows Print Dialog เพื่อเลือกเครื่องพิมพ์จริงที่ติดตั้งใน Windows แล้ว เช่น thermal printer 80mm. ตั้งค่าครั้งแรกแล้ว Windows จะจำค่าเครื่องพิมพ์ตามระบบ</p><div className="settings-form-grid"><label>ชื่อเครื่องพิมพ์<input placeholder="เช่น XP-80C / POS-80 / Rongta 80mm" value={form.printerName} onChange={e => set("printerName", e.target.value)} /></label><label>ชนิดการพิมพ์<select value={form.printerType} onChange={e => set("printerType", e.target.value)}><option value="windows-print-dialog">Windows Print Dialog</option><option value="not-configured">ยังไม่ได้ตั้งค่า</option></select></label><label>ขนาดกระดาษ<select value={form.printerPaperWidthMm} onChange={e => set("printerPaperWidthMm", e.target.value)}><option value="80">80mm</option><option value="58">58mm</option></select></label><label>หมายเหตุการเชื่อมต่อ<input value={form.printerConnectionNote} onChange={e => set("printerConnectionNote", e.target.value)} /></label></div><p>เมื่อกดปุ่ม <strong>พิมพ์ใบเสร็จ 80mm</strong> ระบบจะเปิดหน้าต่างพิมพ์ของ Windows ให้เลือกเครื่องพิมพ์จริง</p></div>}
+      {section === "printer" && <PrinterSettingsPanel form={form} set={set} />}
       {section === "scanner" && <div className="settings-form-grid"><label>โหมดเครื่องอ่านบาร์โค้ด<select value={form.scannerMode} onChange={e => set("scannerMode", e.target.value)}><option value="keyboard-wedge">Keyboard wedge / กด Enter หลังสแกน</option><option value="manual">Manual input / พิมพ์เอง</option></select></label><p className="warning settings-wide">เครื่องอ่านบาร์โค้ดทั่วไปควรใช้โหมด keyboard-wedge เพื่อส่งค่าเข้าช่องค้นหาเหมือนแป้นพิมพ์</p></div>}
       {section === "storage" && <StoragePanel health={health} />}
       {section === "backup" && <p className="warning">{t(language, "notReady")} - ฟังก์ชันสำรองและกู้คืนจะเปิดใช้เมื่อระบบ backup local storage เสร็จสมบูรณ์</p>}
@@ -361,6 +365,62 @@ function SettingsModal({ item, section, form, health, language, logoError, saveE
   </Modal>;
 }
 
+
+
+function PrinterSetupRequiredScreen({ repo, staff, settings, language, refreshSettings, onLogout }: { repo: PosRepository; staff: Staff; settings: AppSettings; language: Language; refreshSettings: () => Promise<void>; onLogout: () => Promise<void> }) {
+  const [form, setForm] = useState(settings);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const set = (key: keyof AppSettings, value: string | boolean) => setForm(f => ({ ...f, [key]: value }));
+  const save = async () => {
+    if (!form.printerSetupConfirmed) { setError("ต้องตรวจพบเครื่องพิมพ์และพิมพ์ทดสอบ 1 ครั้งก่อนเปิดใช้งานครั้งแรก"); return; }
+    setBusy(true); setError("");
+    try { await repo.updateSettings(form, staff); await refreshSettings(); }
+    catch { setError("บันทึกการตั้งค่าเครื่องพิมพ์ไม่สำเร็จ"); setBusy(false); }
+  };
+  return <main className="center-screen"><section className="pos-card printer-required-card"><span className="settings-kicker">First setup</span><h1>{t(language, "printer")}</h1><p>ต้องเชื่อมต่อและพิมพ์ทดสอบเครื่องพิมพ์ก่อนเริ่มใช้งาน CpIPOS</p><PrinterSettingsPanel form={form} set={set} />{error && <ErrorMessage text={error} />}<div className="actions modal-footer"><button disabled={busy || !form.printerSetupConfirmed} onClick={() => void save()}>{busy ? t(language, "submitBusy") : "ยืนยันและเข้าใช้งาน"}</button><button className="secondary" disabled={busy} onClick={() => void onLogout()}>ล็อคเอาท์</button></div></section></main>;
+}
+
+function PrinterSettingsPanel({ form, set }: { form: AppSettings; set: (key: keyof AppSettings, value: string | boolean) => void }) {
+  const [printers, setPrinters] = useState<PrinterInfo[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const selected = printers.find(p => p.name === form.printerName) || printers.find(p => p.isDefault) || printers[0];
+  const scan = async () => {
+    setBusy(true); setMessage("");
+    try {
+      const rows = await listPrinters();
+      setPrinters(rows);
+      const next = rows.find(p => p.name === form.printerName) || rows.find(p => p.isDefault) || rows[0];
+      if (next && !form.printerName) set("printerName", next.name);
+      set("printerConnectionStatus", next ? (next.isOffline ? "offline" : "ready") : "not_found");
+      set("printerLastCheckedAt", new Date().toISOString());
+      setMessage(next ? "ตรวจพบเครื่องพิมพ์แล้ว" : "ไม่พบเครื่องพิมพ์");
+    } catch {
+      set("printerConnectionStatus", "error");
+      setMessage("ตรวจสอบเครื่องพิมพ์ไม่สำเร็จ");
+    } finally { setBusy(false); }
+  };
+  const test = async () => {
+    const name = form.printerName || selected?.name || "";
+    if (!name) { setMessage("เลือกเครื่องพิมพ์ก่อน"); return; }
+    setBusy(true); setMessage("");
+    try {
+      await testPrinter(name);
+      set("printerName", name);
+      set("printerSetupConfirmed", true);
+      set("printerConnectionStatus", "ready");
+      set("printerLastCheckedAt", new Date().toISOString());
+      setMessage("พิมพ์ทดสอบแล้ว เชื่อมต่อเครื่องพิมพ์สำเร็จ");
+    } catch {
+      set("printerSetupConfirmed", false);
+      set("printerConnectionStatus", "error");
+      setMessage("พิมพ์ทดสอบไม่สำเร็จ");
+    } finally { setBusy(false); }
+  };
+  useEffect(() => { void scan(); }, []);
+  return <div className="printer-setup-card"><strong>ตั้งค่าเครื่องพิมพ์ใบเสร็จ</strong><p className="warning">ระบบจะตรวจเครื่องพิมพ์ Windows อัตโนมัติ เลือกค่าเริ่มต้น และต้องพิมพ์ทดสอบ 1 ครั้งก่อนใช้งานครั้งแรก</p><div className="printer-status-row"><Metric label="สถานะ" value={form.printerSetupConfirmed ? "พร้อมใช้งาน" : "รอยืนยัน"} /><Metric label="เครื่องพิมพ์" value={form.printerName || selected?.name || "ยังไม่พบ"} /></div><div className="settings-form-grid"><label>เครื่องพิมพ์<select value={form.printerName || selected?.name || ""} onChange={e => set("printerName", e.target.value)}><option value="">เลือกเครื่องพิมพ์</option>{printers.map(p => <option key={p.name} value={p.name}>{p.name}{p.isDefault ? " (Default)" : ""}{p.isOffline ? " - Offline" : ""}</option>)}</select></label><label>ขนาดกระดาษ<select value={form.printerPaperWidthMm} onChange={e => set("printerPaperWidthMm", e.target.value)}><option value="80">80mm</option><option value="58">58mm</option></select></label><label className="inline-check"><input type="checkbox" checked={form.printerAutoConnect} onChange={e => set("printerAutoConnect", e.target.checked)} /> เชื่อมต่ออัตโนมัติ</label><label className="inline-check"><input type="checkbox" checked={form.printerAutoPrintReceipt} onChange={e => set("printerAutoPrintReceipt", e.target.checked)} /> พิมพ์ใบเสร็จอัตโนมัติหลังปิดบิล</label><label className="inline-check"><input type="checkbox" checked={form.cashDrawerEnabled} onChange={e => set("cashDrawerEnabled", e.target.checked)} /> เปิดลิ้นชักอัตโนมัติเมื่อรับเงินสด</label><label>หมายเหตุ<input value={form.printerConnectionNote} onChange={e => set("printerConnectionNote", e.target.value)} /></label></div><div className="actions modal-footer"><button type="button" className="secondary" disabled={busy} onClick={() => void scan()}>{busy ? "กำลังตรวจ..." : "ตรวจเครื่องพิมพ์"}</button><button type="button" disabled={busy || !(form.printerName || selected?.name)} onClick={() => void test()}>พิมพ์ทดสอบ 1 ครั้ง</button></div>{message && <p className="warning">{message}</p>}</div>;
+}
 
 function LicenseSettingsPanel({ form, set }: { form: AppSettings; set: (key: keyof AppSettings, value: string | boolean) => void }) {
   const fingerprint = form.programLicenseDeviceFingerprint || licenseDeviceFingerprint(form);

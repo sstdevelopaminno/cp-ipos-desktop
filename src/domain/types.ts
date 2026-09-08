@@ -82,6 +82,12 @@ export type AppSettings = {
   printerName: string;
   printerPaperWidthMm: string;
   printerConnectionNote: string;
+  printerSetupConfirmed: boolean;
+  printerAutoConnect: boolean;
+  printerAutoPrintReceipt: boolean;
+  printerConnectionStatus: string;
+  printerLastCheckedAt: string;
+  cashDrawerEnabled: boolean;
   scannerMode: string;
   remoteManagementEnabled: boolean;
   programLicenseKey: string;

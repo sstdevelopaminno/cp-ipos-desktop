@@ -28,6 +28,12 @@ const DEFAULT_SETTINGS: AppSettings = {
   printerName: "",
   printerPaperWidthMm: "80",
   printerConnectionNote: "เลือกเครื่องพิมพ์ 80mm ผ่าน Windows Print Dialog ในการพิมพ์ครั้งแรก",
+  printerSetupConfirmed: false,
+  printerAutoConnect: true,
+  printerAutoPrintReceipt: true,
+  printerConnectionStatus: "not_checked",
+  printerLastCheckedAt: "",
+  cashDrawerEnabled: true,
   scannerMode: "keyboard-wedge",
   remoteManagementEnabled: false,
   programLicenseKey: "",
@@ -110,10 +116,10 @@ export class TauriRepository implements PosRepository {
     }
   }
 
-  private settingsToRows(s: AppSettings) { return { ...s, remoteManagementEnabled: String(s.remoteManagementEnabled) }; }
+  private settingsToRows(s: AppSettings) { return { ...s, remoteManagementEnabled: String(s.remoteManagementEnabled), printerSetupConfirmed: String(s.printerSetupConfirmed), printerAutoConnect: String(s.printerAutoConnect), printerAutoPrintReceipt: String(s.printerAutoPrintReceipt), cashDrawerEnabled: String(s.cashDrawerEnabled) }; }
   private rowsToSettings(rows: {key:string;value:string}[]): AppSettings {
     const map = new Map(rows.map(r => [r.key, r.value]));
-    return { ...DEFAULT_SETTINGS, ...Object.fromEntries(map), remoteManagementEnabled: map.get("remoteManagementEnabled") === "true", language: map.get("language") === "en" ? "en" : "th" };
+    return { ...DEFAULT_SETTINGS, ...Object.fromEntries(map), remoteManagementEnabled: map.get("remoteManagementEnabled") === "true", printerSetupConfirmed: map.get("printerSetupConfirmed") === "true", printerAutoConnect: map.get("printerAutoConnect") !== "false", printerAutoPrintReceipt: map.get("printerAutoPrintReceipt") !== "false", cashDrawerEnabled: map.get("cashDrawerEnabled") !== "false", language: map.get("language") === "en" ? "en" : "th" };
   }
 
   private async audit(action:string, staff?:Staff, data:Partial<AuditEvent>={}) {
