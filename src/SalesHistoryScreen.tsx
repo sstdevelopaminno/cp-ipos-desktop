@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type { PosRepository } from "./data/repository";
 import type { AppSettings, Language, Receipt, Sale, SaleItem, Shift, Staff } from "./domain/types";
 import { t } from "./i18n";
@@ -17,6 +18,11 @@ const currentYear = () => String(new Date().getFullYear());
 const localDate = (value: string) => new Date(value).toLocaleString("th-TH", { dateStyle: "short", timeStyle: "medium" });
 const paymentLabel = (language: Language, value: Sale["paymentMethod"]) => t(language, value);
 const statusLabel = (language: Language, value: Sale["status"]) => value === "completed" ? t(language, "completed") : t(language, "voided");
+const receiptText = (receipt: Receipt) => [receipt.settings.receiptHeader || receipt.settings.storeName, receipt.settings.branchName, `Receipt: ${receipt.receiptNo}`, `Time: ${new Date(receipt.createdAt).toLocaleString("th-TH")}`, `Cashier: ${receipt.cashierName || receipt.employeeCode || "-"}`, "------------------------------", ...receipt.items.map(item => `${item.name} ${item.quantity} x ${money(item.unitPrice)} = ${money(item.lineTotal)}`), "------------------------------", `Total: ${money(receipt.total)}`, `Paid: ${money(receipt.paid)}`, `Change: ${money(receipt.changeAmount)}`, receipt.settings.receiptFooter || "", "", ""].join("\n");
+const printReceiptNative = async (receipt: Receipt) => {
+  if (!receipt.settings.printerName) throw new Error("PRINTER_NOT_CONFIGURED");
+  await invoke("print_receipt_text", { printerName: receipt.settings.printerName, text: receiptText(receipt) });
+};
 
 const periodMatches = (sale: Sale, period: Period, target: string) => {
   const date = sale.createdAt.slice(0, 10);
@@ -184,7 +190,7 @@ function ReceiptDialog({ receipt, language, onClose }: { receipt: Receipt; langu
   const discountAmount = receipt.discountAmount ?? moneyNumber(Math.max(0, subtotal - Number(receipt.total || 0)));
   const logoSrc = receipt.settings.storeLogoPath || SYSTEM_LOGO;
   const printerWidth = receipt.settings.printerPaperWidthMm || "80";
-  const print80 = () => window.print();
+  const print80 = () => { void printReceiptNative(receipt); };
   return <Modal title={`ใบเสร็จ ${receipt.receiptNo}`} onClose={onClose} className="sales-history-receipt-modal">
     <div className="history-receipt-preview-shell">
       <div className="history-receipt-paper" data-paper-mm={printerWidth}>

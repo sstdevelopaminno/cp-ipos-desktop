@@ -42,8 +42,17 @@ const shortHash = (value: string) => {
 };
 const licenseDeviceFingerprint = (settings: AppSettings) => "CP-" + shortHash(settings.deviceId + "|" + settings.deviceName + "|" + getInstallationId());
 const licenseStatusText = (status: string) => status === "active" ? "เปิดใช้งานแล้ว" : status === "pending_activation" ? "รอเปิดใช้งานกับ CpIPOS-IT" : status === "revoked" ? "ถูกระงับ" : status === "expired" ? "หมดอายุ" : "ยังไม่ใส่ลายเส้น";
-const listPrinters = async (): Promise<PrinterInfo[]> => { try { return await invoke<PrinterInfo[]>("list_windows_printers"); } catch { return [{ name: "Browser Preview Printer", status: "preview", isDefault: true, isOffline: false }]; } };
-const testPrinter = async (printerName: string) => { try { await invoke("print_test_receipt", { printerName }); } catch { window.print(); } };
+const listPrinters = async (): Promise<PrinterInfo[]> => {
+  try {
+    return await invoke<PrinterInfo[]>("list_windows_printers");
+  } catch {
+    return [];
+  }
+};
+const testPrinter = async (printerName: string) => {
+  if (!printerName.trim()) throw new Error("PRINTER_NOT_CONFIGURED");
+  await invoke("print_test_receipt", { printerName });
+};
 type PrinterInfo = { name: string; status: string; isDefault: boolean; isOffline: boolean };
 type ScreenProfile = { width: number; height: number; shortNav: boolean; compactNav: boolean };
 const detectScreenProfile = (): ScreenProfile => {
@@ -395,10 +404,10 @@ function PrinterSettingsPanel({ form, set }: { form: AppSettings; set: (key: key
       if (next && !form.printerName) set("printerName", next.name);
       set("printerConnectionStatus", next ? (next.isOffline ? "offline" : "ready") : "not_found");
       set("printerLastCheckedAt", new Date().toISOString());
-      setMessage(next ? "ตรวจพบเครื่องพิมพ์แล้ว" : "ไม่พบเครื่องพิมพ์");
+      setMessage(next ? "ตรวจพบเครื่องพิมพ์แล้ว" : "ไม่พบเครื่องพิมพ์ หรือไม่ได้เปิดผ่าน CpIPOS Desktop");
     } catch {
       set("printerConnectionStatus", "error");
-      setMessage("ตรวจสอบเครื่องพิมพ์ไม่สำเร็จ");
+      setMessage("ตรวจสอบเครื่องพิมพ์ไม่สำเร็จ ต้องเปิดผ่าน CpIPOS Desktop เพื่อสั่งพิมพ์จริง");
     } finally { setBusy(false); }
   };
   const test = async () => {
@@ -415,7 +424,7 @@ function PrinterSettingsPanel({ form, set }: { form: AppSettings; set: (key: key
     } catch {
       set("printerSetupConfirmed", false);
       set("printerConnectionStatus", "error");
-      setMessage("พิมพ์ทดสอบไม่สำเร็จ");
+      setMessage("พิมพ์ทดสอบไม่สำเร็จ ตรวจสอบว่าเปิดผ่าน CpIPOS Desktop และเลือกเครื่องพิมพ์จริง");
     } finally { setBusy(false); }
   };
   useEffect(() => { void scan(); }, []);

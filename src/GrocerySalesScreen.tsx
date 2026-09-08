@@ -552,7 +552,7 @@ function ReceiptView({ receipt, onClose }: { receipt: PricedReceipt; onClose: ()
   const discountAmount = receipt.discountAmount ?? moneyNumber(Math.max(0, subtotal - receipt.total));
   const logoSrc = receipt.settings.storeLogoPath || SYSTEM_LOGO;
   const printerName = receipt.settings.printerName?.trim();
-  const print80 = () => window.print();
+  const print80 = () => { void printReceiptNative(receipt); };
   return <SimpleModal title={`ใบเสร็จ ${receipt.receiptNo}`} onClose={onClose} wide={false}>
     <div className="receipt-preview-shell"><div className="receipt-paper-80">
       <div className="receipt-logo-wrap"><img src={logoSrc} alt="โลโก้ร้าน" onError={event => { event.currentTarget.src = SYSTEM_LOGO; }} /></div>
