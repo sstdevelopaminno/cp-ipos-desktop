@@ -175,6 +175,14 @@ fn print_receipt_text(printer_name: String, text: String) -> Result<(), String> 
 }
 
 #[tauri::command]
+fn print_receipt_raster(printer_name: String, bytes: Vec<u8>) -> Result<(), String> {
+    let mut payload = vec![0x1B, 0x40];
+    payload.extend(bytes);
+    payload.extend([b'\n', b'\n', b'\n', 0x1D, 0x56, 0x42, 0x00]);
+    print_raw_bytes(&printer_name, "CpIPOS Receipt Raster", &payload)
+}
+
+#[tauri::command]
 fn open_cash_drawer(printer_name: String) -> Result<(), String> {
     if printer_name.trim().is_empty() {
         return Err("PRINTER_NOT_CONFIGURED".into());
@@ -273,6 +281,7 @@ pub fn run() {
             list_windows_printers,
             print_test_receipt,
             print_receipt_text,
+            print_receipt_raster,
             open_cash_drawer
         ])
         .run(tauri::generate_context!())

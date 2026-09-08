@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings, CartLine, Language, Product, Receipt, Shift, Staff } from "./domain/types";
 import type { PosRepository, ProductInput } from "./data/repository";
 import { productName } from "./i18n";
+import { printReceiptNative } from "./receipt-print";
 import "./grocery-sales.css";
 
 type Props = {
@@ -67,46 +68,6 @@ const readParkedBills = (key: string): ParkedBill[] => {
   }
 };
 const writeParkedBills = (key: string, bills: ParkedBill[]) => localStorage.setItem(key, JSON.stringify(bills));
-const receiptColumns = (receipt: Pick<PricedReceipt, "settings">) => receipt.settings.printerPaperWidthMm === "58" ? 32 : 42;
-const padReceiptLine = (left: string, right = "", width = 42) => {
-  const l = left.trimEnd();
-  const r = right.trimStart();
-  const gap = Math.max(1, width - l.length - r.length);
-  return r ? l + " ".repeat(gap) + r : l;
-};
-const centerReceiptLine = (text: string, width = 42) => {
-  const value = text.trim();
-  return " ".repeat(Math.max(0, Math.floor((width - value.length) / 2))) + value;
-};
-const receiptPaymentLabel = (method: PricedReceipt["paymentMethod"]) => method === "cash" ? "เงินสด" : method === "transfer" ? "เงินโอน" : method === "promptpay" ? "พร้อมเพย์" : "บัตร";
-const receiptText = (receipt: PricedReceipt) => {
-  const width = receiptColumns(receipt);
-  const line = "-".repeat(width);
-  const subtotal = receipt.subtotal ?? moneyNumber(receipt.items.reduce((sum, item) => sum + Math.max(0, Number(item.lineTotal || 0)), 0));
-  const discountAmount = receipt.discountAmount ?? moneyNumber(Math.max(0, subtotal - Number(receipt.total || 0)));
-  const rows = receipt.items.flatMap(item => [item.name, padReceiptLine(`  ${item.quantity} x ${money(item.unitPrice)}`, money(item.lineTotal), width)]);
-  return [
-    centerReceiptLine(receipt.settings.receiptHeader || receipt.settings.storeName, width),
-    centerReceiptLine(receipt.settings.branchName, width),
-    `เลขที่ ${receipt.receiptNo}`,
-    new Date(receipt.createdAt).toLocaleString("th-TH"),
-    `พนักงาน ${receipt.cashierName || receipt.employeeCode || "-"}`,
-    line,
-    ...rows,
-    line,
-    padReceiptLine("ยอดสินค้า", money(subtotal), width),
-    ...(discountAmount > 0 ? [padReceiptLine("ส่วนลด", `-${money(discountAmount)}`, width)] : []),
-    line,
-    padReceiptLine("ยอดสุทธิ", money(receipt.total), width),
-    padReceiptLine("ชำระโดย", receiptPaymentLabel(receipt.paymentMethod), width),
-    padReceiptLine("รับเงิน", money(receipt.paid), width),
-    padReceiptLine("เงินทอน", money(receipt.changeAmount), width),
-    line,
-    centerReceiptLine(receipt.settings.receiptFooter || "ขอบคุณที่ใช้บริการ", width),
-    "",
-  ].join("\n");
-};
-const printReceiptNative = async (receipt: PricedReceipt) => { if (!receipt.settings.printerName) throw new Error("PRINTER_NOT_CONFIGURED"); await invoke("print_receipt_text", { printerName: receipt.settings.printerName, text: receiptText(receipt) }); };
 const openDrawerNative = async (settings: AppSettings) => { if (!settings.printerName) throw new Error("PRINTER_NOT_CONFIGURED"); await invoke("open_cash_drawer", { printerName: settings.printerName }); };
 
 function priceCart(cart: CartLine[], discount: Discount, language: Language) {
