@@ -12,6 +12,11 @@ import { ReportsDashboardScreen } from "./ReportsDashboardScreen";
 import "./inventory-ui.css";
 
 type View = "sales" | "products" | "salesHistory" | "reports" | "employees" | "settings";
+const STAFF_ALLOWED_VIEWS = new Set<View>(["sales", "salesHistory"]);
+const canUseAdminViews = (staff: Staff | null) => staff?.role === "owner" || staff?.role === "manager";
+const canAccessView = (staff: Staff | null, view: View) => canUseAdminViews(staff) || STAFF_ALLOWED_VIEWS.has(view);
+const cleanEmployeeCode = (value: string) => value.replace(/\s+/g, "").toUpperCase().slice(0, 4);
+const cleanPin = (value: string) => value.replace(/\D/g, "").slice(0, 4);
 const money = (n: number) => `฿${Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const today = () => new Date().toISOString().slice(0, 10);
 const nowTime = () => new Date().toLocaleString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -109,6 +114,7 @@ export default function App() {
   }, []);
   useEffect(() => { const id = window.setInterval(() => setSplashStep(s => s >= 3 ? s : Math.min(2, s + 1)), 260); return () => window.clearInterval(id); }, []);
   useEffect(() => { localStorage.setItem("cpipos.nav.collapsed", navCollapsed ? "1" : "0"); }, [navCollapsed]);
+  useEffect(() => { if (staff && !canAccessView(staff, view)) setView("sales"); }, [staff, view]);
   useEffect(() => {
     let alive = true;
     const finishStartup = () => window.setTimeout(() => {
@@ -156,23 +162,26 @@ export default function App() {
     { id: "settings", label: t(language, "settings"), icon: "settings" as const },
   ];
 
+  const hasFullAccess = canUseAdminViews(staff);
+  const visibleNav = hasFullAccess ? nav : nav.filter(item => STAFF_ALLOWED_VIEWS.has(item.id as View));
+  const activeView = canAccessView(staff, view) ? view : "sales";
   const effectiveNavCollapsed = screenProfile.compactNav || navCollapsed;
   const shellClassName = "app-shell " + (effectiveNavCollapsed ? "nav-collapsed " : "") + (screenProfile.shortNav ? "nav-short " : "") + (screenProfile.compactNav ? "nav-auto-compact" : "");
 
   return <main className={shellClassName}>
-    <AppSidebar collapsed={effectiveNavCollapsed} compactLocked={screenProfile.compactNav} active={view} items={nav} onToggle={() => { if (!screenProfile.compactNav) setNavCollapsed(v => !v); }} onSelect={id => setView(id as View)} onCloseShift={() => setCloseShift(true)} onLogout={() => setLogoutOpen(true)} />
+    <AppSidebar collapsed={effectiveNavCollapsed} compactLocked={screenProfile.compactNav} active={activeView} items={visibleNav} onToggle={() => { if (!screenProfile.compactNav) setNavCollapsed(v => !v); }} onSelect={id => { const next = id as View; if (canAccessView(staff, next)) setView(next); }} onCloseShift={() => setCloseShift(true)} onLogout={() => setLogoutOpen(true)} />
     <section className="workspace">
       <header className="topbar">
         <div><strong>CpIPOS</strong><span>{settings.storeName} / {settings.branchName}</span></div>
         <div className="topbar-meta"><span>{t(language, "cashier")}: {staff.displayName}</span><span>{t(language, "role")}: {staff.role}</span><span>{t(language, "currentShift")}: {shift.id.slice(0, 8)}</span><span>วันที่/เวลา: {clock}</span><button onClick={() => setCloseShift(true)}>{t(language, "closeShift")}</button></div>
       </header>
-      <div className={`view-body ${view === "sales" ? "sales-view" : ""} ${view === "reports" ? "reports-view" : ""}`}>
-        {view === "sales" && <RetailSalesScreen repo={repo} staff={staff} shift={shift} settings={settings} products={products} language={language} refreshProducts={() => refreshProducts(repo)} />}
-        {view === "products" && <ProductsScreenV2 repo={repo} staff={staff} products={products} language={language} refreshProducts={() => refreshProducts(repo)} requestStockNotification={requestStockNotification} />}
-        {view === "salesHistory" && <SalesHistoryScreenV2 repo={repo} staff={staff} shift={shift} settings={settings} language={language} />}
-        {view === "reports" && <ReportsScreen repo={repo} language={language} />}
-        {view === "employees" && <EmployeesScreen repo={repo} staff={staff} language={language} />}
-        {view === "settings" && <SettingsScreen repo={repo} staff={staff} settings={settings} language={language} refreshSettings={() => refreshSettings(repo)} />}
+      <div className={`view-body ${activeView === "sales" ? "sales-view" : ""} ${activeView === "reports" ? "reports-view" : ""}`}>
+        {activeView === "sales" && <RetailSalesScreen repo={repo} staff={staff} shift={shift} settings={settings} products={products} language={language} refreshProducts={() => refreshProducts(repo)} />}
+        {activeView === "products" && <ProductsScreenV2 repo={repo} staff={staff} products={products} language={language} refreshProducts={() => refreshProducts(repo)} requestStockNotification={requestStockNotification} />}
+        {activeView === "salesHistory" && <SalesHistoryScreenV2 repo={repo} staff={staff} shift={shift} settings={settings} language={language} />}
+        {activeView === "reports" && <ReportsScreen repo={repo} language={language} />}
+        {activeView === "employees" && <EmployeesScreen repo={repo} staff={staff} language={language} />}
+        {activeView === "settings" && <SettingsScreen repo={repo} staff={staff} settings={settings} language={language} refreshSettings={() => refreshSettings(repo)} />}
       </div>
     </section>
     {closeShift && <CloseShiftModal repo={repo} staff={staff} shift={shift} settings={settings} language={language} onClose={() => setCloseShift(false)} onConfirm={async () => { await repo.closeShift(staff, settings.deviceId); await repo.clearSession(staff, shift, settings.deviceId); setCloseShift(false); setShift(null); setStaff(null); }} />}
@@ -184,9 +193,9 @@ function LoginScreen({ repo, settings, language, onLogin }: { repo: PosRepositor
   const [code, setCode] = useState("");
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
-  const submit = async () => { const s = await repo.verifyPin(pin); if (s && (!code || s.code.toLowerCase() === code.toLowerCase())) onLogin(s); else { setError(t(language, "pinWrong")); setPin(""); } };
-  const press = (v: string) => { if (v === "back") setPin(pin.slice(0, -1)); else if (v === "ok") void submit(); else if (pin.length < 8) setPin(pin + v); };
-  return <main className="center-screen"><section className="login-card pos-card"><img className="brand-logo" src="/icon.png" alt="CpIPOS" /><h1>{settings.storeName}</h1><p>{settings.branchName}</p><label>{t(language, "employeeCode")}<input value={code} onChange={e => setCode(e.target.value)} autoFocus /></label><p>{t(language, "loginHint")}</p><div className="pin-dots">{[0, 1, 2, 3].map(i => <span key={i} className={pin.length > i ? "filled" : ""} />)}</div>{error && <ErrorMessage text={error} />}<div className="keypad">{"123456789".split("").map(n => <button key={n} onClick={() => press(n)}>{n}</button>)}<button onClick={() => press("0")}>0</button><button onClick={() => press("back")}>⌫</button><button className="primary" onClick={() => press("ok")}>OK</button></div><p className="warning">{t(language, "demoPin")}</p></section></main>;
+  const submit = async () => { const employeeCode = cleanEmployeeCode(code); if (!employeeCode || pin.length !== 4) { setError("กรอกรหัสพนักงานและ PIN 4 ตัว"); return; } const s = await repo.verifyPin(pin, employeeCode); if (s) onLogin(s); else { setError(t(language, "pinWrong")); setPin(""); } };
+  const press = (v: string) => { if (v === "back") setPin(pin.slice(0, -1)); else if (v === "ok") void submit(); else if (pin.length < 4) setPin(pin + v); };
+  return <main className="center-screen"><section className="login-card pos-card"><img className="brand-logo" src="/icon.png" alt="CpIPOS" /><h1>{settings.storeName}</h1><p>{settings.branchName}</p><label>{t(language, "employeeCode")}<input value={code} maxLength={4} onChange={e => setCode(cleanEmployeeCode(e.target.value))} autoFocus /></label><p>{t(language, "loginHint")}</p><div className="pin-dots">{[0, 1, 2, 3].map(i => <span key={i} className={pin.length > i ? "filled" : ""} />)}</div>{error && <ErrorMessage text={error} />}<div className="keypad">{"123456789".split("").map(n => <button key={n} onClick={() => press(n)}>{n}</button>)}<button onClick={() => press("0")}>0</button><button onClick={() => press("back")}>⌫</button><button className="primary" onClick={() => press("ok")}>OK</button></div><p className="warning">{t(language, "demoPin")}</p></section></main>;
 }
 
 function ShiftScreen({ repo, staff, settings, language, onOpen }: { repo: PosRepository; staff: Staff; settings: AppSettings; language: Language; onOpen: (shift: Shift) => void }) {
@@ -233,19 +242,22 @@ function EmployeeFormModal({ repo, staff, language, initial, onClose, onSaved }:
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const submit = async () => {
-    if (!code.trim() || !name.trim()) { setError("กรอกรหัสพนักงานและชื่อพนักงาน"); return; }
+    const employeeCode = cleanEmployeeCode(code);
+    if (!employeeCode || !name.trim()) { setError("กรอกรหัสพนักงานและชื่อพนักงาน"); return; }
+    if (employeeCode.length > 4) { setError("รหัสพนักงานต้องไม่เกิน 4 ตัว"); return; }
+    if (pin && pin.length !== 4) { setError("PIN ต้องเป็นตัวเลข 4 ตัว"); return; }
     setBusy(true);
     setError("");
     try {
-      await repo.saveEmployee({ id: initial?.id, code, displayName: name, role, active, demoPin: pin || undefined }, staff);
+      await repo.saveEmployee({ id: initial?.id, code: employeeCode, displayName: name.trim(), role, active, demoPin: pin || undefined }, staff);
       await onSaved();
     } catch (err) {
-      setError(err instanceof Error && err.message === "EMPLOYEE_CODE_EXISTS" ? "รหัสพนักงานนี้ถูกใช้แล้ว" : "บันทึกพนักงานไม่สำเร็จ");
+      setError(err instanceof Error && err.message === "EMPLOYEE_CODE_EXISTS" ? "รหัสพนักงานนี้ถูกใช้แล้ว" : err instanceof Error && err.message === "EMPLOYEE_CODE_TOO_LONG" ? "รหัสพนักงานต้องไม่เกิน 4 ตัว" : err instanceof Error && err.message === "EMPLOYEE_PIN_INVALID" ? "PIN ต้องเป็นตัวเลข 4 ตัว" : "บันทึกพนักงานไม่สำเร็จ");
       setBusy(false);
     }
   };
   return <Modal title={initial ? "แก้ไขพนักงาน" : "เพิ่มพนักงาน"} onClose={busy ? () => {} : onClose}>
-    <div className="employee-form-grid"><label>{t(language, "employeeCode")}<input value={code} onChange={e => setCode(e.target.value)} autoFocus /></label><label>Name<input value={name} onChange={e => setName(e.target.value)} /></label><label>Demo PIN<input value={pin} onChange={e => setPin(e.target.value)} placeholder={initial ? "เว้นว่างเพื่อใช้ PIN เดิม" : "Demo PIN"} /></label><label>{t(language, "role")}<select value={role} onChange={e => setRole(e.target.value as Staff["role"])}><option value="staff">staff</option><option value="manager">manager</option><option value="owner">owner</option></select></label><label>{t(language, "status")}<select value={active ? "1" : "0"} onChange={e => setActive(e.target.value === "1")}><option value="1">{t(language, "active")}</option><option value="0">{t(language, "inactive")}</option></select></label></div>
+    <div className="employee-form-grid"><label>{t(language, "employeeCode")}<input value={code} maxLength={4} onChange={e => setCode(cleanEmployeeCode(e.target.value))} autoFocus /></label><label>Name<input value={name} onChange={e => setName(e.target.value)} /></label><label>Demo PIN<input value={pin} maxLength={4} inputMode="numeric" onChange={e => setPin(cleanPin(e.target.value))} placeholder={initial ? "เว้นว่างเพื่อใช้ PIN เดิม" : "Demo PIN 4 ตัว"} /></label><label>{t(language, "role")}<select value={role} onChange={e => setRole(e.target.value as Staff["role"])}><option value="staff">staff</option><option value="manager">manager</option><option value="owner">owner</option></select></label><label>{t(language, "status")}<select value={active ? "1" : "0"} onChange={e => setActive(e.target.value === "1")}><option value="1">{t(language, "active")}</option><option value="0">{t(language, "inactive")}</option></select></label></div>
     {error && <ErrorMessage text={error} />}
     <div className="actions modal-footer"><button disabled={busy} onClick={() => void submit()}>{busy ? t(language, "submitBusy") : t(language, "save")}</button><button className="secondary" disabled={busy} onClick={onClose}>{t(language, "back")}</button></div>
   </Modal>;

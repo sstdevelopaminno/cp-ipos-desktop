@@ -136,7 +136,13 @@ pub fn run() {
             sql: include_str!("../migrations/0005_sale_discounts.sql"),
             kind: MigrationKind::Up,
         },
-    ];
+            Migration {
+            version: 6,
+            description: "employee_role_code_policy",
+            sql: include_str!("../migrations/0006_employee_role_code_policy.sql"),
+            kind: MigrationKind::Up,
+        },
+];
 
     tauri::Builder::default()
         .plugin(

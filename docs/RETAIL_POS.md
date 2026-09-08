@@ -38,6 +38,10 @@ Sales history keeps the original completed sale. Voiding a completed sale requir
 
 Development verification should cover splash on launch, login, shift gate, close/relaunch session behavior, close-shift-to-login, product modal, duplicate barcode block, Thai text persistence after restart, cart scan no-stock-change, completed sale stock decrement once, failed checkout/cancel no-stock-change, sale void return movement, language switch and no external Internet/Supabase/Vercel dependency.
 
+## Role policy
+
+Staff users see only Sales, Sales History, Close Shift and Logout in the main shell. Manager and owner users see every main menu and can manage employees, settings, inventory and reports. Cancelling an unpaid bill remains available from Sales, but it must be authorized by a manager or owner PIN before the cancellation audit is written. Employee codes are limited to four characters, normalized to uppercase, and must stay unique. Demo PIN values are four numeric digits.
+
 ## UI polish baseline
 
 The desktop shell now uses one CpIPOS blue/white visual system for splash, login, shift, sales, payment, product, stock, history, reports, employees and settings screens. Controls are sized for touch, the cart remains visible during product browsing, checkout opens a payment selection modal first, and cash entry uses quick amounts plus a numeric keypad.

@@ -32,7 +32,7 @@ export type VoidSaleInput = { saleId: string; pin: string; reason: string; resto
 
 export interface PosRepository {
   initialize(): Promise<void>;
-  verifyPin(pin: string): Promise<Staff | null>;
+  verifyPin(pin: string, code?: string): Promise<Staff | null>;
   getSavedSession(): Promise<Staff | null>;
   saveSession(staff: Staff): Promise<void>;
   clearSession(staff?: Staff, shift?: Shift, deviceId?: string): Promise<void>;
