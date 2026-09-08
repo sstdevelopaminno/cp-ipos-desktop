@@ -178,7 +178,7 @@ fn print_receipt_text(printer_name: String, text: String) -> Result<(), String> 
 fn print_receipt_raster(printer_name: String, bytes: Vec<u8>) -> Result<(), String> {
     let mut payload = vec![0x1B, 0x40];
     payload.extend(bytes);
-    payload.extend([b'\n', b'\n', b'\n', 0x1D, 0x56, 0x42, 0x00]);
+    payload.extend([0x1B, 0x64, 0x08, 0x1D, 0x56, 0x42, 0x00]);
     print_raw_bytes(&printer_name, "CpIPOS Receipt Raster", &payload)
 }
 

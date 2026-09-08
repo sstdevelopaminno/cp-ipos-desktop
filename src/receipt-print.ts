@@ -12,6 +12,7 @@ const SYSTEM_LOGO = "/icon.png";
 const moneyNumber = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
 const money = (n: number) => `฿${moneyNumber(n).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const paperWidth = (receipt: PrintableReceipt) => receipt.settings.printerPaperWidthMm === "58" ? 384 : 576;
+const CUTTER_SAFE_FEED_PX = 180;
 const paymentLabel = (method: Receipt["paymentMethod"]) => method === "cash" ? "เงินสด" : method === "transfer" ? "เงินโอน" : method === "promptpay" ? "พร้อมเพย์" : "บัตร";
 
 const loadImage = (src: string) => new Promise<HTMLImageElement | null>(resolve => {
@@ -89,7 +90,7 @@ export async function printReceiptNative(receipt: PrintableReceipt) {
   const itemHeight = Math.max(1, receipt.items.length) * 74;
   const canvas = document.createElement("canvas");
   canvas.width = width;
-  canvas.height = 560 + itemHeight;
+  canvas.height = 740 + itemHeight;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("CANVAS_NOT_READY");
 
@@ -142,7 +143,7 @@ export async function printReceiptNative(receipt: PrintableReceipt) {
   drawPair(ctx, "เงินทอน", money(receipt.changeAmount), y, width); y += 28;
   dashedLine(ctx, y, width); y += 36;
   drawCentered(ctx, receipt.settings.receiptFooter || "ขอบคุณที่ใช้บริการ", y, "20px Tahoma, 'Segoe UI', sans-serif", width);
-  y += 36;
+  y += 44;
 
-  await invoke("print_receipt_raster", { printerName, bytes: rasterBytes(canvas, y) });
+  await invoke("print_receipt_raster", { printerName, bytes: rasterBytes(canvas, y + CUTTER_SAFE_FEED_PX) });
 }
