@@ -40,7 +40,7 @@ Development verification should cover splash on launch, login, shift gate, close
 
 ## Role policy
 
-Staff users see only Sales, Sales History, Close Shift and Logout in the main shell. Manager and owner users see every main menu and can manage employees, settings, inventory and reports. Cancelling an unpaid bill remains available from Sales, but it must be authorized by a manager or owner PIN before the cancellation audit is written. Employee codes are limited to four characters, normalized to uppercase, and must stay unique. Demo PIN values are four numeric digits.
+Staff users see only Sales, Sales History, Close Shift and Logout in the main shell. Manager and owner users see every main menu and can manage employees, settings, inventory and reports. Cancelling an unpaid bill remains available from Sales, but it must be authorized by a manager or owner PIN before the cancellation audit is written. Employee codes are limited to four characters, normalized to uppercase, and must stay unique. PIN values are four numeric digits and are stored as salted PBKDF2-SHA256 hashes.
 
 ## UI polish baseline
 

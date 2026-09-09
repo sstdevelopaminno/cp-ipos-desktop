@@ -1,4 +1,4 @@
-# Phase 0 bootstrap verification
+﻿# Phase 0 bootstrap verification
 
 Started: 2026-09-05 (Asia/Bangkok)
 Completed: 2026-09-06 (Asia/Bangkok)
@@ -33,7 +33,7 @@ The existing dependency major ranges were retained; missing `@types/node@^22` wa
 | npm run build | PASS | TypeScript and Vite completed with exit code 0 |
 | cargo check --manifest-path src-tauri/Cargo.toml | PASS | Finished `dev` profile in 40m 25s |
 | npm run desktop:dev | PASS | Native Tauri app launched as `CpIPOS Desktop`; first full build finished in 42m 06s, restart build finished in 5m 01s |
-| Native login, shift, POS/cart, CASH sale | PASS | Login screen loaded, demo PIN `1234` worked, shift screen opened, POS rendered, `น้ำเปล่า` was added to cart, CASH sale completed |
+| Native login, shift, POS/cart, CASH sale | PASS | Login screen loaded, onboarding owner PIN worked, shift screen opened, POS rendered, `น้ำเปล่า` was added to cart, CASH sale completed |
 | SQLite persistence after restart | PASS | Receipt `R30081698` remained in `C:\Users\Admins\AppData\Roaming\th.co.cuttingpoint.cpipos.desktop\cpipos.db` after app restart |
 | Offline transaction without Internet/Supabase/Vercel | PASS | CASH sale completed while WebView network emulation was offline; network log showed only Vite localhost assets and `ipc.localhost/plugin:sql` calls |
 

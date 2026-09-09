@@ -40,7 +40,7 @@ The UI uses Thai/English dictionaries from one screen set. Settings includes `La
 
 ## Security limits
 
-The current PIN is demo-only and not production secure authentication. The employee model keeps a credential abstraction so secure hashing can replace `pin_demo` later. Sensitive actions such as bill cancellation and sale void require local re-authentication.
+Employee PINs are stored as salted PBKDF2-SHA256 hashes in SQLite after initialization; legacy `pin_demo` values are upgraded and cleared automatically. Sensitive actions such as bill cancellation and sale void require local re-authentication. The first default owner PIN remains an onboarding credential and must be changed before real use.
 
 ## Future boundaries
 

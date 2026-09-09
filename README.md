@@ -37,7 +37,7 @@ Cash is a local cash transaction. Transfer, PromptPay and Card in V0.1 are payme
 
 ## Security note
 
-The current development PIN is temporary/demo-only and must not be considered secure authentication. Secure PIN hashing remains a required Phase 1 task before production use.
+Employee PINs are stored as salted PBKDF2-SHA256 hashes in local storage/SQLite after initialization. The first default owner PIN is still an onboarding credential and must be changed before real use.
 
 ## Documentation
 

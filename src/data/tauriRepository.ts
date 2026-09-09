@@ -1,13 +1,14 @@
 import Database from "@tauri-apps/plugin-sql";
 import { invoke } from "@tauri-apps/api/core";
 import type { CancelBillInput, CheckoutInput, EmployeeInput, PosRepository, ProductInput, SaleFilters, StockInput, VoidSaleInput } from "./repository";
+import { createPinCredential, verifyPinCredential, type PinCredential } from "./pinCredential";
 import type { AppSettings, AuditEvent, PaymentMethod, Product, Receipt, Sale, SalesSummary, Shift, Staff, StockMovement, StockMovementType, StorageHealth } from "../domain/types";
 
 type DbProduct = { id:string; product_code?:string|null; sku:string; barcode?:string|null; name?:string|null; name_th?:string|null; name_en?:string|null; category_id:string; category_name:string; price:number; cost:number; unit:string; stock_quantity:number; minimum_stock:number; quantity_scale?:number|null; image_path?:string|null; active:number };
 type DbShift = { id:string; opened_at:string; opening_cash:number; status:"open"|"closed" };
 type DbSale = { id:string; receipt_no:string; total:number; paid:number; change_amount:number; payment_method:PaymentMethod; created_at:string; status:"completed"|"cancelled"; cashier_name?:string|null; employee_code?:string|null; shift_id?:string|null; cancelled_at?:string|null; cancelled_reason?:string|null };
 type DbSaleItem = { id:string; sale_id:string; product_id?:string|null; name:string; quantity:number; unit_price:number; line_total:number };
-type DbStaff = { id:string; code:string; display_name:string; role:Staff["role"]; active:number };
+type DbStaff = { id:string; code:string; display_name:string; role:Staff["role"]; active:number; pin_demo?:string|null; pin_hash?:string|null; pin_salt?:string|null; pin_hash_algorithm?:string|null; pin_hash_iterations?:number|null };
 type DbAudit = { id:string; timestamp:string; employee_id?:string|null; employee_code?:string|null; role?:Staff["role"]|null; action:string; entity_type?:string|null; entity_id?:string|null; shift_id?:string|null; device_id?:string|null; reason?:string|null; status?:string|null; details_json?:string|null };
 type DbStock = { id:string; product_id:string; sku:string; name:string; movement_type:string; quantity:number; before_quantity:number; after_quantity:number; unit_cost:number; reason?:string|null; employee_id?:string|null; shift_id?:string|null; created_at:string };
 
@@ -78,6 +79,7 @@ export class TauriRepository implements PosRepository {
   async initialize() {
     const db = await this.conn();
     await this.ensureSettings(db);
+    await this.upgradeLegacyPins(db);
   }
 
   private product(r: DbProduct): Product {
@@ -110,6 +112,21 @@ export class TauriRepository implements PosRepository {
 
   private staff(r: DbStaff): Staff { return { id:r.id, code:r.code, displayName:r.display_name, role:r.role, active:Boolean(r.active) }; }
 
+  private credential(r: DbStaff): Partial<PinCredential> {
+    return { pinHash:r.pin_hash || undefined, pinSalt:r.pin_salt || undefined, pinHashAlgorithm:r.pin_hash_algorithm === "PBKDF2-SHA256" ? "PBKDF2-SHA256" : undefined, pinHashIterations:Number(r.pin_hash_iterations || 0) || undefined };
+  }
+
+  private async upgradeLegacyPin(db: Database, row: DbStaff) {
+    if(!row.pin_demo) return;
+    const credential=await createPinCredential(row.pin_demo);
+    await db.execute("UPDATE staff SET pin_hash=$2,pin_salt=$3,pin_hash_algorithm=$4,pin_hash_iterations=$5,pin_demo=NULL,pin_updated_at=CURRENT_TIMESTAMP WHERE id=$1", [row.id,credential.pinHash,credential.pinSalt,credential.pinHashAlgorithm,credential.pinHashIterations]);
+  }
+
+  private async upgradeLegacyPins(db: Database) {
+    const rows=await db.select<DbStaff[]>("SELECT id,code,display_name,role,active,pin_demo,pin_hash,pin_salt,pin_hash_algorithm,pin_hash_iterations FROM staff WHERE pin_demo IS NOT NULL AND pin_demo <> ''");
+    for(const row of rows) await this.upgradeLegacyPin(db,row);
+  }
+
   private async ensureSettings(db: Database) {
     for (const [key, value] of Object.entries(this.settingsToRows(DEFAULT_SETTINGS))) {
       await db.execute("INSERT OR IGNORE INTO app_settings(key,value) VALUES($1,$2)", [key, value]);
@@ -127,7 +144,17 @@ export class TauriRepository implements PosRepository {
     await db.execute("INSERT INTO audit_events(id,timestamp,employee_id,employee_code,role,action,entity_type,entity_id,shift_id,device_id,reason,status,details_json) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)", [crypto.randomUUID(), new Date().toISOString(), staff?.id ?? null, staff?.code ?? null, staff?.role ?? null, action, data.entityType ?? null, data.entityId ?? null, data.shiftId ?? null, data.deviceId ?? null, data.reason ?? null, data.status ?? null, data.details ?? null]);
   }
 
-  async verifyPin(pin:string, code?:string) { const db=await this.conn(); const wanted=code?.trim(); const rows=wanted ? await db.select<DbStaff[]>("SELECT id,code,display_name,role,active FROM staff WHERE pin_demo = $1 AND lower(code)=lower($2) AND active = 1 LIMIT 1", [pin,wanted]) : await db.select<DbStaff[]>("SELECT id,code,display_name,role,active FROM staff WHERE pin_demo = $1 AND active = 1 LIMIT 1", [pin]); return rows[0] ? this.staff(rows[0]) : null; }
+  async verifyPin(pin:string, code?:string) {
+    const db=await this.conn();
+    const wanted=code?.trim();
+    const sql="SELECT id,code,display_name,role,active,pin_demo,pin_hash,pin_salt,pin_hash_algorithm,pin_hash_iterations FROM staff WHERE active = 1" + (wanted ? " AND lower(code)=lower($1)" : "");
+    const rows=await db.select<DbStaff[]>(sql, wanted ? [wanted] : []);
+    for(const row of rows){
+      if(await verifyPinCredential(pin, this.credential(row))) return this.staff(row);
+      if(row.pin_demo && row.pin_demo === pin){ await this.upgradeLegacyPin(db,row); return this.staff(row); }
+    }
+    return null;
+  }
   async getSavedSession() { const db=await this.conn(); const meta=await db.select<Array<{value:string}>>("SELECT value FROM app_meta WHERE key='current_staff_id' LIMIT 1"); if(!meta[0]) return null; const rows=await db.select<DbStaff[]>("SELECT id,code,display_name,role,active FROM staff WHERE id=$1 AND active=1 LIMIT 1", [meta[0].value]); return rows[0] ? this.staff(rows[0]) : null; }
   async saveSession(staff:Staff) { const db=await this.conn(); await db.execute("INSERT INTO app_meta(key,value) VALUES('current_staff_id',$1) ON CONFLICT(key) DO UPDATE SET value=excluded.value", [staff.id]); await this.audit("LOGIN", staff, { entityType:"session", entityId:staff.id }); }
   async clearSession(staff?:Staff, shift?:Shift, deviceId?:string) { const db=await this.conn(); await db.execute("DELETE FROM app_meta WHERE key='current_staff_id'"); await this.audit("LOGOUT", staff, { entityType:"session", entityId:staff?.id, shiftId:shift?.id, deviceId }); }
@@ -214,7 +241,7 @@ export class TauriRepository implements PosRepository {
   async listStockMovements(limit=100) { const db=await this.conn(); const rows=await db.select<DbStock[]>("SELECT id,product_id,sku,name,movement_type,quantity,before_quantity,after_quantity,unit_cost,reason,employee_id,shift_id,created_at FROM stock_movement_ledger ORDER BY created_at DESC LIMIT $1", [limit]); return rows.map(r=>({id:r.id,productId:r.product_id,sku:r.sku,name:r.name,movementType:stockType(r.movement_type),quantity:Number(r.quantity),beforeQuantity:Number(r.before_quantity),afterQuantity:Number(r.after_quantity),unitCost:Number(r.unit_cost),reason:r.reason||undefined,employeeId:r.employee_id||undefined,shiftId:r.shift_id||undefined,createdAt:r.created_at})); }
   async applyStockMovement(input:StockInput) { const db=await this.conn(); const p=(await this.listProducts()).find(x=>x.id===input.productId); if(!p) throw new Error("PRODUCT_NOT_FOUND"); const amount=qty(input.quantity); const before=p.stockQuantity; const after=input.movementType==="STOCK_IN"?qty(before+amount):input.movementType==="STOCK_OUT"?qty(before-amount):amount; const movement:StockMovement={id:crypto.randomUUID(),productId:p.id,sku:p.productCode,name:p.nameTh,movementType:input.movementType,quantity:amount,beforeQuantity:before,afterQuantity:after,unitCost:p.cost,reason:input.reason,employeeId:input.staff.id,shiftId:input.shiftId,createdAt:new Date().toISOString()}; await db.execute("INSERT INTO stock_movement_ledger(id,product_id,sku,name,movement_type,quantity,before_quantity,after_quantity,unit_cost,reason,employee_id,shift_id,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)", [movement.id,movement.productId,movement.sku,movement.name,movement.movementType,movement.quantity,movement.beforeQuantity,movement.afterQuantity,movement.unitCost,movement.reason || null,movement.employeeId || null,movement.shiftId || null,movement.createdAt]); await db.execute("UPDATE products SET stock_quantity=$2,updated_at=CURRENT_TIMESTAMP WHERE id=$1", [p.id,after]); await this.audit(input.movementType, input.staff, {entityType:"product",entityId:p.id,shiftId:input.shiftId,reason:input.reason,details:JSON.stringify({before,after})}); return movement; }
   async listEmployees() { const db=await this.conn(); const rows=await db.select<DbStaff[]>("SELECT id,code,display_name,role,active FROM staff ORDER BY active DESC, code"); return rows.map(r=>this.staff(r)); }
-  async saveEmployee(input:EmployeeInput, staff:Staff) { if(!["owner","manager"].includes(staff.role)) throw new Error("EMPLOYEE_PERMISSION_DENIED"); const db=await this.conn(); const id=input.id || crypto.randomUUID(); const code=input.code.trim().toUpperCase(); const displayName=input.displayName.trim(); if(!code || code.length>4) throw new Error("EMPLOYEE_CODE_TOO_LONG"); if(input.demoPin && !/^\d{4}$/.test(input.demoPin.trim())) throw new Error("EMPLOYEE_PIN_INVALID"); const existing=await db.select<DbStaff[]>("SELECT id,code,display_name,role,active FROM staff WHERE lower(code)=lower($1) AND id<>$2 LIMIT 1", [code,id]); if(existing[0]) throw new Error("EMPLOYEE_CODE_EXISTS"); await db.execute("INSERT INTO staff(id,code,display_name,role,pin_demo,active) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(id) DO UPDATE SET code=excluded.code,display_name=excluded.display_name,role=excluded.role,pin_demo=COALESCE(excluded.pin_demo,pin_demo),active=excluded.active", [id,code,displayName,input.role,input.demoPin?.trim() || null,input.active?1:0]); await this.audit(input.id?"EMPLOYEE_UPDATED":"EMPLOYEE_CREATED", staff, {entityType:"employee",entityId:id}); const rows=await db.select<DbStaff[]>("SELECT id,code,display_name,role,active FROM staff WHERE id=$1", [id]); return this.staff(rows[0]); }
+  async saveEmployee(input:EmployeeInput, staff:Staff) { if(!["owner","manager"].includes(staff.role)) throw new Error("EMPLOYEE_PERMISSION_DENIED"); const db=await this.conn(); const id=input.id || crypto.randomUUID(); const code=input.code.trim().toUpperCase(); const displayName=input.displayName.trim(); const newPin=input.demoPin?.trim(); if(!code || code.length>4) throw new Error("EMPLOYEE_CODE_TOO_LONG"); if(!input.id && !newPin) throw new Error("EMPLOYEE_PIN_REQUIRED"); if(newPin && !/^\d{4}$/.test(newPin)) throw new Error("EMPLOYEE_PIN_INVALID"); const credential=newPin ? await createPinCredential(newPin) : null; const existing=await db.select<DbStaff[]>("SELECT id,code,display_name,role,active FROM staff WHERE lower(code)=lower($1) AND id<>$2 LIMIT 1", [code,id]); if(existing[0]) throw new Error("EMPLOYEE_CODE_EXISTS"); await db.execute("INSERT INTO staff(id,code,display_name,role,pin_demo,pin_hash,pin_salt,pin_hash_algorithm,pin_hash_iterations,active) VALUES($1,$2,$3,$4,NULL,$5,$6,$7,$8,$9) ON CONFLICT(id) DO UPDATE SET code=excluded.code,display_name=excluded.display_name,role=excluded.role,pin_demo=CASE WHEN excluded.pin_hash IS NOT NULL THEN NULL ELSE pin_demo END,pin_hash=COALESCE(excluded.pin_hash,pin_hash),pin_salt=COALESCE(excluded.pin_salt,pin_salt),pin_hash_algorithm=COALESCE(excluded.pin_hash_algorithm,pin_hash_algorithm),pin_hash_iterations=COALESCE(excluded.pin_hash_iterations,pin_hash_iterations),pin_updated_at=CASE WHEN excluded.pin_hash IS NOT NULL THEN CURRENT_TIMESTAMP ELSE pin_updated_at END,active=excluded.active", [id,code,displayName,input.role,credential?.pinHash || null,credential?.pinSalt || null,credential?.pinHashAlgorithm || null,credential?.pinHashIterations || null,input.active?1:0]); await this.audit(input.id?"EMPLOYEE_UPDATED":"EMPLOYEE_CREATED", staff, {entityType:"employee",entityId:id}); const rows=await db.select<DbStaff[]>("SELECT id,code,display_name,role,active FROM staff WHERE id=$1", [id]); return this.staff(rows[0]); }
   async deleteEmployee(id:string, staff:Staff) { if(!["owner","manager"].includes(staff.role)) throw new Error("EMPLOYEE_PERMISSION_DENIED"); if(id===staff.id) throw new Error("EMPLOYEE_SELF_DELETE"); const db=await this.conn(); const rows=await db.select<DbStaff[]>("SELECT id,code,display_name,role,active FROM staff WHERE id=$1 LIMIT 1", [id]); if(!rows[0]) throw new Error("EMPLOYEE_NOT_FOUND"); await db.execute("UPDATE staff SET active=0 WHERE id=$1", [id]); await this.audit("EMPLOYEE_DELETED", staff, {entityType:"employee",entityId:id,status:"inactive"}); }
   async getSettings() { const db=await this.conn(); await this.ensureSettings(db); const rows=await db.select<Array<{key:string;value:string}>>("SELECT key,value FROM app_settings"); return this.rowsToSettings(rows); }
   async updateSettings(settings:AppSettings, staff:Staff) { const db=await this.conn(); for(const [key,value] of Object.entries(this.settingsToRows(settings))) await db.execute("INSERT INTO app_settings(key,value,updated_at) VALUES($1,$2,CURRENT_TIMESTAMP) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=CURRENT_TIMESTAMP", [key,value]); await this.audit("SETTINGS_CHANGED", staff, {entityType:"settings",entityId:"local",details:JSON.stringify({language:settings.language,printerName:settings.printerName,programLicenseStatus:settings.programLicenseStatus})}); return settings; }

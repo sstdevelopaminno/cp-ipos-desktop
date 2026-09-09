@@ -123,6 +123,8 @@ const clickCashKey = (modal: HTMLElement, key: string) => {
 
 const applyCashAmount = (modal: HTMLElement, value: string) => {
   const clean = sanitizeMoneyText(value);
+  const input = modal.querySelector<HTMLInputElement>(".cash-paid-entry-input");
+  if (input) input.dataset.cashEntryTouched = clean ? "1" : "";
   clickButton(findButton(modal, ["ล้าง"]));
   for (const char of clean) clickCashKey(modal, char);
   window.setTimeout(() => syncCashPaidEntry(modal), 30);
@@ -145,11 +147,18 @@ function syncCashPaidEntry(modal: HTMLElement) {
     holder.innerHTML = `<label>กรอกจำนวนเงินที่รับ<input class="cash-paid-entry-input" inputmode="decimal" autocomplete="off" placeholder="0.00" /></label><small>ใช้แป้นพิมพ์ตัวเลข / Numpad ได้ · Enter เพื่อยืนยัน · C เพื่อล้าง · Backspace เพื่อลบ</small>`;
     summary.insertAdjacentElement("afterend", holder);
     const input = holder.querySelector<HTMLInputElement>("input");
-    input?.addEventListener("focus", () => input.select());
+    input?.addEventListener("focus", () => {
+      if (input.value) input.select();
+    });
     input?.addEventListener("input", () => applyCashAmount(modal, input.value));
   }
   const input = holder.querySelector<HTMLInputElement>("input");
-  if (input && document.activeElement !== input) input.value = paidTextFromModal(modal);
+  if (input && document.activeElement !== input) {
+    const paidText = paidTextFromModal(modal);
+    const nextValue = Number(paidText) > 0 ? paidText : "";
+    input.value = nextValue;
+    input.dataset.cashEntryTouched = nextValue ? "1" : "";
+  }
 }
 
 const focusCashAction = (modal: HTMLElement, direction: number) => {
@@ -177,6 +186,7 @@ const updateCashEntryByKey = (modal: HTMLElement, event: KeyboardEvent) => {
   } else {
     return false;
   }
+  input.dataset.cashEntryTouched = next ? "1" : "";
   input.value = next;
   applyCashAmount(modal, next);
   input.focus({ preventScroll: true });

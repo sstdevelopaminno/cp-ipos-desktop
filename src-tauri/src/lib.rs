@@ -214,17 +214,40 @@ if(-not [RawPrinterHelper]::SendBytes($env:CPIPOS_PRINTER_NAME,$bytes)){ throw '
     })
 }
 
+const MAX_PRODUCT_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+const ALLOWED_PRODUCT_IMAGE_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "gif"];
+
+fn safe_product_image_name(file_name: &str) -> Result<String, String> {
+    let file_name = Path::new(file_name).file_name().and_then(|name| name.to_str()).unwrap_or("product.png");
+    let clean = file_name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+        .collect::<String>();
+    let clean = if clean.is_empty() { "product.png".to_string() } else { clean };
+    let path = Path::new(&clean);
+    let ext = path.extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
+    if !ALLOWED_PRODUCT_IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+        return Err("PRODUCT_IMAGE_TYPE_UNSUPPORTED".into());
+    }
+    let stem = path.file_stem().and_then(|value| value.to_str()).unwrap_or("product");
+    let stem = stem.trim_matches('.');
+    let stem = if stem.is_empty() { "product" } else { stem };
+    Ok(format!("{}.{}", stem, ext))
+}
+
 #[tauri::command]
 fn save_product_image<R: Runtime>(
     app: tauri::AppHandle<R>,
     file_name: String,
     bytes: Vec<u8>,
 ) -> Result<String, String> {
-    let clean = file_name
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
-        .collect::<String>();
-    let safe_name = if clean.is_empty() { "product.png".to_string() } else { clean };
+    if bytes.is_empty() {
+        return Err("PRODUCT_IMAGE_EMPTY".into());
+    }
+    if bytes.len() > MAX_PRODUCT_IMAGE_BYTES {
+        return Err("PRODUCT_IMAGE_TOO_LARGE".into());
+    }
+    let safe_name = safe_product_image_name(&file_name)?;
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("media").join("products");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let relative = format!("media/products/{}-{}", chrono_like_stamp(), safe_name);
@@ -270,6 +293,7 @@ pub fn run() {
         Migration { version: 5, description: "sale_discount_metadata", sql: include_str!("../migrations/0005_sale_discounts.sql"), kind: MigrationKind::Up },
         Migration { version: 6, description: "employee_role_code_policy", sql: include_str!("../migrations/0006_employee_role_code_policy.sql"), kind: MigrationKind::Up },
         Migration { version: 7, description: "printer_automation_settings", sql: include_str!("../migrations/0007_printer_automation_settings.sql"), kind: MigrationKind::Up },
+        Migration { version: 8, description: "staff_pin_hashing", sql: include_str!("../migrations/0008_staff_pin_hashing.sql"), kind: MigrationKind::Up },
     ];
 
     tauri::Builder::default()
