@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./browser-printer-preview-unblock";
+import "./printer-first-run-fix";
 import App from "./App";
 import "./login-security-guard";
 import "./pos-keyboard-shortcuts";
@@ -21,6 +22,7 @@ import "./reports-dashboard-overrides.css";
 import "./sales-history-desktop-scroll.css";
 import "./settings-desktop-scroll.css";
 import "./settings-commercial-runtime.css";
+import "./printer-first-run-fix.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
