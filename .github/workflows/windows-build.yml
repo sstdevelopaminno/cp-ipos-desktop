@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release tag, for example v0.2.0"
+        description: "Release tag, for example v0.2.2"
         required: true
-        default: "v0.2.0"
+        default: "v0.2.2"
       channel:
         description: "Release channel"
         required: true
@@ -17,6 +17,8 @@ on:
           - beta
           - customer-test
   push:
+    branches:
+      - dev/ui-system
     tags: ["v*"]
 
 jobs:
@@ -39,10 +41,15 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ inputs.version }}"
-          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "${{ github.ref_name }}" }
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            $package = Get-Content package.json -Raw | ConvertFrom-Json
+            $tag = "v$($package.version)"
+          }
           if (-not $tag.StartsWith("v")) { $tag = "v$tag" }
+          $channel = "${{ inputs.channel }}"
+          if ([string]::IsNullOrWhiteSpace($channel)) { $channel = "stable" }
           "CPIPOS_RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "CPIPOS_RELEASE_CHANNEL=${{ inputs.channel || 'stable' }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "CPIPOS_RELEASE_CHANNEL=$channel" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Install frontend dependencies
         run: npm ci
       - name: Build CpIPOS Desktop installers
@@ -56,9 +63,9 @@ jobs:
             CpIPOS Desktop Windows installer
 
             Channel: ${{ env.CPIPOS_RELEASE_CHANNEL }}
-            License: device-bound program license / 30-day trial foundation
-            Includes: Data archive/reset, Cloud Backup/Restore settings, Remote Management settings, and License settings.
-          releaseDraft: true
+            License: Free Forever release, license server and MDM connection disabled for this version.
+            Includes: startup blank-screen recovery, printer setup shortcut, data archive/reset, cash drawer support, sales keyboard workflow, and close shift 80mm summary printing.
+          releaseDraft: false
           prerelease: ${{ env.CPIPOS_RELEASE_CHANNEL != 'stable' }}
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
