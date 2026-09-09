@@ -1,5 +1,10 @@
 type MaybeButton = HTMLButtonElement | null;
 
+let lastScannerInputAt = 0;
+let suppressPaymentEnterUntil = 0;
+
+const SCANNER_ENTER_SUPPRESS_MS = 650;
+
 const isEditable = (target: EventTarget | null) => {
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName.toLowerCase();
@@ -13,14 +18,19 @@ const isVisible = (element: HTMLElement) => {
 };
 
 const salesRoot = () => document.querySelector<HTMLElement>(".grocery-pos-layout");
+
 const topModal = () => {
   const modals = Array.from(document.querySelectorAll<HTMLElement>(".grocery-modal"));
   return modals.filter(isVisible).at(-1) || null;
 };
 
 const normalizeText = (value: string) => value.replace(/\s+/g, " ").trim();
-const allButtons = (scope: ParentNode = document) => Array.from(scope.querySelectorAll<HTMLButtonElement>("button")).filter(button => !button.disabled && isVisible(button));
+
+const allButtons = (scope: ParentNode = document) =>
+  Array.from(scope.querySelectorAll<HTMLButtonElement>("button")).filter(button => !button.disabled && isVisible(button));
+
 const buttonText = (button: HTMLButtonElement) => normalizeText(button.textContent || button.getAttribute("aria-label") || "");
+
 const findButton = (scope: ParentNode, tests: Array<string | RegExp>): MaybeButton => {
   return allButtons(scope).find(button => {
     const text = buttonText(button);
@@ -87,6 +97,7 @@ const activatePrimaryModalAction = (modal: HTMLElement) => {
 };
 
 const setActiveChoice = (buttons: HTMLButtonElement[], index: number) => {
+  if (!buttons.length) return -1;
   const safeIndex = ((index % buttons.length) + buttons.length) % buttons.length;
   buttons.forEach((button, i) => button.classList.toggle("pos-kb-active", i === safeIndex));
   buttons[safeIndex]?.focus({ preventScroll: true });
@@ -101,7 +112,8 @@ const handleChoiceNavigation = (event: KeyboardEvent, modal: HTMLElement) => {
   if (!choiceScope) return false;
   const buttons = Array.from(choiceScope.querySelectorAll<HTMLButtonElement>("button")).filter(button => !button.disabled && isVisible(button));
   if (!buttons.length) return false;
-  const current = Math.max(0, buttons.indexOf(document.activeElement as HTMLButtonElement));
+  const active = document.activeElement instanceof HTMLButtonElement ? document.activeElement : null;
+  const current = buttons.includes(active as HTMLButtonElement) ? buttons.indexOf(active as HTMLButtonElement) : 0;
   if (["ArrowRight", "ArrowDown"].includes(event.key)) {
     setActiveChoice(buttons, current + 1);
     return true;
@@ -111,8 +123,8 @@ const handleChoiceNavigation = (event: KeyboardEvent, modal: HTMLElement) => {
     return true;
   }
   if (event.key === "Enter") {
-    const active = buttons.includes(document.activeElement as HTMLButtonElement) ? document.activeElement as HTMLButtonElement : buttons[0];
-    return clickButton(active);
+    const selected = buttons.includes(active as HTMLButtonElement) ? active as HTMLButtonElement : buttons[0];
+    return clickButton(selected);
   }
   return false;
 };
@@ -120,16 +132,14 @@ const handleChoiceNavigation = (event: KeyboardEvent, modal: HTMLElement) => {
 const handleCashKeypad = (event: KeyboardEvent, modal: HTMLElement) => {
   const keypad = modal.querySelector<HTMLElement>(".grocery-cash-keypad");
   if (!keypad) return false;
-  const key = event.key === "Decimal" ? "." : event.key;
+  const key = event.code === "NumpadDecimal" ? "." : event.key;
   if (/^[0-9.]$/.test(key)) {
     return clickButton(findButton(keypad, [new RegExp(`^${key.replace(".", "\\.")}$`)]));
   }
-  if (event.code === "NumpadAdd" || event.key === "+") {
-    return clickButton(findButton(modal, ["ยอดพอดี"]));
-  }
+  if (event.code === "NumpadAdd" || event.key === "+") return clickButton(findButton(modal, ["ยอดพอดี"]));
   if (event.key === "Backspace") return clickButton(findButton(modal, ["ลบ"]));
   if (event.key === "Delete") return clickButton(findButton(modal, ["ล้าง"]));
-  if (event.key === "Enter") return activatePrimaryModalAction(modal);
+  if (event.key === "Enter" || event.code === "NumpadEnter") return activatePrimaryModalAction(modal);
   return false;
 };
 
@@ -146,7 +156,7 @@ const handleDiscountKeys = (event: KeyboardEvent, modal: HTMLElement) => {
     setActiveChoice(controls, index - 1);
     return true;
   }
-  if (event.key === "Enter") return activatePrimaryModalAction(modal);
+  if (event.key === "Enter" || event.code === "NumpadEnter") return activatePrimaryModalAction(modal);
   return false;
 };
 
@@ -182,9 +192,24 @@ const handleSidebarKeys = (event: KeyboardEvent) => {
     buttons[(current - 1 + buttons.length) % buttons.length]?.focus({ preventScroll: true });
     return true;
   }
-  if (event.key === "Enter") return clickButton(target);
+  if (event.key === "Enter" || event.code === "NumpadEnter") return clickButton(target);
   return false;
 };
+
+const scannerEnterIsFromBarcodeScan = (scanner: HTMLInputElement | null) => {
+  if (!scanner || document.activeElement !== scanner) return false;
+  const now = performance.now();
+  const hasBarcodeText = scanner.value.trim().length > 0;
+  const justReceivedScannerText = now - lastScannerInputAt < SCANNER_ENTER_SUPPRESS_MS;
+  return hasBarcodeText || justReceivedScannerText || now < suppressPaymentEnterUntil;
+};
+
+window.addEventListener("input", event => {
+  if (event.target === scanInput()) {
+    lastScannerInputAt = performance.now();
+    suppressPaymentEnterUntil = lastScannerInputAt + SCANNER_ENTER_SUPPRESS_MS;
+  }
+}, true);
 
 window.addEventListener("keydown", event => {
   if (event.ctrlKey || event.altKey || event.metaKey) return;
@@ -194,12 +219,15 @@ window.addEventListener("keydown", event => {
   if (modal) {
     let handled = false;
     const isUnknownProductModal = Boolean(modal.querySelector(".grocery-unknown-code"));
-    if (isUnknownProductModal && (event.key === "Enter" || event.key === "Escape")) {
+    if (isUnknownProductModal && (event.key === "Enter" || event.code === "NumpadEnter" || event.key === "Escape")) {
       handled = closeModal(modal);
       window.setTimeout(focusScanner, 40);
-    } else if (event.key === "Escape") handled = closeModal(modal);
-    else handled = handleCashKeypad(event, modal) || handleDiscountKeys(event, modal) || handleChoiceNavigation(event, modal);
-    if (!handled && event.key === "Enter") {
+    } else if (event.key === "Escape") {
+      handled = closeModal(modal);
+    } else {
+      handled = handleCashKeypad(event, modal) || handleDiscountKeys(event, modal) || handleChoiceNavigation(event, modal);
+    }
+    if (!handled && (event.key === "Enter" || event.code === "NumpadEnter")) {
       prepareCancelReason(modal);
       handled = activatePrimaryModalAction(modal);
     }
@@ -247,7 +275,13 @@ window.addEventListener("keydown", event => {
   else if ((event.key === "w" || event.key === "W") && (!targetIsScanner || !scanner?.value)) handled = openDrawer();
   else if ((event.key === "d" || event.key === "D") && (!targetIsScanner || !scanner?.value)) handled = openCancelBill();
   else if ((event.key === "q" || event.key === "Q") && (!targetIsScanner || !scanner?.value)) handled = focusSidebar();
-  else if (event.key === "Enter" && (!targetIsScanner || !scanner?.value)) handled = openPaymentIfReady();
+  else if (event.key === "Enter" || event.code === "NumpadEnter") {
+    if (scannerEnterIsFromBarcodeScan(scanner)) {
+      suppressPaymentEnterUntil = performance.now() + SCANNER_ENTER_SUPPRESS_MS;
+      return;
+    }
+    handled = openPaymentIfReady();
+  }
 
   if (handled) {
     event.preventDefault();
