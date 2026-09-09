@@ -28,6 +28,53 @@ function drawCentered(ctx: CanvasRenderingContext2D, text: string, y: number, fo
   ctx.fillText(text, width / 2, y);
 }
 
+const receiptTopLines = (receipt: PrintableReceipt) => [
+  receipt.settings.address,
+  receipt.settings.phone ? `โทร ${receipt.settings.phone}` : "",
+  receipt.settings.taxId ? `เลขประจำตัวผู้เสียภาษี ${receipt.settings.taxId}` : "",
+].flatMap(value => String(value || "").split(/\r?\n/)).map(value => value.trim()).filter(Boolean);
+
+function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number) {
+  const words = text.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let line = "";
+  for (const word of words.length ? words : [text]) {
+    const next = line ? `${line} ${word}` : word;
+    if (ctx.measureText(next).width <= maxWidth) {
+      line = next;
+      continue;
+    }
+    if (line) lines.push(line);
+    if (ctx.measureText(word).width <= maxWidth) {
+      line = word;
+      continue;
+    }
+    let chunk = "";
+    for (const char of word) {
+      const nextChunk = chunk + char;
+      if (ctx.measureText(nextChunk).width > maxWidth && chunk) {
+        lines.push(chunk);
+        chunk = char;
+      } else {
+        chunk = nextChunk;
+      }
+    }
+    line = chunk;
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+function drawCenteredWrapped(ctx: CanvasRenderingContext2D, lines: string[], y: number, font: string, width: number, lineHeight: number) {
+  ctx.font = font;
+  ctx.textAlign = "center";
+  for (const line of lines.flatMap(value => wrapText(ctx, value, width - 64))) {
+    ctx.fillText(line, width / 2, y);
+    y += lineHeight;
+  }
+  return y;
+}
+
 function drawPair(ctx: CanvasRenderingContext2D, left: string, right: string, y: number, width: number, font = "24px Tahoma, 'Segoe UI', sans-serif") {
   ctx.font = font;
   ctx.textAlign = "left";
@@ -85,9 +132,11 @@ function rasterBytes(canvas: HTMLCanvasElement, usedHeight: number) {
 async function printReceiptRasterNow(receipt: PrintableReceipt, printerName: string) {
   const width = paperWidth(receipt);
   const itemHeight = Math.max(1, receipt.items.length) * 74;
+  const topLines = receiptTopLines(receipt);
+  const headerTextHeight = topLines.reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / (width === 384 ? 24 : 38))) * 24, 0);
   const canvas = document.createElement("canvas");
   canvas.width = width;
-  canvas.height = 740 + itemHeight;
+  canvas.height = 780 + itemHeight + headerTextHeight;
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("CANVAS_NOT_READY");
 
@@ -106,7 +155,13 @@ async function printReceiptRasterNow(receipt: PrintableReceipt, printerName: str
   drawCentered(ctx, receipt.settings.receiptHeader || receipt.settings.storeName || "CpIPOS", y, "bold 32px Tahoma, 'Segoe UI', sans-serif", width);
   y += 34;
   drawCentered(ctx, receipt.settings.branchName || "Main Branch", y, "22px Tahoma, 'Segoe UI', sans-serif", width);
-  y += 42;
+  y += 28;
+  if (topLines.length) {
+    y = drawCenteredWrapped(ctx, topLines, y, "18px Tahoma, 'Segoe UI', sans-serif", width, 24);
+    y += 16;
+  } else {
+    y += 14;
+  }
 
   ctx.font = "18px Tahoma, 'Segoe UI', sans-serif";
   ctx.textAlign = "left";
