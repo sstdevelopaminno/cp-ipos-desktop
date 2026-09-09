@@ -1,6 +1,21 @@
 name: Windows Build
+
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag, for example v0.2.0"
+        required: true
+        default: "v0.2.0"
+      channel:
+        description: "Release channel"
+        required: true
+        default: "stable"
+        type: choice
+        options:
+          - stable
+          - beta
+          - customer-test
   push:
     tags: ["v*"]
 
@@ -20,15 +35,37 @@ jobs:
           node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+      - name: Resolve release metadata
+        shell: pwsh
+        run: |
+          $tag = "${{ inputs.version }}"
+          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "${{ github.ref_name }}" }
+          if (-not $tag.StartsWith("v")) { $tag = "v$tag" }
+          "CPIPOS_RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "CPIPOS_RELEASE_CHANNEL=${{ inputs.channel || 'stable' }}" | Out-File -FilePath $env:GITHUB_ENV -Append
       - name: Install frontend dependencies
         run: npm ci
-      - name: Build CpIPOS Desktop
+      - name: Build CpIPOS Desktop installers
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: v__VERSION__
-          releaseName: "CpIPOS Desktop v__VERSION__"
-          releaseBody: "CpIPOS Desktop Windows offline release"
+          tagName: ${{ env.CPIPOS_RELEASE_TAG }}
+          releaseName: "CpIPOS Desktop ${{ env.CPIPOS_RELEASE_TAG }}"
+          releaseBody: |
+            CpIPOS Desktop Windows installer
+
+            Channel: ${{ env.CPIPOS_RELEASE_CHANNEL }}
+            License: device-bound program license / 30-day trial foundation
+            Includes: Data archive/reset, Cloud Backup/Restore settings, Remote Management settings, and License settings.
           releaseDraft: true
-          prerelease: false
+          prerelease: ${{ env.CPIPOS_RELEASE_CHANNEL != 'stable' }}
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cpipos-desktop-windows-installers
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: warn
