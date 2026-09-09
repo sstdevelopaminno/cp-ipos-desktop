@@ -78,3 +78,38 @@
     height:36px;
   }
 }
+.printer-required-page{
+  height:var(--app-vh,100vh);
+  min-height:var(--app-vh,100vh);
+  place-items:start center;
+  align-content:start;
+  overflow-y:auto;
+  overflow-x:hidden;
+  scrollbar-gutter:stable;
+  overscroll-behavior:contain;
+}
+
+.printer-required-page .printer-required-card{
+  margin:0 auto;
+  max-height:none;
+}
+
+.printer-required-page .printer-setup-card{
+  min-height:0;
+}
+
+@media(max-height:780px){
+  .printer-required-page{
+    padding-block:14px;
+  }
+
+  .printer-required-page .printer-required-card{
+    padding:24px;
+    border-radius:24px;
+  }
+
+  .printer-required-page .printer-setup-card{
+    gap:10px;
+    padding:12px;
+  }
+}

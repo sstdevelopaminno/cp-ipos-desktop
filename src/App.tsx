@@ -22,6 +22,22 @@ const today = () => new Date().toISOString().slice(0, 10);
 const nowTime = () => new Date().toLocaleString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const SYSTEM_LOGO = "/icon.png";
 const completeStartupSplash = async () => { try { await invoke("complete_startup_splash"); } catch { /* Browser preview fallback. */ } };
+const STARTUP_REPOSITORY_TIMEOUT_MS = 4000;
+const STARTUP_INITIALIZE_TIMEOUT_MS = 12000;
+const STARTUP_QUERY_TIMEOUT_MS = 8000;
+const withStartupTimeout = <T,>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
+  let timer = 0;
+  return new Promise<T>((resolve, reject) => {
+    timer = window.setTimeout(() => reject(new Error(label)), ms);
+    promise.then(value => {
+      window.clearTimeout(timer);
+      resolve(value);
+    }).catch(error => {
+      window.clearTimeout(timer);
+      reject(error);
+    });
+  });
+};
 const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result || "")); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); });
 const INSTALL_ID_KEY = "cpipos.installation.id";
 const getInstallationId = () => {
@@ -137,13 +153,13 @@ export default function App() {
     }, 900);
     (async () => {
       try {
-        const r = await createRepository();
-        await r.initialize();
+        const r = await withStartupTimeout(createRepository(), STARTUP_REPOSITORY_TIMEOUT_MS, "REPOSITORY_LOAD_TIMEOUT");
+        await withStartupTimeout(r.initialize(), STARTUP_INITIALIZE_TIMEOUT_MS, "DATABASE_INITIALIZE_TIMEOUT");
         const [saved, activeShift, currentSettings, currentProducts] = await Promise.all([
-          r.getSavedSession(),
-          r.getActiveShift(),
-          r.getSettings(),
-          r.listProducts(),
+          withStartupTimeout(r.getSavedSession(), STARTUP_QUERY_TIMEOUT_MS, "SESSION_LOAD_TIMEOUT"),
+          withStartupTimeout(r.getActiveShift(), STARTUP_QUERY_TIMEOUT_MS, "SHIFT_LOAD_TIMEOUT"),
+          withStartupTimeout(r.getSettings(), STARTUP_QUERY_TIMEOUT_MS, "SETTINGS_LOAD_TIMEOUT"),
+          withStartupTimeout(r.listProducts(), STARTUP_QUERY_TIMEOUT_MS, "PRODUCTS_LOAD_TIMEOUT"),
         ]);
         if (!alive) return;
         setRepo(r);
@@ -152,8 +168,10 @@ export default function App() {
         setSettings(currentSettings);
         setProducts(currentProducts);
         finishStartup();
-      } catch {
-        setError(t(language, "dbError"));
+      } catch (err) {
+        if (!alive) return;
+        const reason = err instanceof Error ? err.message : "STARTUP_FAILED";
+        setError(`${t(language, "dbError")} (${reason})`);
         finishStartup();
       }
     })();
@@ -406,7 +424,7 @@ function PrinterSetupRequiredScreen({ repo, staff, settings, language, refreshSe
     try { await repo.updateSettings(form, staff); await refreshSettings(); }
     catch { setError("บันทึกการตั้งค่าเครื่องพิมพ์ไม่สำเร็จ"); setBusy(false); }
   };
-  return <main className="center-screen"><section className="pos-card printer-required-card"><span className="settings-kicker">First setup</span><h1>{t(language, "printer")}</h1><p>ต้องเชื่อมต่อและพิมพ์ทดสอบเครื่องพิมพ์ก่อนเริ่มใช้งาน CpIPOS</p><PrinterSettingsPanel form={form} set={set} />{error && <ErrorMessage text={error} />}<div className="actions modal-footer"><button disabled={busy || !form.printerSetupConfirmed} onClick={() => void save()}>{busy ? t(language, "submitBusy") : "ยืนยันและเข้าใช้งาน"}</button><button className="secondary" disabled={busy} onClick={() => void onLogout()}>ล็อคเอาท์</button></div></section></main>;
+  return <main className="center-screen printer-required-page"><section className="pos-card printer-required-card"><span className="settings-kicker">First setup</span><h1>{t(language, "printer")}</h1><p>ต้องเชื่อมต่อและพิมพ์ทดสอบเครื่องพิมพ์ก่อนเริ่มใช้งาน CpIPOS</p><PrinterSettingsPanel form={form} set={set} />{error && <ErrorMessage text={error} />}<div className="actions modal-footer"><button disabled={busy || !form.printerSetupConfirmed} onClick={() => void save()}>{busy ? t(language, "submitBusy") : "ยืนยันและเข้าใช้งาน"}</button><button className="secondary" disabled={busy} onClick={() => void onLogout()}>ล็อคเอาท์</button></div></section></main>;
 }
 
 function PrinterSettingsPanel({ form, set }: { form: AppSettings; set: (key: keyof AppSettings, value: string | boolean) => void }) {

@@ -30,6 +30,11 @@ const SYSTEM_LOGO = "/icon.png";
 const PRINT_WIDTH = 576;
 const CUTTER_SAFE_FEED_PX = 180;
 const textOf = (element: Element | null) => (element?.textContent || "").trim();
+const attr = (value: unknown) => String(value ?? "")
+  .replace(/&/g, "&amp;")
+  .replace(/"/g, "&quot;")
+  .replace(/</g, "&lt;")
+  .replace(/>/g, "&gt;");
 const moneyValue = (value: unknown) => Math.round((Number(value) || 0) * 100) / 100;
 const money = (value: unknown) => `฿${moneyValue(value).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const qty = (value: unknown) => Math.round((Number(value) || 0) * 1000) / 1000;
@@ -303,7 +308,7 @@ const enhanceCloseShiftModal = async () => {
     const logo = settings.storeLogoPath || SYSTEM_LOGO;
     const hero = document.createElement("div");
     hero.className = "shift-close-hero";
-    hero.innerHTML = `<div class="shift-close-logo-wrap"><img src="${logo}" alt="CpIPOS" /></div><div><span>Shift closing</span><strong>สรุปยอดก่อนปิดกะ</strong><small>ระบบจะพิมพ์ใบสรุป 80mm เมื่อกดปุ่มยืนยันปิดกะ หากไม่ได้ใส่โลโก้ร้านจะใช้โลโก้ระบบ CpIPOS อัตโนมัติ</small></div>`;
+    hero.innerHTML = `<div class="shift-close-logo-wrap"><img src="${attr(logo)}" alt="CpIPOS" /></div><div><span>Shift closing</span><strong>สรุปยอดก่อนปิดกะ</strong><small>ระบบจะพิมพ์ใบสรุป 80mm เมื่อกดปุ่มยืนยันปิดกะ หากไม่ได้ใส่โลโก้ร้านจะใช้โลโก้ระบบ CpIPOS อัตโนมัติ</small></div>`;
     hero.querySelector("img")?.addEventListener("error", event => { (event.currentTarget as HTMLImageElement).src = SYSTEM_LOGO; });
     modal.insertBefore(hero, firstBodyElement);
   }

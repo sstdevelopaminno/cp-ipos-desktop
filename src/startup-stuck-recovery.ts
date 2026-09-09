@@ -1,14 +1,11 @@
 import Database from "@tauri-apps/plugin-sql";
 import { invoke } from "@tauri-apps/api/core";
 
-type LooseDb = {
-  select?: (...args: unknown[]) => Promise<unknown>;
-  execute?: (...args: unknown[]) => Promise<unknown>;
+type PatchableDb = Database & {
   __cpiposTimeoutPatched?: boolean;
 };
 
-type LooseDatabaseCtor = typeof Database & {
-  load: (url: string) => Promise<LooseDb>;
+type PatchableDatabaseCtor = typeof Database & {
   __cpiposStartupPatched?: boolean;
 };
 
@@ -35,32 +32,35 @@ const timeout = <T>(promise: Promise<T>, ms: number, label: string): Promise<T> 
   });
 };
 
-const patchDbInstance = (db: LooseDb) => {
-  if (db.__cpiposTimeoutPatched) return db;
-  db.__cpiposTimeoutPatched = true;
+const patchDbInstance = (db: Database) => {
+  const patchedDb = db as PatchableDb;
+  if (patchedDb.__cpiposTimeoutPatched) return db;
+  patchedDb.__cpiposTimeoutPatched = true;
 
   if (typeof db.select === "function") {
     const originalSelect = db.select.bind(db);
-    db.select = (...args: unknown[]) => timeout(originalSelect(...args), DB_QUERY_TIMEOUT_MS, "DB_SELECT_TIMEOUT");
+    db.select = (<T>(query: string, bindValues?: unknown[]) =>
+      timeout(originalSelect<T>(query, bindValues), DB_QUERY_TIMEOUT_MS, "DB_SELECT_TIMEOUT")) as Database["select"];
   }
 
   if (typeof db.execute === "function") {
     const originalExecute = db.execute.bind(db);
-    db.execute = (...args: unknown[]) => timeout(originalExecute(...args), DB_QUERY_TIMEOUT_MS, "DB_EXECUTE_TIMEOUT");
+    db.execute = ((query: string, bindValues?: unknown[]) =>
+      timeout(originalExecute(query, bindValues), DB_QUERY_TIMEOUT_MS, "DB_EXECUTE_TIMEOUT")) as Database["execute"];
   }
 
   return db;
 };
 
 const patchDatabaseLoad = () => {
-  const SqlDatabase = Database as LooseDatabaseCtor;
+  const SqlDatabase = Database as PatchableDatabaseCtor;
   if (SqlDatabase.__cpiposStartupPatched) return;
   SqlDatabase.__cpiposStartupPatched = true;
   const originalLoad = SqlDatabase.load.bind(SqlDatabase);
-  SqlDatabase.load = async (url: string) => {
+  SqlDatabase.load = (async (url: string) => {
     const db = await timeout(originalLoad(url), DB_LOAD_TIMEOUT_MS, "DB_LOAD_TIMEOUT");
     return patchDbInstance(db);
-  };
+  }) as typeof Database.load;
 };
 
 const isStartupSplashStillVisible = () => {
