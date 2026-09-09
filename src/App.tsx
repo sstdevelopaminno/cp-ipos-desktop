@@ -22,9 +22,9 @@ const today = () => new Date().toISOString().slice(0, 10);
 const nowTime = () => new Date().toLocaleString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const SYSTEM_LOGO = "/icon.png";
 const completeStartupSplash = async () => { try { await invoke("complete_startup_splash"); } catch { /* Browser preview fallback. */ } };
-const STARTUP_REPOSITORY_TIMEOUT_MS = 4000;
-const STARTUP_INITIALIZE_TIMEOUT_MS = 12000;
-const STARTUP_QUERY_TIMEOUT_MS = 8000;
+const STARTUP_REPOSITORY_TIMEOUT_MS = 2500;
+const STARTUP_INITIALIZE_TIMEOUT_MS = 8000;
+const STARTUP_QUERY_TIMEOUT_MS = 5000;
 const withStartupTimeout = <T,>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
   let timer = 0;
   return new Promise<T>((resolve, reject) => {
@@ -109,6 +109,7 @@ export default function App() {
   const [products, setProducts] = useState<Product[]>([]);
   const [view, setView] = useState<View>("sales");
   const [error, setError] = useState("");
+  const [startupSlow, setStartupSlow] = useState(false);
   const [splashStep, setSplashStep] = useState(0);
   const [screenProfile, setScreenProfile] = useState<ScreenProfile>(() => detectScreenProfile());
   const [closeShift, setCloseShift] = useState(false);
@@ -145,12 +146,19 @@ export default function App() {
   useEffect(() => { if (staff && !canAccessView(staff, view)) setView("sales"); }, [staff, view]);
   useEffect(() => {
     let alive = true;
-    const finishStartup = () => window.setTimeout(() => {
-      if (alive) {
-        setSplashStep(3);
-        void completeStartupSplash();
-      }
-    }, 900);
+    let guardTimer = 0;
+    const finishStartup = (delayMs = 150) => window.setTimeout(() => {
+      if (!alive) return;
+      window.clearTimeout(guardTimer);
+      setSplashStep(3);
+      void completeStartupSplash();
+    }, delayMs);
+    guardTimer = window.setTimeout(() => {
+      if (!alive) return;
+      setStartupSlow(true);
+      setSplashStep(3);
+      void completeStartupSplash();
+    }, 5500);
     (async () => {
       try {
         const r = await withStartupTimeout(createRepository(), STARTUP_REPOSITORY_TIMEOUT_MS, "REPOSITORY_LOAD_TIMEOUT");
@@ -167,19 +175,20 @@ export default function App() {
         setShift(activeShift);
         setSettings(currentSettings);
         setProducts(currentProducts);
+        setStartupSlow(false);
         finishStartup();
       } catch (err) {
         if (!alive) return;
         const reason = err instanceof Error ? err.message : "STARTUP_FAILED";
         setError(`${t(language, "dbError")} (${reason})`);
-        finishStartup();
+        finishStartup(0);
       }
     })();
-    return () => { alive = false; };
+    return () => { alive = false; window.clearTimeout(guardTimer); };
   }, []);
 
   if (splashStep < 3) return <main className="splash"><div className="splash-card"><img src="/icon.png" alt="CpIPOS" /><h1>CpIPOS Desktop</h1><p>{splashTexts[splashStep]}</p></div></main>;
-  if (error || !repo || !settings) return <main className="center-screen"><section className="error-card"><h1>{t(language, "dbError")}</h1><p>{error || t(language, "dbError")}</p></section></main>;
+  if (error || !repo || !settings) return <main className="center-screen"><section className="error-card"><h1>{startupSlow ? "กำลังเปิดระบบช้ากว่าปกติ" : t(language, "dbError")}</h1><p>{error || "กำลังโหลดฐานข้อมูลต่อในหน้าหลัก หากนานเกิน 10 วินาทีให้ปิดแล้วเปิดใหม่"}</p><button className="big-primary" onClick={() => window.location.reload()}>ลองเปิดใหม่</button></section></main>;
   if (!staff) return <LoginScreen repo={repo} settings={settings} language={language} onLogin={async s => { await repo.saveSession(s); setStaff(s); await refreshShift(repo); }} />;
   if (!settings.printerSetupConfirmed) return <PrinterSetupRequiredScreen repo={repo} staff={staff} settings={settings} language={language} refreshSettings={() => refreshSettings(repo)} onLogout={async () => { await repo.clearSession(staff, shift || undefined, settings.deviceId); setStaff(null); }} />;
   if (!shift) return <ShiftScreen repo={repo} staff={staff} settings={settings} language={language} onOpen={async s => { setShift(s); setView("sales"); }} />;

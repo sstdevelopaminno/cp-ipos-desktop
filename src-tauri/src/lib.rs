@@ -1,4 +1,4 @@
-﻿use serde::Serialize;
+use serde::Serialize;
 use serde_json::Value;
 use std::{ffi::{c_void, CString}, fs, path::Path, process::Command};
 use tauri::{Manager, Runtime};
@@ -298,6 +298,14 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_sql::Builder::default().add_migrations("sqlite:cpipos.db", migrations).build())
+        .setup(|app| {
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(5500));
+                let _ = complete_startup_splash(handle);
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             save_product_image,
             get_local_storage_metrics,
