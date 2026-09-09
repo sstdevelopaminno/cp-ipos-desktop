@@ -7,13 +7,27 @@
     <style>
       :root { color: #14213d; background: transparent; font-family: "Segoe UI", Tahoma, sans-serif; }
       * { box-sizing: border-box; }
-      html, body { width: 520px; height: 340px; margin: 0; overflow: hidden; }
-      body { display: grid; place-items: center; background: radial-gradient(circle at 18% 12%, #d6eeff 0, transparent 40%), linear-gradient(135deg, #ffffff 0%, #eef7ff 100%); }
-      .card { width: 100%; height: 100%; display: grid; place-items: center; padding: 26px 34px 24px; text-align: center; border: 1px solid rgba(88, 166, 255, .28); box-shadow: inset 0 0 0 1px rgba(255,255,255,.8); }
-      img { width: 184px; height: 184px; object-fit: contain; filter: drop-shadow(0 18px 26px rgba(9, 105, 218, .20)); }
-      h1 { margin: 4px 0 10px; color: #0969da; font-size: 32px; line-height: 1; letter-spacing: -.02em; }
+      html, body { width: 520px; height: 340px; margin: 0; overflow: hidden; background: transparent; }
+      body { display: grid; place-items: center; background: transparent; }
+      .card {
+        width: 488px;
+        min-height: 310px;
+        display: grid;
+        place-items: center;
+        padding: 24px 34px 22px;
+        text-align: center;
+        border-radius: 30px;
+        background: rgba(255,255,255,.88);
+        border: 1px solid rgba(88, 166, 255, .35);
+        box-shadow: 0 30px 80px rgba(15, 23, 42, .18), inset 0 0 0 1px rgba(255,255,255,.74);
+        backdrop-filter: blur(18px) saturate(1.08);
+      }
+      img { width: 154px; height: 154px; object-fit: contain; filter: drop-shadow(0 18px 26px rgba(9, 105, 218, .20)); }
+      h1 { margin: 2px 0 8px; color: #0969da; font-size: 31px; line-height: 1; letter-spacing: -.02em; }
       .status { height: 25px; margin: 0; color: #516172; font-size: 16px; font-weight: 700; }
-      .spinner { width: 28px; height: 28px; margin: 14px auto 0; border-radius: 50%; border: 3px solid #cfe7ff; border-top-color: #0969da; animation: spin .85s linear infinite; }
+      .spinner { width: 28px; height: 28px; margin: 12px auto 0; border-radius: 50%; border: 3px solid #cfe7ff; border-top-color: #0969da; animation: spin .85s linear infinite; }
+      .slow { display: none; margin: 10px auto 0; max-width: 350px; color: #64748b; font-size: 12px; line-height: 1.35; font-weight: 700; }
+      body.is-slow .slow { display: block; }
       @keyframes spin { to { transform: rotate(360deg); } }
     </style>
   </head>
@@ -24,12 +38,14 @@
         <h1>CpIPOS Desktop</h1>
         <p id="status" class="status">กำลังเตรียมระบบ...</p>
         <div class="spinner" aria-hidden="true"></div>
+        <p class="slow">ถ้าหน้านี้อยู่นาน ระบบหลักจะเปิดหน้ากู้คืนให้อัตโนมัติ</p>
       </section>
     </main>
     <script>
       const steps = ["กำลังเตรียมระบบ...", "กำลังโหลดฐานข้อมูล...", "กำลังตรวจสอบกะ..."];
       let i = 0;
       setInterval(() => { i = Math.min(i + 1, steps.length - 1); document.getElementById("status").textContent = steps[i]; }, 520);
+      setTimeout(() => document.body.classList.add("is-slow"), 8000);
     </script>
   </body>
 </html>
