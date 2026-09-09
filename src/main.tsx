@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./browser-printer-preview-unblock";
 import App from "./App";
+import "./login-security-guard";
 import "./pos-keyboard-shortcuts";
 import "./inventory-barcode-enhancements";
 import "./desktop-scroll-runtime";
