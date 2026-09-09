@@ -193,7 +193,11 @@ window.addEventListener("keydown", event => {
   const modal = topModal();
   if (modal) {
     let handled = false;
-    if (event.key === "Escape") handled = closeModal(modal);
+    const isUnknownProductModal = Boolean(modal.querySelector(".grocery-unknown-code"));
+    if (isUnknownProductModal && (event.key === "Enter" || event.key === "Escape")) {
+      handled = closeModal(modal);
+      window.setTimeout(focusScanner, 40);
+    } else if (event.key === "Escape") handled = closeModal(modal);
     else handled = handleCashKeypad(event, modal) || handleDiscountKeys(event, modal) || handleChoiceNavigation(event, modal);
     if (!handled && event.key === "Enter") {
       prepareCancelReason(modal);
