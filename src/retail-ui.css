@@ -95,3 +95,4 @@
   .checkout-shortcuts{grid-template-columns:1fr}.retail-checkout-panel{font-size:12px}
 }
 @media(min-width:1600px){.retail-sale-layout{grid-template-columns:minmax(0,1fr) 390px}.sale-context-card{grid-template-columns:225px minmax(0,1fr)}.grocery-table{font-size:13px}}
+.retail-side-nav button.keyboard-focused,.retail-side-nav button:focus-visible{background:#ffffff24!important;color:#fff!important;box-shadow:inset 4px 0 0 #56b2ff,0 0 0 3px rgba(86,178,255,.22)!important;outline:none}.retail-side-nav.collapsed button.keyboard-focused,.retail-side-nav.collapsed button:focus-visible{box-shadow:0 0 0 3px rgba(86,178,255,.28)!important}.nav-bottom-actions button.keyboard-focused{border-color:rgba(86,178,255,.8)!important}

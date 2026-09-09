@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import "./retail-ui.css";
 
 type NavItem = { id: string; label: string; icon: "sale" | "stock" | "history" | "report" | "staff" | "settings" | "close" | "logout" };
@@ -29,8 +29,43 @@ function NavIcon({ name }: { name: NavItem["icon"] }) {
   return <svg className="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]}</svg>;
 }
 
+const isTypingText = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return target.value.trim().length > 0;
+  return target instanceof HTMLSelectElement;
+};
+
 export function AppSidebar({ collapsed, compactLocked = false, active, items, onToggle, onSelect, onCloseShift, onLogout }: Props) {
+  const [keyboardIndex, setKeyboardIndex] = useState<number | null>(null);
+  const buttonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const keyboardItems = useMemo(() => [...items.map(item => ({ id: item.id, action: () => onSelect(item.id) })), { id: "__closeShift", action: onCloseShift }, { id: "__logout", action: onLogout }], [items, onCloseShift, onLogout, onSelect]);
   const toggleLabel = compactLocked ? "หน้าจอเล็ก ระบบย่อเมนูให้อัตโนมัติ" : collapsed ? "ขยายเมนู" : "ย่อเมนู";
+  const focusKeyboardItem = (index: number) => {
+    const safeIndex = Math.min(Math.max(index, 0), keyboardItems.length - 1);
+    setKeyboardIndex(safeIndex);
+    window.setTimeout(() => buttonRefs.current[keyboardItems[safeIndex]?.id]?.focus(), 0);
+  };
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.key.toLowerCase() === "q" && !isTypingText(event.target)) {
+        event.preventDefault();
+        const activeIndex = Math.max(0, keyboardItems.findIndex(item => item.id === active));
+        focusKeyboardItem(keyboardIndex ?? activeIndex);
+        return;
+      }
+      if (keyboardIndex === null) return;
+      if (event.key === "Escape") { event.preventDefault(); setKeyboardIndex(null); return; }
+      if (event.key === "ArrowDown") { event.preventDefault(); focusKeyboardItem((keyboardIndex + 1) % keyboardItems.length); return; }
+      if (event.key === "ArrowUp") { event.preventDefault(); focusKeyboardItem((keyboardIndex - 1 + keyboardItems.length) % keyboardItems.length); return; }
+      if (event.key === "Enter") { event.preventDefault(); keyboardItems[keyboardIndex]?.action(); setKeyboardIndex(null); }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [active, keyboardIndex, keyboardItems]);
+
   return <aside className={"side-nav retail-side-nav " + (collapsed ? "collapsed " : "") + (compactLocked ? "compact-locked" : "")}>
     <div className="side-brand retail-side-brand">
       <img src="/icon.png" alt="CpIPOS" />
@@ -41,17 +76,17 @@ export function AppSidebar({ collapsed, compactLocked = false, active, items, on
       {!collapsed && <span>ย่อเมนู</span>}
     </button>
     <nav className="retail-nav-list">
-      {items.map(item => <button key={item.id} className={active === item.id ? "active" : ""} onClick={() => onSelect(item.id)} title={collapsed ? item.label : undefined}>
+      {items.map((item, index) => <button key={item.id} ref={node => { buttonRefs.current[item.id] = node; }} className={(active === item.id ? "active " : "") + (keyboardIndex === index ? "keyboard-focused" : "")} onFocus={() => setKeyboardIndex(index)} onClick={() => { setKeyboardIndex(null); onSelect(item.id); }} title={collapsed ? item.label : undefined}>
         <NavIcon name={item.icon} />
         {!collapsed && <span>{item.label}</span>}
       </button>)}
     </nav>
     <div className="nav-bottom-actions" aria-label="คำสั่งท้ายเมนู">
-      <button className="nav-close-shift-button" onClick={onCloseShift} title={collapsed ? "ปิดยอด" : undefined} aria-label="ปิดยอด">
+      <button ref={node => { buttonRefs.current.__closeShift = node; }} className={(keyboardIndex === items.length ? "keyboard-focused " : "") + "nav-close-shift-button"} onClick={() => { setKeyboardIndex(null); onCloseShift(); }} title={collapsed ? "ปิดยอด" : undefined} aria-label="ปิดยอด">
         <NavIcon name="close" />
         {!collapsed && <span>ปิดยอด</span>}
       </button>
-      <button className="nav-logout-button" onClick={onLogout} title={collapsed ? "ล็อคเอาท์" : undefined} aria-label="ล็อคเอาท์">
+      <button ref={node => { buttonRefs.current.__logout = node; }} className={(keyboardIndex === items.length + 1 ? "keyboard-focused " : "") + "nav-logout-button"} onClick={() => { setKeyboardIndex(null); onLogout(); }} title={collapsed ? "ล็อคเอาท์" : undefined} aria-label="ล็อคเอาท์">
         <NavIcon name="logout" />
         {!collapsed && <span>ล็อคเอาท์</span>}
       </button>

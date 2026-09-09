@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings, CartLine, Language, Product, Receipt, Shift, Staff } from "./domain/types";
 import type { PosRepository, ProductInput } from "./data/repository";
@@ -69,7 +69,15 @@ const readParkedBills = (key: string): ParkedBill[] => {
 };
 const writeParkedBills = (key: string, bills: ParkedBill[]) => localStorage.setItem(key, JSON.stringify(bills));
 const openDrawerNative = async (settings: AppSettings) => { if (!settings.printerName) throw new Error("PRINTER_NOT_CONFIGURED"); await invoke("open_cash_drawer", { printerName: settings.printerName }); };
-
+const isEditableElement = (target: EventTarget | null) => {
+  const element = target instanceof HTMLElement ? target : null;
+  if (!element) return false;
+  return element.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName);
+};
+const editableValue = (target: EventTarget | null) => {
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return target.value;
+  return "";
+};
 function priceCart(cart: CartLine[], discount: Discount, language: Language) {
   const subtotal = moneyNumber(cart.reduce((sum, line) => sum + line.quantity * line.price, 0));
   const requestedDiscount = discount
@@ -401,6 +409,80 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
     focusScanner();
   };
 
+
+  const hasOpenPopup = paymentChoice || cashOpen || transferOpen || discountOpen || parkListOpen || receipt !== null || clearOpen || cancelOpen || drawerOpen || unknownBarcode !== "" || quickAddBarcode !== null;
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (hasOpenPopup || event.altKey || event.ctrlKey || event.metaKey) return;
+      const key = event.key;
+      const lowerKey = key.toLowerCase();
+      const isEditingText = isEditableElement(event.target);
+      const activeInputValue = editableValue(event.target).trim();
+      const canUseLetterShortcut = !isEditingText || activeInputValue.length === 0;
+      const cartHasItems = cartRef.current.length > 0;
+
+      if (event.code === "NumpadAdd" || key === "+") {
+        event.preventDefault(); event.stopPropagation();
+        setScanQty(value => safeScanQty(value + 1));
+        window.setTimeout(() => qtyRef.current?.focus(), 0);
+        return;
+      }
+
+      if (event.code === "NumpadSubtract" || key === "-") {
+        event.preventDefault(); event.stopPropagation();
+        setScanQty(value => safeScanQty(Math.max(0.001, value - 1)));
+        window.setTimeout(() => qtyRef.current?.focus(), 0);
+        return;
+      }
+
+      if (key === "F8") {
+        event.preventDefault(); event.stopPropagation();
+        if (cartHasItems && !busy) setDiscountOpen(true);
+        else notify("warn", "ยังไม่มีสินค้าให้ใส่ส่วนลด");
+        return;
+      }
+
+      if (key === "F9") {
+        event.preventDefault(); event.stopPropagation();
+        if (cartHasItems && !busy) setClearOpen(true);
+        else notify("warn", "ยังไม่มีรายการให้ล้าง");
+        return;
+      }
+
+      if (key === "F10") {
+        event.preventDefault(); event.stopPropagation();
+        if (cartHasItems && !busy) parkCurrentBill();
+        else notify("warn", "ยังไม่มีสินค้าให้พักบิล");
+        return;
+      }
+
+      if (key === "F11") {
+        event.preventDefault(); event.stopPropagation();
+        if (parkedBills.length) setParkListOpen(true);
+        else notify("warn", "ยังไม่มีบิลพัก");
+        return;
+      }
+
+      if (!canUseLetterShortcut) return;
+
+      if (lowerKey === "w") {
+        event.preventDefault(); event.stopPropagation();
+        if (settings.cashDrawerEnabled) setDrawerOpen(true);
+        else notify("warn", "ยังไม่ได้เปิดใช้งานลิ้นชักเงินสด");
+        return;
+      }
+
+      if (lowerKey === "d") {
+        event.preventDefault(); event.stopPropagation();
+        if (cartHasItems && !busy) setCancelOpen(true);
+        else notify("warn", "ยังไม่มีบิลให้ยกเลิก");
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [hasOpenPopup, busy, parkedBills.length, settings.cashDrawerEnabled]);
   return <section className="grocery-pos-layout">
     <div className="grocery-pos-main">
       <section className="grocery-scan-zone grocery-scan-zone-with-qty">
@@ -419,9 +501,10 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
               value={scanQty}
               onChange={e => setScanQty(safeScanQty(e.target.value))}
               onFocus={e => e.currentTarget.select()}
+              disabled={hasOpenPopup}
               onKeyDown={e => {
                 if (e.key === "Enter") {
-                  e.preventDefault();
+                  e.preventDefault(); e.stopPropagation();
                   focusScanner();
                 }
               }}
@@ -434,12 +517,15 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
             onChange={e => onScanChange(e.target.value)}
             onKeyDown={e => {
               if (e.key === "Enter") {
-                e.preventDefault();
-                void resolveScan(scanValue, true);
+                e.preventDefault(); e.stopPropagation();
+                if (hasOpenPopup) return;
+                if (cleanCode(scanValue)) void resolveScan(scanValue, true);
+                else if (cartRef.current.length && !busy) setPaymentChoice(true);
               }
             }}
             placeholder="ยิงบาร์โค้ด / กรอก SKU"
             autoComplete="off"
+            disabled={hasOpenPopup}
             autoFocus
           />
           <div className="scanner-ready"><span className="scanner-ready-dot"/><span>พร้อมสแกน</span></div>
@@ -505,8 +591,24 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
 }
 
 function ParkedBillsModal({ bills, onClose, onRestore, onRemove }: { bills: ParkedBill[]; onClose: () => void; onRestore: (bill: ParkedBill) => void; onRemove: (id: string) => void }) {
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const selectedBill = bills[selectedIndex] || null;
+  useEffect(() => {
+    if (selectedIndex > Math.max(0, bills.length - 1)) setSelectedIndex(Math.max(0, bills.length - 1));
+  }, [bills.length, selectedIndex]);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
+      if (!bills.length) return;
+      if (event.key === "ArrowDown") { event.preventDefault(); event.stopPropagation(); setSelectedIndex(index => Math.min(bills.length - 1, index + 1)); return; }
+      if (event.key === "ArrowUp") { event.preventDefault(); event.stopPropagation(); setSelectedIndex(index => Math.max(0, index - 1)); return; }
+      if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); if (selectedBill) onRestore(selectedBill); }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [bills, onClose, onRestore, selectedBill]);
   return <SimpleModal title="รายการพักบิล" onClose={onClose}>
-    <div className="parked-bill-list">{bills.length ? bills.map(bill => <button key={bill.id} className="parked-bill-card" onClick={() => onRestore(bill)}>
+    <div className="parked-bill-list">{bills.length ? bills.map((bill, index) => <button key={bill.id} className={`parked-bill-card ${index === selectedIndex ? "keyboard-selected" : ""}`} onFocus={() => setSelectedIndex(index)} onMouseEnter={() => setSelectedIndex(index)} onClick={() => onRestore(bill)}>
       <span className="parked-bill-icon">▣</span>
       <span className="parked-bill-copy"><strong>{bill.label}</strong><small>{new Date(bill.createdAt).toLocaleString("th-TH")} · {bill.cashierName}</small><em>{bill.itemCount} รายการ · {bill.totalQty} ชิ้น</em></span>
       <span className="parked-bill-total">{money(bill.total)}</span>
@@ -515,28 +617,86 @@ function ParkedBillsModal({ bills, onClose, onRestore, onRemove }: { bills: Park
     <div className="grocery-modal-actions"><button className="secondary-action" onClick={onClose}>ปิด</button></div>
   </SimpleModal>;
 }
-
 function PaymentChoice({ total, onClose, onCash, onTransfer }: { total: number; onClose: () => void; onCash: () => void; onTransfer: () => void }) {
-  return <SimpleModal title="เลือกวิธีชำระเงิน" onClose={onClose}><div className="grocery-payment-total">ยอดชำระ <strong>{money(total)}</strong></div><div className="grocery-payment-choice"><button onClick={onCash}><span>฿</span><strong>เงินสด</strong><small>เปิดหน้ารับเงินและคำนวณเงินทอน</small></button><button onClick={onTransfer}><span>⇄</span><strong>เงินโอน</strong><small>พนักงานตรวจสอบยอดเข้าจริงก่อนยืนยัน</small></button></div></SimpleModal>;
+  const [method, setMethod] = useState<"cash" | "transfer">("cash");
+  const openedAtRef = useRef(Date.now());
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); event.stopPropagation(); setMethod(value => value === "cash" ? "transfer" : "cash"); return; }
+      if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); if (Date.now() - openedAtRef.current < 150) return; method === "cash" ? onCash() : onTransfer(); }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [method, onCash, onClose, onTransfer]);
+  return <SimpleModal title="เลือกวิธีชำระเงิน" onClose={onClose}>
+    <div className="grocery-payment-total">ยอดชำระ <strong>{money(total)}</strong></div>
+    <div className="grocery-payment-choice" role="radiogroup" aria-label="เลือกวิธีชำระเงิน">
+      <button className={method === "cash" ? "keyboard-selected" : ""} role="radio" aria-checked={method === "cash"} onFocus={() => setMethod("cash")} onMouseEnter={() => setMethod("cash")} onClick={onCash}><span>฿</span><strong>เงินสด</strong><small>เปิดหน้ารับเงินและคำนวณเงินทอน</small></button>
+      <button className={method === "transfer" ? "keyboard-selected" : ""} role="radio" aria-checked={method === "transfer"} onFocus={() => setMethod("transfer")} onMouseEnter={() => setMethod("transfer")} onClick={onTransfer}><span>⇄</span><strong>เงินโอน</strong><small>พนักงานตรวจสอบยอดเข้าจริงก่อนยืนยัน</small></button>
+    </div>
+  </SimpleModal>;
 }
-
 function CashPayment({ total, busy, onClose, onConfirm }: { total: number; busy: boolean; onClose: () => void; onConfirm: (paid: number) => Promise<void> }) {
   const [value, setValue] = useState("");
   const paid = Number(value || 0);
   const press = (key: string) => setValue(v => key === "clear" ? "" : key === "back" ? v.slice(0, -1) : key === "." && v.includes(".") ? v : key === "." && !v ? "0." : `${v}${key}`);
-  return <SimpleModal title="รับชำระเงินสด" onClose={busy ? () => {} : onClose}><div className="grocery-cash-summary"><div><span>ยอดชำระ</span><strong>{money(total)}</strong></div><div><span>รับเงิน</span><strong>{money(paid)}</strong></div><div className="change"><span>เงินทอน</span><strong>{money(Math.max(0, paid - total))}</strong></div></div><div className="grocery-cash-quick"><button onClick={() => setValue(String(total))}>ยอดพอดี</button>{[100,200,500,1000].filter(v => v >= total).map(v => <button key={v} onClick={() => setValue(String(v))}>{v}</button>)}</div><div className="grocery-cash-keypad">{["1","2","3","4","5","6","7","8","9","00","0","."].map(key => <button key={key} onClick={() => press(key)}>{key}</button>)}</div><div className="grocery-keypad-actions"><button onClick={() => press("clear")}>ล้าง</button><button onClick={() => press("back")}>ลบ</button></div><div className="grocery-modal-actions"><button className="secondary-action" disabled={busy} onClick={onClose}>ยกเลิก</button><button disabled={busy || paid < total} onClick={() => void onConfirm(paid)}>{busy ? "กำลังบันทึก..." : `ยืนยันรับเงิน ${money(paid)}`}</button></div></SimpleModal>;
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== modalRef.current) active.blur();
+    modalRef.current?.focus({ preventScroll: true });
+  }, []);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (busy || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
+      if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); if (Number(value || 0) >= total) void onConfirm(Number(value || 0)); return; }
+      if (event.key === "Backspace") { event.preventDefault(); event.stopPropagation(); press("back"); return; }
+      if (event.key === "Delete") { event.preventDefault(); event.stopPropagation(); press("clear"); return; }
+      if (/^[0-9]$/.test(event.key)) { event.preventDefault(); event.stopPropagation(); press(event.key); return; }
+      if (event.key === "." || event.code === "NumpadDecimal") { event.preventDefault(); event.stopPropagation(); press("."); }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [busy, onClose, onConfirm, total, value]);
+  return <SimpleModal title="รับชำระเงินสด" onClose={busy ? () => {} : onClose}>
+    <div className="grocery-keyboard-modal" ref={modalRef} tabIndex={-1}>
+    <div className="grocery-cash-summary"><div><span>ยอดชำระ</span><strong>{money(total)}</strong></div><div><span>รับเงิน</span><strong>{money(paid)}</strong></div><div className="change"><span>เงินทอน</span><strong>{money(Math.max(0, paid - total))}</strong></div></div>
+    <div className="grocery-cash-quick"><button onClick={() => setValue(String(total))}>ยอดพอดี</button>{[100,200,500,1000].filter(v => v >= total).map(v => <button key={v} onClick={() => setValue(String(v))}>{v}</button>)}</div>
+    <div className="grocery-cash-keypad">{["1","2","3","4","5","6","7","8","9","00","0","."].map(key => <button key={key} onClick={() => press(key)}>{key}</button>)}</div>
+    <div className="grocery-keypad-actions"><button onClick={() => press("clear")}>ล้าง</button><button onClick={() => press("back")}>ลบ</button></div>
+    <div className="grocery-modal-actions"><button className="secondary-action" disabled={busy} onClick={onClose}>ยกเลิก</button><button disabled={busy || paid < total} onClick={() => void onConfirm(paid)}>{busy ? "กำลังบันทึก..." : `ยืนยันรับเงิน ${money(paid)}`}</button></div>
+    </div>
+  </SimpleModal>;
 }
-
 function TransferPayment({ total, busy, onClose, onConfirm }: { total: number; busy: boolean; onClose: () => void; onConfirm: () => Promise<void> }) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (busy) return;
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
+      if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); void onConfirm(); }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [busy, onClose, onConfirm]);
   return <SimpleModal title="ชำระด้วยเงินโอน" onClose={busy ? () => {} : onClose}><div className="grocery-payment-total">ยอดชำระ <strong>{money(total)}</strong></div><div className="grocery-transfer-warning"><strong>ตรวจสอบยอดเงินจริงก่อนยืนยัน</strong><p>ระบบ Offline บันทึกวิธีชำระเงินเท่านั้น และไม่ได้เชื่อมต่อธนาคารหรือ PromptPay เพื่อตรวจสอบยอดอัตโนมัติ</p></div><div className="grocery-modal-actions"><button className="secondary-action" disabled={busy} onClick={onClose}>ยกเลิก</button><button disabled={busy} onClick={() => void onConfirm()}>{busy ? "กำลังบันทึก..." : "ยืนยันรับชำระ"}</button></div></SimpleModal>;
 }
-
 function DiscountModal({ subtotal, current, onClose, onApply }: { subtotal: number; current: Discount; onClose: () => void; onApply: (discount: Discount) => void }) {
   const [type, setType] = useState<"amount" | "percent">(current?.type || "percent");
   const [value, setValue] = useState(String(current?.value || ""));
   const numeric = Math.max(0, Number(value || 0));
   const capped = type === "percent" ? Math.min(100, numeric) : Math.min(subtotal, numeric);
   const preview = type === "percent" ? moneyNumber(subtotal * capped / 100) : moneyNumber(capped);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
+      if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); event.stopPropagation(); setType(mode => mode === "percent" ? "amount" : "percent"); return; }
+      if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); if (capped > 0) onApply({ type, value: capped }); }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [capped, onApply, onClose, type]);
   return <SimpleModal title="ส่วนลดทั้งบิล" onClose={onClose}>
     <div className="discount-type-switch"><button className={type === "percent" ? "active" : ""} onClick={() => setType("percent")}>เปอร์เซ็นต์ (%)</button><button className={type === "amount" ? "active" : ""} onClick={() => setType("amount")}>จำนวนเงิน (บาท)</button></div>
     <label className="discount-input">{type === "percent" ? "ส่วนลดเปอร์เซ็นต์" : "ส่วนลดเป็นบาท"}<div><input type="number" min="0" max={type === "percent" ? 100 : subtotal} value={value} onChange={e => setValue(e.target.value)} autoFocus/><span>{type === "percent" ? "%" : "บาท"}</span></div></label>
@@ -545,7 +705,6 @@ function DiscountModal({ subtotal, current, onClose, onApply }: { subtotal: numb
     <div className="grocery-modal-actions"><button className="secondary-action" onClick={() => onApply(null)}>ล้างส่วนลด</button><button className="secondary-action" onClick={onClose}>ยกเลิก</button><button disabled={capped <= 0} onClick={() => onApply({ type, value: capped })}>ใช้ส่วนลด</button></div>
   </SimpleModal>;
 }
-
 function ReceiptView({ receipt, onClose }: { receipt: PricedReceipt; onClose: () => void }) {
   const subtotal = receipt.subtotal ?? moneyNumber(receipt.items.reduce((sum, item) => sum + Math.max(0, item.lineTotal), 0));
   const discountAmount = receipt.discountAmount ?? moneyNumber(Math.max(0, subtotal - receipt.total));
@@ -578,41 +737,110 @@ function ReceiptView({ receipt, onClose }: { receipt: PricedReceipt; onClose: ()
 }
 
 function ClearCartModal({ count, onClose, onConfirm }: { count: number; onClose: () => void; onConfirm: () => void }) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
+      if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); onConfirm(); }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [onClose, onConfirm]);
   return <SimpleModal title="ล้างรายการทั้งหมด" onClose={onClose}><div className="clear-cart-warning"><strong>ต้องการล้างสินค้า {count} รายการออกจากตะกร้าหรือไม่?</strong><p>รายการยังไม่ชำระเงิน จึงยังไม่มีการตัดสต๊อก</p></div><div className="grocery-modal-actions"><button className="secondary-action" onClick={onClose}>กลับ</button><button className="danger-action" onClick={onConfirm}>ล้างรายการทั้งหมด</button></div></SimpleModal>;
 }
-
 function CancelCart({ repo, cart, staff, shift, settings, onClose, onDone }: { repo: PosRepository; cart: CartLine[]; staff: Staff; shift: Shift; settings: AppSettings; onClose: () => void; onDone: () => void }) {
   const [pin, setPin] = useState("");
-  const [reason, setReason] = useState("");
+  const [reason, setReason] = useState("ยกเลิกบิลจากหน้าขาย");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const submit = async () => {
+  const submitButtonRef = useRef<HTMLButtonElement | null>(null);
+  const submit = async (event?: FormEvent<HTMLFormElement>) => {
+    event?.preventDefault();
+    if (busy) return;
+    if (pin.trim().length !== 4) { setError("กรุณาใส่ PIN 4 หลัก"); return; }
     setBusy(true); setError("");
     const auth = await repo.verifyPin(pin);
     if (!auth) { setError("PIN ไม่ถูกต้อง"); setBusy(false); return; }
     try {
-      await repo.cancelBill({ items: cart.map(line => ({ productId: line.id, name: line.nameTh || line.name, quantity: line.quantity, unitPrice: line.price })), reason, staff: auth, shift, deviceId: settings.deviceId });
+      await repo.cancelBill({ items: cart.map(line => ({ productId: line.id, name: line.nameTh || line.name, quantity: line.quantity, unitPrice: line.price })), reason: reason.trim() || "ยกเลิกบิลจากหน้าขาย", staff: auth, shift, deviceId: settings.deviceId });
       onDone();
     } catch (e) { setError(e instanceof Error ? e.message : "ยกเลิกบิลไม่สำเร็จ"); setBusy(false); }
   };
-  return <SimpleModal title="ยกเลิกบิลปัจจุบัน" onClose={busy ? () => {} : onClose}><div className="grocery-transfer-warning"><strong>ยกเลิกก่อนชำระเงิน</strong><p>ระบบจะไม่ตัดสต๊อกและจะบันทึกผู้ทำรายการกับเหตุผลไว้ใน Audit</p></div><label className="grocery-field">PIN พนักงาน<input type="password" value={pin} onChange={e => setPin(e.target.value)} /></label><label className="grocery-field">เหตุผล<input value={reason} onChange={e => setReason(e.target.value)} placeholder="ระบุเหตุผลการยกเลิก" /></label>{error && <p className="grocery-error">{error}</p>}<div className="grocery-modal-actions"><button className="secondary-action" disabled={busy} onClick={onClose}>กลับ</button><button className="danger-action" disabled={busy || !pin || !reason} onClick={() => void submit()}>{busy ? "กำลังบันทึก..." : "ยืนยันยกเลิกบิล"}</button></div></SimpleModal>;
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (busy) return;
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
+      if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); void submit(); }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [busy, onClose, pin, reason]);
+  useEffect(() => {
+    if (pin.length === 4) submitButtonRef.current?.focus({ preventScroll: true });
+  }, [pin]);  return <SimpleModal title="ยกเลิกบิลปัจจุบัน" onClose={busy ? () => {} : onClose}>
+    <form onSubmit={event => void submit(event)}>
+      <div className="grocery-transfer-warning"><strong>ยกเลิกก่อนชำระเงิน</strong><p>ระบบจะไม่ตัดสต๊อกและจะบันทึกผู้ทำรายการกับเหตุผลไว้ใน Audit</p></div>
+      <label className="grocery-field">PIN พนักงาน<input type="password" inputMode="numeric" pattern="[0-9]*" maxLength={4} value={pin} onChange={e => { setPin(e.target.value.replace(/\D/g, "").slice(0, 4)); setError(""); }} autoFocus /></label>
+      <label className="grocery-field">เหตุผล<input value={reason} onChange={e => setReason(e.target.value)} placeholder="ระบุเหตุผลการยกเลิก" /></label>
+      {error && <p className="grocery-error" role="alert">{error}</p>}
+      <div className="grocery-modal-actions"><button type="button" className="secondary-action" disabled={busy} onClick={onClose}>กลับ</button><button ref={submitButtonRef} type="submit" className="danger-action" disabled={busy || pin.length !== 4}>{busy ? "กำลังบันทึก..." : "ยืนยันยกเลิกบิล"}</button></div>
+    </form>
+  </SimpleModal>;
 }
-
-
 function CashDrawerModal({ repo, settings, onClose, onDone }: { repo: PosRepository; settings: AppSettings; onClose: () => void; onDone: () => void }) {
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const submit = async () => {
+  const submitButtonRef = useRef<HTMLButtonElement | null>(null);
+  const handlePinChange = (value: string) => {
+    setPin(value.replace(/\D/g, "").slice(0, 4));
+    setError("");
+  };
+  const submit = async (event?: FormEvent<HTMLFormElement>) => {
+    event?.preventDefault();
+    if (busy) return;
+    if (pin.length !== 4) { setError("กรุณาใส่ PIN 4 หลัก"); return; }
     setBusy(true); setError("");
     const auth = await repo.verifyPin(pin);
     if (!auth || !["owner", "manager"].includes(auth.role)) { setError("ต้องใช้ PIN ผู้จัดการหรือเจ้าของร้าน"); setBusy(false); return; }
     try { await openDrawerNative(settings); onDone(); }
     catch { setError("เปิดลิ้นชักไม่สำเร็จ ตรวจสอบเครื่องพิมพ์และสายลิ้นชัก"); setBusy(false); }
   };
-  return <SimpleModal title="เปิดลิ้นชัก" onClose={busy ? () => {} : onClose}><div className="grocery-transfer-warning"><strong>ต้องยืนยันสิทธิ์</strong><p>การเปิดลิ้นชักด้วยปุ่มนี้ต้องใช้ PIN ของผู้จัดการหรือเจ้าของร้าน ยกเว้นรับเงินสดหลังปิดบิลที่จะเปิดอัตโนมัติ</p></div><label className="grocery-field">PIN ผู้จัดการ/เจ้าของร้าน<input type="password" inputMode="numeric" maxLength={4} value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, "").slice(0, 4))} autoFocus /></label>{error && <p className="grocery-error">{error}</p>}<div className="grocery-modal-actions"><button className="secondary-action" disabled={busy} onClick={onClose}>กลับ</button><button className="danger-action" disabled={busy || pin.length !== 4} onClick={() => void submit()}>{busy ? "กำลังเปิด..." : "ยืนยันเปิดลิ้นชัก"}</button></div></SimpleModal>;
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (busy) return;
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
+      if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); void submit(); }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [busy, onClose, pin]);
+  useEffect(() => {
+    if (pin.length === 4) submitButtonRef.current?.focus({ preventScroll: true });
+  }, [pin]);  return <SimpleModal title="เปิดลิ้นชัก" onClose={busy ? () => {} : onClose} wide={false}>
+    <form className="cash-drawer-auth" onSubmit={event => void submit(event)}>
+      <div className="cash-drawer-hero">
+        <div className="cash-drawer-icon" aria-hidden="true">▤</div>
+        <div>
+          <strong>ยืนยันสิทธิ์ก่อนเปิดลิ้นชัก</strong>
+          <p>ใช้ได้เฉพาะผู้จัดการหรือเจ้าของร้าน การรับเงินสดหลังปิดบิลยังเปิดอัตโนมัติตามการตั้งค่าเดิม</p>
+        </div>
+      </div>
+      <label className="cash-drawer-pin-field">
+        <span>PIN ผู้จัดการ / เจ้าของร้าน</span>
+        <input type="password" inputMode="numeric" pattern="[0-9]*" maxLength={4} value={pin} onChange={e => handlePinChange(e.target.value)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); void submit(); } }} autoFocus autoComplete="off" aria-describedby="cash-drawer-enter-hint cash-drawer-pin-dots" />
+      </label>
+      <div className="cash-drawer-pin-dots" id="cash-drawer-pin-dots" aria-label={`ใส่ PIN แล้ว ${pin.length} จาก 4 หลัก`}>
+        {Array.from({ length: 4 }, (_, index) => <span key={index} className={index < pin.length ? "filled" : ""} />)}
+      </div>
+      <p className="cash-drawer-enter-hint" id="cash-drawer-enter-hint">ใส่ PIN ครบ 4 หลักแล้วกด Enter เพื่อเปิดลิ้นชักได้ทันที</p>
+      {error && <p className="grocery-error cash-drawer-error" role="alert">{error}</p>}
+      <div className="grocery-modal-actions cash-drawer-actions">
+        <button type="button" className="secondary-action" disabled={busy} onClick={onClose}>กลับ</button>
+        <button ref={submitButtonRef} type="submit" className="danger-action" disabled={busy || pin.length !== 4}>{busy ? "กำลังเปิด..." : "ยืนยันเปิดลิ้นชัก"}</button>
+      </div>
+    </form>
+  </SimpleModal>;
 }
-
 function QuickAddProduct({ repo, staff, barcode, onClose, onSaved }: { repo: PosRepository; staff: Staff; barcode: string; onClose: () => void; onSaved: (product: Product) => void }) {
   const [form, setForm] = useState<ProductInput>({ productCode: "", barcode, nameTh: "", nameEn: "", categoryId: "grocery", categoryName: "ของชำ", price: 0, cost: 0, unit: "ชิ้น", stockQuantity: 0, minimumStock: 0, quantityScale: 1, imagePath: "", active: true });
   const [error, setError] = useState("");
@@ -636,5 +864,15 @@ function QuickAddProduct({ repo, staff, barcode, onClose, onSaved }: { repo: Pos
 }
 
 function SimpleModal({ title, children, onClose, wide = true }: { title: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault(); event.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [onClose]);
   return <div className="grocery-modal-backdrop"><section className={`grocery-modal ${wide ? "" : "receipt-modal"}`}><header><h2>{title}</h2><button onClick={onClose} aria-label="ปิด">×</button></header>{children}</section></div>;
 }
