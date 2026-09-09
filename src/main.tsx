@@ -42,11 +42,6 @@ type BootBoundaryState = {
 class BootBoundary extends Component<{ children: ReactNode }, BootBoundaryState> {
   state: BootBoundaryState = { error: "" };
 
-  componentDidMount() {
-    window.__CPIPOS_APP_RENDERED__ = true;
-    document.getElementById("root")?.setAttribute("data-cpipos-app-mounted", "1");
-  }
-
   componentDidCatch(error: unknown, errorInfo: ErrorInfo) {
     console.error("CpIPOS Desktop render failed", error, errorInfo);
     this.setState({ error: error instanceof Error ? error.message : "UNKNOWN_RENDER_ERROR" });
