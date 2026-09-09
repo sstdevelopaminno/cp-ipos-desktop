@@ -2,8 +2,15 @@ type MaybeButton = HTMLButtonElement | null;
 
 let lastScannerInputAt = 0;
 let suppressPaymentEnterUntil = 0;
+let lastCartRowCount = 0;
 
-const SCANNER_ENTER_SUPPRESS_MS = 650;
+const SCANNER_ENTER_SUPPRESS_MS = 1200;
+
+const markScannerActivity = (windowMs = SCANNER_ENTER_SUPPRESS_MS) => {
+  const now = performance.now();
+  lastScannerInputAt = now;
+  suppressPaymentEnterUntil = Math.max(suppressPaymentEnterUntil, now + windowMs);
+};
 
 const isEditable = (target: EventTarget | null) => {
   if (!(target instanceof HTMLElement)) return false;
@@ -197,18 +204,34 @@ const handleSidebarKeys = (event: KeyboardEvent) => {
 };
 
 const scannerEnterIsFromBarcodeScan = (scanner: HTMLInputElement | null) => {
-  if (!scanner || document.activeElement !== scanner) return false;
+  if (!scanner) return false;
   const now = performance.now();
   const hasBarcodeText = scanner.value.trim().length > 0;
   const justReceivedScannerText = now - lastScannerInputAt < SCANNER_ENTER_SUPPRESS_MS;
   return hasBarcodeText || justReceivedScannerText || now < suppressPaymentEnterUntil;
 };
 
-window.addEventListener("input", event => {
-  if (event.target === scanInput()) {
-    lastScannerInputAt = performance.now();
-    suppressPaymentEnterUntil = lastScannerInputAt + SCANNER_ENTER_SUPPRESS_MS;
+const cartRowCount = () => document.querySelectorAll(".grocery-table-v2 tbody tr").length;
+
+window.setInterval(() => {
+  if (!salesRoot()) {
+    lastCartRowCount = 0;
+    return;
   }
+  const count = cartRowCount();
+  if (count > lastCartRowCount) markScannerActivity(1400);
+  lastCartRowCount = count;
+}, 120);
+
+window.addEventListener("input", event => {
+  if (event.target === scanInput()) markScannerActivity();
+}, true);
+
+window.addEventListener("keydown", event => {
+  if (event.ctrlKey || event.altKey || event.metaKey) return;
+  const scanner = scanInput();
+  if (event.target !== scanner) return;
+  if (event.key.length === 1 && event.key !== " ") markScannerActivity();
 }, true);
 
 window.addEventListener("keydown", event => {
@@ -278,6 +301,10 @@ window.addEventListener("keydown", event => {
   else if (event.key === "Enter" || event.code === "NumpadEnter") {
     if (scannerEnterIsFromBarcodeScan(scanner)) {
       suppressPaymentEnterUntil = performance.now() + SCANNER_ENTER_SUPPRESS_MS;
+      if (targetIsScanner && !scanner?.value.trim()) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
       return;
     }
     handled = openPaymentIfReady();
