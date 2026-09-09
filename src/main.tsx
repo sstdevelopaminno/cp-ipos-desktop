@@ -10,6 +10,7 @@ import "./sales-keyboard-control";
 import "./inventory-barcode-enhancements";
 import "./desktop-scroll-runtime";
 import "./settings-commercial-runtime";
+import "./shift-close-summary-runtime";
 import "./styles.css";
 import "./retail-ui.css";
 import "./receipt-print.css";
@@ -23,6 +24,7 @@ import "./sales-history-desktop-scroll.css";
 import "./settings-desktop-scroll.css";
 import "./settings-commercial-runtime.css";
 import "./printer-first-run-fix.css";
+import "./shift-close-summary-runtime.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
