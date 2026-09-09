@@ -8,6 +8,7 @@ import "./sales-pos-input-fixes";
 import "./sales-keyboard-control";
 import "./inventory-barcode-enhancements";
 import "./desktop-scroll-runtime";
+import "./settings-commercial-runtime";
 import "./styles.css";
 import "./retail-ui.css";
 import "./receipt-print.css";
@@ -19,6 +20,7 @@ import "./inventory-barcode-enhancements.css";
 import "./reports-dashboard-overrides.css";
 import "./sales-history-desktop-scroll.css";
 import "./settings-desktop-scroll.css";
+import "./settings-commercial-runtime.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
