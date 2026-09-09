@@ -1,0 +1,69 @@
+.cash-payment-modernized .grocery-cash-summary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.cash-paid-entry-field {
+  margin: 14px 0 12px;
+  padding: 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #eff6ff, #ffffff);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.85);
+}
+
+.cash-paid-entry-field label {
+  display: grid;
+  gap: 8px;
+  color: #334155;
+  font-weight: 800;
+  font-size: 14px;
+}
+
+.cash-paid-entry-input {
+  width: 100%;
+  min-height: 58px;
+  border: 2px solid #93c5fd;
+  border-radius: 14px;
+  background: #fff;
+  color: #0f172a;
+  font-size: 30px;
+  font-weight: 900;
+  letter-spacing: .03em;
+  text-align: right;
+  padding: 8px 16px;
+  outline: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.cash-paid-entry-input:focus {
+  border-color: #0d6ce8;
+  box-shadow: 0 0 0 4px rgba(13,108,232,.14);
+}
+
+.cash-paid-entry-field small {
+  display: block;
+  margin-top: 8px;
+  color: #64748b;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.cash-payment-modernized .grocery-cash-keypad button,
+.cash-payment-modernized .grocery-keypad-actions button {
+  border-radius: 14px;
+  min-height: 58px;
+  font-size: 22px;
+  font-weight: 900;
+}
+
+.cash-payment-modernized .grocery-modal-actions button.pos-kb-active,
+.cash-payment-modernized .grocery-payment-choice button.pos-kb-active {
+  outline: 3px solid rgba(13,108,232,.42);
+  outline-offset: 3px;
+  border-color: #0d6ce8;
+  background: #eff6ff;
+}
+
+.scan-qty-field input {
+  font-variant-numeric: tabular-nums;
+}
