@@ -1,25 +1,25 @@
 .commercial-settings-extension {
-  margin: 18px 0;
+  margin: 14px 0;
 }
 
 .commercial-card {
   border: 1px solid rgba(37, 99, 235, 0.18);
   background: linear-gradient(135deg, rgba(239, 246, 255, 0.96), rgba(255, 255, 255, 0.98));
-  border-radius: 22px;
-  padding: 18px;
-  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.08);
+  border-radius: 18px;
+  padding: 15px;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.07);
 }
 
 .commercial-card h3 {
   margin: 4px 0 6px;
   color: #0f172a;
-  font-size: 20px;
+  font-size: 18px;
 }
 
 .commercial-card p {
-  margin: 0 0 14px;
+  margin: 0 0 12px;
   color: #475569;
-  line-height: 1.55;
+  line-height: 1.5;
 }
 
 .commercial-kicker {
@@ -30,7 +30,7 @@
   padding: 5px 10px;
   background: #dbeafe;
   color: #1d4ed8;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.03em;
   text-transform: uppercase;
@@ -39,14 +39,14 @@
 .commercial-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 12px;
+  gap: 10px;
+  margin-top: 10px;
 }
 
 .commercial-form-grid label {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
   color: #334155;
   font-weight: 700;
 }
@@ -55,15 +55,15 @@
 .commercial-form-grid select,
 .commercial-form-grid textarea {
   border: 1px solid #cbd5e1;
-  border-radius: 14px;
-  padding: 11px 12px;
+  border-radius: 12px;
+  padding: 9px 11px;
   color: #0f172a;
   background: #ffffff;
   font: inherit;
 }
 
 .commercial-form-grid textarea {
-  min-height: 76px;
+  min-height: 68px;
   resize: vertical;
 }
 
@@ -75,15 +75,15 @@
 .commercial-button-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 9px;
   margin-top: 12px;
 }
 
 .commercial-button-grid button,
 .commercial-button-row button {
   border: 0;
-  border-radius: 14px;
-  padding: 11px 14px;
+  border-radius: 13px;
+  padding: 10px 13px;
   background: #2563eb;
   color: #ffffff;
   font-weight: 800;
@@ -101,18 +101,24 @@
   background: #dc2626;
 }
 
+.commercial-button-grid button:disabled,
+.commercial-button-row button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .commercial-summary {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-top: 14px;
+  margin-top: 12px;
 }
 
 .commercial-summary span,
 .commercial-status {
   display: inline-flex;
   align-items: center;
-  min-height: 30px;
+  min-height: 28px;
   border-radius: 999px;
   padding: 6px 10px;
   background: #f8fafc;
@@ -126,12 +132,12 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
-  margin: 14px 0;
+  margin: 12px 0;
 }
 
 .commercial-license-grid div {
-  border-radius: 18px;
-  padding: 14px;
+  border-radius: 16px;
+  padding: 12px;
   border: 1px solid #bfdbfe;
   background: #ffffff;
 }
@@ -150,65 +156,110 @@
   word-break: break-word;
 }
 
+.commercial-license.free-mode {
+  background: linear-gradient(135deg, #ecfdf5, #eff6ff 58%, #ffffff);
+  border-color: rgba(34, 197, 94, 0.32);
+}
+
+.settings-modal-body[data-commercial-section="license"] > .license-settings,
+.settings-modal-body[data-commercial-section="license"] > .warning {
+  display: none !important;
+}
+
+.settings-modal-body[data-commercial-section="remote"] > .settings-form-grid,
+.settings-modal-body[data-commercial-section="remote"] > .warning {
+  display: none !important;
+}
+
 .commercial-license-lock {
+  display: none !important;
+}
+
+.commercial-reset-dialog {
   position: fixed;
   inset: 0;
-  z-index: 99999;
+  z-index: 100000;
   display: grid;
   place-items: center;
-  background: rgba(15, 23, 42, 0.82);
-  backdrop-filter: blur(10px);
+  background: rgba(15, 23, 42, 0.68);
+  backdrop-filter: blur(8px);
 }
 
-.commercial-license-lock section {
-  width: min(560px, calc(100vw - 32px));
-  border-radius: 28px;
+.commercial-reset-dialog section {
+  width: min(480px, calc(100vw - 28px));
+  border-radius: 24px;
   background: #ffffff;
-  padding: 28px;
-  text-align: center;
-  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.35);
+  padding: 22px;
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.34);
 }
 
-.commercial-license-lock img {
-  width: 74px;
-  height: 74px;
-  object-fit: contain;
-  margin-bottom: 10px;
-}
-
-.commercial-license-lock h1 {
-  margin: 0 0 10px;
+.commercial-reset-dialog h2 {
+  margin: 0 0 8px;
   color: #0f172a;
+  font-size: 22px;
 }
 
-.commercial-license-lock p {
+.commercial-reset-dialog p {
+  margin: 0 0 14px;
   color: #475569;
-  line-height: 1.6;
+  line-height: 1.55;
 }
 
-.commercial-license-lock strong {
-  display: block;
-  margin: 14px 0;
-  padding: 10px;
+.commercial-reset-dialog label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: #334155;
+  font-weight: 800;
+}
+
+.commercial-reset-dialog input {
+  min-height: 44px;
+  border: 2px solid #bfdbfe;
   border-radius: 14px;
-  background: #eff6ff;
-  color: #1d4ed8;
-  word-break: break-word;
+  padding: 8px 12px;
+  font: inherit;
 }
 
-.commercial-license-lock button {
+.commercial-reset-dialog div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.commercial-reset-dialog button {
   border: 0;
-  border-radius: 14px;
-  padding: 12px 18px;
-  background: #2563eb;
-  color: #ffffff;
+  border-radius: 13px;
+  padding: 10px 14px;
   font-weight: 800;
   cursor: pointer;
 }
 
-@media (max-width: 840px) {
+.commercial-reset-dialog button.secondary {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.commercial-reset-dialog button.danger {
+  background: #dc2626;
+  color: #ffffff;
+}
+
+.commercial-reset-dialog button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+@media (max-width: 840px), (max-height: 760px) {
   .commercial-form-grid,
   .commercial-license-grid {
     grid-template-columns: 1fr;
+  }
+  .commercial-card {
+    padding: 13px;
+  }
+  .commercial-card h3 {
+    font-size: 17px;
   }
 }
