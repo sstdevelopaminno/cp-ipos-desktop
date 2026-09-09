@@ -1,4 +1,4 @@
-﻿import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import type { Receipt } from "./domain/types";
 
 type PrintableReceipt = Receipt & {
@@ -82,10 +82,7 @@ function rasterBytes(canvas: HTMLCanvasElement, usedHeight: number) {
   return data;
 }
 
-export async function printReceiptNative(receipt: PrintableReceipt) {
-  const printerName = receipt.settings.printerName?.trim();
-  if (!printerName) throw new Error("PRINTER_NOT_CONFIGURED");
-
+async function printReceiptRasterNow(receipt: PrintableReceipt, printerName: string) {
   const width = paperWidth(receipt);
   const itemHeight = Math.max(1, receipt.items.length) * 74;
   const canvas = document.createElement("canvas");
@@ -146,4 +143,16 @@ export async function printReceiptNative(receipt: PrintableReceipt) {
   y += 44;
 
   await invoke("print_receipt_raster", { printerName, bytes: rasterBytes(canvas, y + CUTTER_SAFE_FEED_PX) });
+}
+
+export async function printReceiptNative(receipt: PrintableReceipt) {
+  const printerName = receipt.settings.printerName?.trim();
+  if (!printerName) throw new Error("PRINTER_NOT_CONFIGURED");
+
+  window.setTimeout(() => {
+    void printReceiptRasterNow(receipt, printerName).catch(error => {
+      console.warn("CpIPOS receipt print failed", error);
+      window.dispatchEvent(new CustomEvent("cpipos:receipt-print-error", { detail: error instanceof Error ? error.message : String(error) }));
+    });
+  }, 0);
 }
