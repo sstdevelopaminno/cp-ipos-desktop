@@ -11,6 +11,7 @@ import "./retail-ui.css";
 import "./receipt-print.css";
 import "./grocery-empty-branding.css";
 import "./sales-scan-qty-ui.css";
+import "./sales-responsive-fit.css";
 import "./inventory-barcode-enhancements.css";
 import "./reports-dashboard-overrides.css";
 import "./sales-history-desktop-scroll.css";
