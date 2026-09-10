@@ -26,6 +26,14 @@ type SaleInfo = {
 };
 type ProductAgg = { name: string; quantity: number; total: number };
 
+type ShiftCloseModal = HTMLElement & {
+  dataset: HTMLElement["dataset"] & {
+    shiftCloseEnhancing?: string;
+    shiftCloseHeroReady?: string;
+    shiftCloseButtonReady?: string;
+  };
+};
+
 const SYSTEM_LOGO = "/icon.png";
 const PRINT_WIDTH = 576;
 const CUTTER_SAFE_FEED_PX = 180;
@@ -59,8 +67,11 @@ const settingRows = (rows: Array<{ key: string; value: string }>) => {
 };
 
 const browserSettings = () => {
-  try { return { ...defaults(), ...(JSON.parse(localStorage.getItem("cpipos.desktop.demo.settings") || "{}") as Partial<Settings>) }; }
-  catch { return defaults(); }
+  try {
+    return { ...defaults(), ...(JSON.parse(localStorage.getItem("cpipos.desktop.demo.settings") || "{}") as Partial<Settings>) };
+  } catch {
+    return defaults();
+  }
 };
 
 const cashierFromUi = () => {
@@ -95,24 +106,42 @@ const readBrowser = () => {
   try {
     const raw = JSON.parse(localStorage.getItem("cpipos.desktop.demo.shift") || "null") as Row | null;
     if (raw) shift = { id: String(raw.id || ""), openedAt: String(raw.openedAt || raw.opened_at || ""), openingCash: Number(raw.openingCash || raw.opening_cash || 0) };
-  } catch { shift = null; }
+  } catch {
+    shift = null;
+  }
   try {
     const rows = JSON.parse(localStorage.getItem("cpipos.desktop.demo.sales") || "[]") as Row[];
-    sales = rows.map(row => ({ id: String(row.id || ""), receiptNo: String(row.receiptNo || row.receipt_no || ""), total: Number(row.total || 0), paymentMethod: String(row.paymentMethod || row.payment_method || ""), status: String(row.status || ""), createdAt: String(row.createdAt || row.created_at || ""), cashierName: String(row.cashierName || row.cashier_name || row.employeeCode || row.employee_code || ""), itemsJson: String(row.itemsJson || row.items_json || "[]") }));
-  } catch { sales = []; }
+    sales = rows.map(row => ({
+      id: String(row.id || ""),
+      receiptNo: String(row.receiptNo || row.receipt_no || ""),
+      total: Number(row.total || 0),
+      paymentMethod: String(row.paymentMethod || row.payment_method || ""),
+      status: String(row.status || ""),
+      createdAt: String(row.createdAt || row.created_at || ""),
+      cashierName: String(row.cashierName || row.cashier_name || row.employeeCode || row.employee_code || ""),
+      itemsJson: String(row.itemsJson || row.items_json || "[]"),
+    }));
+  } catch {
+    sales = [];
+  }
   return { settings: browserSettings(), shift, sales, cashierName: cashierFromUi(), closedAt: new Date().toISOString() };
 };
 
 const loadData = async () => {
-  try { return await readSqlite(); }
-  catch { return readBrowser(); }
+  try {
+    return await readSqlite();
+  } catch {
+    return readBrowser();
+  }
 };
 
 const parseItems = (sale: SaleInfo) => {
   try {
     const rows = JSON.parse(sale.itemsJson || "[]") as Array<{ name?: string; productId?: string; quantity?: number; unitPrice?: number; lineTotal?: number }>;
     return rows.map(row => ({ name: row.name || row.productId || "สินค้า", quantity: qty(row.quantity), total: moneyValue(row.lineTotal ?? (Number(row.quantity || 0) * Number(row.unitPrice || 0))) }));
-  } catch { return []; }
+  } catch {
+    return [];
+  }
 };
 
 const aggregateProducts = (sales: SaleInfo[]) => {
@@ -141,14 +170,24 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number)
   let line = "";
   for (const word of words.length ? words : [text]) {
     const next = line ? `${line} ${word}` : word;
-    if (ctx.measureText(next).width <= maxWidth) { line = next; continue; }
+    if (ctx.measureText(next).width <= maxWidth) {
+      line = next;
+      continue;
+    }
     if (line) lines.push(line);
-    if (ctx.measureText(word).width <= maxWidth) { line = word; continue; }
+    if (ctx.measureText(word).width <= maxWidth) {
+      line = word;
+      continue;
+    }
     let chunk = "";
     for (const char of word) {
       const nextChunk = chunk + char;
-      if (ctx.measureText(nextChunk).width > maxWidth && chunk) { lines.push(chunk); chunk = char; }
-      else chunk = nextChunk;
+      if (ctx.measureText(nextChunk).width > maxWidth && chunk) {
+        lines.push(chunk);
+        chunk = char;
+      } else {
+        chunk = nextChunk;
+      }
     }
     line = chunk;
   }
@@ -165,8 +204,8 @@ function drawCentered(ctx: CanvasRenderingContext2D, text: string, y: number, fo
 function drawWrappedCentered(ctx: CanvasRenderingContext2D, text: string, y: number, font: string, lineHeight = 24) {
   ctx.font = font;
   ctx.textAlign = "center";
-  for (const line of wrapText(ctx, text, PRINT_WIDTH - 64)) {
-    ctx.fillText(line, PRINT_WIDTH / 2, y);
+  for (const lineText of wrapText(ctx, text, PRINT_WIDTH - 64)) {
+    ctx.fillText(lineText, PRINT_WIDTH / 2, y);
     y += lineHeight;
   }
   return y;
@@ -245,7 +284,10 @@ const printCloseShiftSummary = async (statusNode?: HTMLElement | null) => {
 
   let y = 52;
   const logo = await loadImage(data.settings.storeLogoPath || SYSTEM_LOGO);
-  if (logo) { ctx.drawImage(logo, PRINT_WIDTH / 2 - 38, y - 36, 76, 76); y += 78; }
+  if (logo) {
+    ctx.drawImage(logo, PRINT_WIDTH / 2 - 38, y - 36, 76, 76);
+    y += 78;
+  }
   drawCentered(ctx, data.settings.receiptHeader || data.settings.storeName || "CpIPOS", y, "bold 34px Tahoma, 'Segoe UI', sans-serif"); y += 36;
   drawCentered(ctx, data.settings.branchName || "Main Branch", y, "22px Tahoma, 'Segoe UI', sans-serif"); y += 28;
   if (data.settings.address) y = drawWrappedCentered(ctx, data.settings.address, y, "18px Tahoma, 'Segoe UI', sans-serif", 24);
@@ -267,8 +309,10 @@ const printCloseShiftSummary = async (statusNode?: HTMLElement | null) => {
   drawPair(ctx, "Void/ยกเลิก", `${cancelled.length.toLocaleString("th-TH")} บิล`, y); y += 36;
   line(ctx, y); y += 38;
   drawCentered(ctx, "สินค้าขายดี", y, "bold 24px Tahoma, 'Segoe UI', sans-serif"); y += 34;
-  if (!products.length) { drawCentered(ctx, "ไม่มีรายละเอียดสินค้าในรอบกะนี้", y, "20px Tahoma, 'Segoe UI', sans-serif"); y += 34; }
-  else {
+  if (!products.length) {
+    drawCentered(ctx, "ไม่มีรายละเอียดสินค้าในรอบกะนี้", y, "20px Tahoma, 'Segoe UI', sans-serif");
+    y += 34;
+  } else {
     for (const item of products) {
       ctx.font = "bold 21px Tahoma, 'Segoe UI', sans-serif";
       ctx.textAlign = "left";
@@ -292,56 +336,97 @@ const readSettingsPreview = async () => {
   try {
     const db = await Database.load("sqlite:cpipos.db");
     return settingRows(await db.select<Array<{ key: string; value: string }>>("SELECT key,value FROM app_settings"));
-  } catch { return browserSettings(); }
+  } catch {
+    return browserSettings();
+  }
 };
 
-const enhanceCloseShiftModal = async () => {
-  const modal = document.querySelector<HTMLElement>(".modal");
-  const title = textOf(modal?.querySelector("header h2") || null);
-  if (!modal || !title.includes("สรุปก่อนปิดกะ")) return;
-  modal.classList.add("shift-close-modern-modal");
-  const firstBodyElement = modal.querySelector<HTMLElement>("header")?.nextElementSibling as HTMLElement | null;
-  if (!firstBodyElement) return;
-  let status = modal.querySelector<HTMLElement>("[data-shift-print-status]");
-  if (!modal.querySelector(".shift-close-hero")) {
-    const settings = await readSettingsPreview();
-    const logo = settings.storeLogoPath || SYSTEM_LOGO;
-    const hero = document.createElement("div");
-    hero.className = "shift-close-hero";
-    hero.innerHTML = `<div class="shift-close-logo-wrap"><img src="${attr(logo)}" alt="CpIPOS" /></div><div><span>Shift closing</span><strong>สรุปยอดก่อนปิดกะ</strong><small>ระบบจะพิมพ์ใบสรุป 80mm เมื่อกดปุ่มยืนยันปิดกะ หากไม่ได้ใส่โลโก้ร้านจะใช้โลโก้ระบบ CpIPOS อัตโนมัติ</small></div>`;
-    hero.querySelector("img")?.addEventListener("error", event => { (event.currentTarget as HTMLImageElement).src = SYSTEM_LOGO; });
-    modal.insertBefore(hero, firstBodyElement);
-  }
-  if (!status) {
-    status = document.createElement("p");
+const findCloseShiftModals = () => Array.from(document.querySelectorAll<HTMLElement>(".modal"))
+  .filter(modal => textOf(modal.querySelector("header h2")).includes("สรุปก่อนปิดกะ")) as ShiftCloseModal[];
+
+const removeDuplicateNodes = (modal: HTMLElement, selector: string) => {
+  const nodes = Array.from(modal.querySelectorAll<HTMLElement>(selector));
+  nodes.slice(1).forEach(node => node.remove());
+  return nodes[0] || null;
+};
+
+const ensureStatus = (modal: ShiftCloseModal) => {
+  let status = removeDuplicateNodes(modal, "[data-shift-print-status], .shift-close-print-status");
+  if (status) {
     status.dataset.shiftPrintStatus = "1";
     status.className = "shift-close-print-status";
-    status.textContent = "พร้อมพิมพ์ใบสรุปปิดกะ 80mm";
-    const actions = modal.querySelector(".actions");
-    actions?.parentElement?.insertBefore(status, actions);
+    return status;
   }
+
+  status = document.createElement("p");
+  status.dataset.shiftPrintStatus = "1";
+  status.className = "shift-close-print-status";
+  status.textContent = "พร้อมพิมพ์ใบสรุปปิดกะ 80mm";
+  const actions = modal.querySelector(".actions");
+  actions?.parentElement?.insertBefore(status, actions);
+  return status;
+};
+
+const ensureHero = async (modal: ShiftCloseModal) => {
+  removeDuplicateNodes(modal, ".shift-close-hero");
+  if (modal.querySelector(".shift-close-hero")) return;
+  if (modal.dataset.shiftCloseEnhancing === "1") return;
+
+  modal.dataset.shiftCloseEnhancing = "1";
+  const firstBodyElement = modal.querySelector<HTMLElement>("header")?.nextElementSibling as HTMLElement | null;
+  if (!firstBodyElement) {
+    modal.dataset.shiftCloseEnhancing = "0";
+    return;
+  }
+
+  const settings = await readSettingsPreview();
+  if (!document.body.contains(modal)) return;
+  if (modal.querySelector(".shift-close-hero")) return;
+
+  const logo = settings.storeLogoPath || SYSTEM_LOGO;
+  const hero = document.createElement("div");
+  hero.className = "shift-close-hero";
+  hero.dataset.shiftCloseHero = "1";
+  hero.innerHTML = `<div class="shift-close-logo-wrap"><img src="${attr(logo)}" alt="CpIPOS" /></div><div><span>Shift closing</span><strong>สรุปยอดก่อนปิดกะ</strong><small>ระบบจะพิมพ์ใบสรุป 80mm เมื่อกดปุ่มยืนยันปิดกะ หากไม่ได้ใส่โลโก้ร้านจะใช้โลโก้ระบบ CpIPOS อัตโนมัติ</small></div>`;
+  hero.querySelector("img")?.addEventListener("error", event => { (event.currentTarget as HTMLImageElement).src = SYSTEM_LOGO; });
+  modal.insertBefore(hero, firstBodyElement);
+  modal.dataset.shiftCloseHeroReady = "1";
+};
+
+const bindConfirmButton = (modal: ShiftCloseModal) => {
+  if (modal.dataset.shiftCloseButtonReady === "1") return;
   const confirmButton = Array.from(modal.querySelectorAll<HTMLButtonElement>(".actions button")).find(button => !button.classList.contains("secondary"));
-  if (confirmButton && !confirmButton.dataset.shiftClosePrintBound) {
-    confirmButton.dataset.shiftClosePrintBound = "1";
-    confirmButton.textContent = "พิมพ์สรุป + ยืนยันปิดกะ";
-    confirmButton.addEventListener("click", () => {
-      if (confirmButton.dataset.shiftClosePrinted === "1") return;
-      confirmButton.dataset.shiftClosePrinted = "1";
-      const currentStatus = modal.querySelector<HTMLElement>("[data-shift-print-status]");
-      window.setTimeout(() => {
-        void printCloseShiftSummary(currentStatus).catch(error => {
-          const message = error instanceof Error ? error.message : String(error);
-          currentStatus && (currentStatus.textContent = `พิมพ์ใบสรุปไม่สำเร็จ: ${message}`);
-          window.dispatchEvent(new CustomEvent("cpipos:shift-print-error", { detail: message }));
-        });
-      }, 0);
-    }, true);
+  if (!confirmButton) return;
+
+  modal.dataset.shiftCloseButtonReady = "1";
+  confirmButton.textContent = "พิมพ์สรุป + ยืนยันปิดกะ";
+  confirmButton.addEventListener("click", () => {
+    if (confirmButton.dataset.shiftClosePrinted === "1") return;
+    confirmButton.dataset.shiftClosePrinted = "1";
+    const currentStatus = ensureStatus(modal);
+    window.setTimeout(() => {
+      void printCloseShiftSummary(currentStatus).catch(error => {
+        const message = error instanceof Error ? error.message : String(error);
+        currentStatus.textContent = `พิมพ์ใบสรุปไม่สำเร็จ: ${message}`;
+        window.dispatchEvent(new CustomEvent("cpipos:shift-print-error", { detail: message }));
+      });
+    }, 0);
+  }, true);
+};
+
+const enhanceCloseShiftModal = () => {
+  for (const modal of findCloseShiftModals()) {
+    modal.classList.add("shift-close-modern-modal");
+    removeDuplicateNodes(modal, ".shift-close-hero");
+    ensureStatus(modal);
+    bindConfirmButton(modal);
+    void ensureHero(modal);
   }
 };
 
 const startShiftCloseSummaryRuntime = () => {
   void enhanceCloseShiftModal();
-  const observer = new MutationObserver(() => window.requestAnimationFrame(() => { void enhanceCloseShiftModal(); }));
+  const observer = new MutationObserver(() => window.requestAnimationFrame(enhanceCloseShiftModal));
   observer.observe(document.body, { childList: true, subtree: true });
 };
 
