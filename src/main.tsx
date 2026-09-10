@@ -9,6 +9,7 @@ import App from "./App";
 import "./login-security-guard";
 import "./pos-keyboard-shortcuts";
 import "./sales-pos-input-fixes";
+import "./sales-draft-finalize-guard";
 import "./sales-draft-cart-runtime";
 import "./sales-keyboard-control";
 import "./inventory-barcode-enhancements";
