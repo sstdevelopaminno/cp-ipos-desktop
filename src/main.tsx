@@ -1,4 +1,5 @@
 import "./startup-blank-screen-guard";
+import "./desktop-performance-guard";
 import { StrictMode, Component, type ErrorInfo, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import "./startup-stuck-recovery";
@@ -8,6 +9,7 @@ import App from "./App";
 import "./login-security-guard";
 import "./pos-keyboard-shortcuts";
 import "./sales-pos-input-fixes";
+import "./sales-draft-cart-runtime";
 import "./sales-keyboard-control";
 import "./inventory-barcode-enhancements";
 import "./desktop-scroll-runtime";
