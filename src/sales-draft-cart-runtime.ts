@@ -91,7 +91,8 @@ const setNativeValue = (input: HTMLInputElement, value: string) => {
   input.dispatchEvent(new Event("change", { bubbles: true }));
 };
 
-const scannerInput = () => document.querySelector<HTMLInputElement>(".grocery-scan-row input:not(.scan-qty-field input)");
+const scannerInput = () => Array.from(document.querySelectorAll<HTMLInputElement>(".grocery-scan-row input"))
+  .find(input => !input.closest(".scan-qty-field")) || null;
 const qtyInput = () => document.querySelector<HTMLInputElement>(".scan-qty-field input");
 
 let restoreInProgress = false;
