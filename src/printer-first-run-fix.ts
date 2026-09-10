@@ -18,22 +18,56 @@ const nowIso = () => new Date().toISOString();
 
 const isFastMode = () => localStorage.getItem(FAST_PRINTER_MODE_KEY) !== "0";
 
-const patchPrinterInvoke = () => {
-  const internals = window.__TAURI_INTERNALS__;
-  if (!internals || typeof internals.invoke !== "function") return false;
-  const current = internals.invoke as typeof internals.invoke & { __cpiposFastPrinterPatched?: boolean };
-  if (current.__cpiposFastPrinterPatched) return true;
-  const original = current.bind(internals);
-  const patched = ((cmd: string, args?: unknown, options?: unknown) => {
-    if (cmd === "list_windows_printers" && isFastMode()) {
-      localStorage.setItem(PRINTER_SETUP_NOTE_KEY, "ข้ามการค้นหาเครื่องพิมพ์อัตโนมัติ เพื่อลดอาการค้างตอนติดตั้งรอบแรก");
-      return Promise.resolve([]);
-    }
-    return original(cmd, args, options);
-  }) as typeof current;
-  patched.__cpiposFastPrinterPatched = true;
-  internals.invoke = patched;
+const canReplaceInvoke = (target: TauriInternals) => {
+  const ownDescriptor = Object.getOwnPropertyDescriptor(target, "invoke");
+  if (ownDescriptor) return ownDescriptor.writable !== false || ownDescriptor.configurable === true;
+  return Object.isExtensible(target);
+};
+
+const installInvokePatch = (target: TauriInternals, patched: TauriInternals["invoke"]) => {
+  const descriptor = Object.getOwnPropertyDescriptor(target, "invoke");
+  if (descriptor?.writable === false && descriptor.configurable) {
+    Object.defineProperty(target, "invoke", {
+      ...descriptor,
+      value: patched,
+    });
+    return true;
+  }
+
+  if (descriptor?.writable === false) return false;
+  target.invoke = patched;
   return true;
+};
+
+const patchPrinterInvoke = () => {
+  try {
+    const internals = window.__TAURI_INTERNALS__;
+    if (!internals || typeof internals.invoke !== "function") return false;
+
+    const current = internals.invoke as typeof internals.invoke & { __cpiposFastPrinterPatched?: boolean };
+    if (current.__cpiposFastPrinterPatched) return true;
+
+    if (!canReplaceInvoke(internals)) {
+      localStorage.setItem(PRINTER_SETUP_NOTE_KEY, "โหมดติดตั้งเร็วพร้อมใช้งาน แต่ WebView รุ่นนี้ไม่อนุญาตให้แก้ invoke โดยตรง");
+      return false;
+    }
+
+    const original = current.bind(internals);
+    const patched = ((cmd: string, args?: unknown, options?: unknown) => {
+      if (cmd === "list_windows_printers" && isFastMode()) {
+        localStorage.setItem(PRINTER_SETUP_NOTE_KEY, "ข้ามการค้นหาเครื่องพิมพ์อัตโนมัติ เพื่อลดอาการค้างตอนติดตั้งรอบแรก");
+        return Promise.resolve([]);
+      }
+      return original(cmd, args, options);
+    }) as typeof current;
+
+    patched.__cpiposFastPrinterPatched = true;
+    return installInvokePatch(internals, patched);
+  } catch (error) {
+    console.warn("CpIPOS printer invoke patch skipped", error);
+    localStorage.setItem(PRINTER_SETUP_NOTE_KEY, "ข้ามการแก้ระบบค้นหาเครื่องพิมพ์อัตโนมัติ เพื่อให้โปรแกรมเปิดต่อได้");
+    return false;
+  }
 };
 
 const markPrinterSetupConfirmed = async () => {
