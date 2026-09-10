@@ -31,6 +31,12 @@
   background: linear-gradient(135deg, #eff6ff 0%, #ffffff 56%, #eef2ff 100%);
 }
 
+.shift-close-modern-modal .shift-close-hero ~ .shift-close-hero,
+.shift-close-modern-modal .shift-close-print-status ~ .shift-close-print-status,
+.shift-close-modern-modal [data-shift-print-status] ~ [data-shift-print-status] {
+  display: none !important;
+}
+
 .shift-close-logo-wrap {
   width: 74px;
   height: 74px;
