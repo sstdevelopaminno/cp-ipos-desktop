@@ -8,6 +8,7 @@ import "./printer-first-run-fix";
 import App from "./App";
 import { LicenseGate } from "./LicenseGate";
 import "./desktop-cloud-sync";
+import "./desktop-paid-cloud-backup";
 import "./license-machine-binding-guard";
 import "./v030-license-authority-runtime";
 import "./login-security-guard";
