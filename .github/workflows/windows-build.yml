@@ -4,22 +4,21 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release tag, for example v0.2.2"
+        description: "Release tag, for example v0.3.0"
         required: true
-        default: "v0.2.2"
+        default: "v0.3.0"
       channel:
         description: "Release channel"
         required: true
-        default: "stable"
+        default: "customer-test"
         type: choice
         options:
           - stable
           - beta
           - customer-test
   push:
-    branches:
-      - dev/ui-system
-    tags: ["v*"]
+    tags:
+      - "v*"
 
 jobs:
   build:
@@ -63,8 +62,7 @@ jobs:
             CpIPOS Desktop Windows installer
 
             Channel: ${{ env.CPIPOS_RELEASE_CHANNEL }}
-            License: Free Forever release, license server and MDM connection disabled for this version.
-            Includes: startup blank-screen recovery, printer setup shortcut, data archive/reset, cash drawer support, sales keyboard workflow, and close shift 80mm summary printing.
+            Offline-first release. Production activation requires a CUTTING POINT TECH IT-signed license bound to approved device fingerprints.
           releaseDraft: false
           prerelease: ${{ env.CPIPOS_RELEASE_CHANNEL != 'stable' }}
       - name: Upload installer artifacts
