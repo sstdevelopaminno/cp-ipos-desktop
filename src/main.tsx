@@ -33,6 +33,7 @@ import "./reports-dashboard-overrides.css";
 import "./sales-history-desktop-scroll.css";
 import "./settings-desktop-scroll.css";
 import "./settings-commercial-runtime.css";
+import "./cloud-backup-lifecycle.css";
 import "./printer-first-run-fix.css";
 import "./shift-close-summary-runtime.css";
 import "./startup-splash-polish.css";
