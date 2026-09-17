@@ -7,6 +7,7 @@ import "./browser-printer-preview-unblock";
 import "./printer-first-run-fix";
 import App from "./App";
 import { LicenseGate } from "./LicenseGate";
+import "./desktop-cloud-sync";
 import "./v030-license-authority-runtime";
 import "./login-security-guard";
 import "./pos-keyboard-shortcuts";
