@@ -23,12 +23,6 @@ const BACKUP_TABLES = [
   "audit_events"
 ] as const;
 
-type LicenseRuntime = {
-  mode: "trial" | "licensed" | "locked" | "error";
-  token: string;
-  deviceCode: string;
-};
-
 type CloudPlan = { code: string; days: number; label_th: string; label_en: string; price_thb: number | null; active: boolean };
 type CloudPurchase = { id: string; plan_code: string; plan_days: number; price_thb: number | null; status: string; requested_at: string; decided_at?: string | null; decision_note?: string | null };
 type CloudEntitlement = { id: string; plan_code: string; cloud_code: string; status: string; starts_at: string; expires_at: string; last_backup_at?: string | null; last_snapshot_id?: string | null };
@@ -49,7 +43,6 @@ type StorageMetrics = { databaseSize?: number; diskFreeBytes?: number; appDataSi
 
 declare global {
   interface Window {
-    __CPIPOS_LICENSE_RUNTIME__?: LicenseRuntime;
     __CPIPOS_CLOUD_BACKUP__?: CloudState;
   }
 }
