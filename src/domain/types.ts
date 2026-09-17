@@ -72,6 +72,10 @@ export type AppSettings = {
   scannerMode: string;
   remoteManagementEnabled: boolean;
   language: Language;
+  paymentQrEnabled: boolean;
+  paymentQrImage: string;
+  paymentQrAccountName: string;
+  paymentQrNote: string;
 };
 
 export type AuditEvent = {
