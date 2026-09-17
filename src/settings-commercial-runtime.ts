@@ -52,6 +52,27 @@ function licenseStatus() {
   return "กำลังตรวจสอบ";
 }
 
+function reconcileSettingsMenu() {
+  document.querySelectorAll<HTMLElement>(".settings-menu-card").forEach(card => {
+    const label = textOf(card.querySelector("strong"));
+    if (label === "เจ้าของร้าน" || label === "Owner") {
+      card.remove();
+      return;
+    }
+
+    const meta = card.querySelector<HTMLElement>("em");
+    if (!meta) return;
+    if (label.includes("Remote Management")) {
+      const enabled = runtimeWindow().__CPIPOS_CONTROL_STATE__?.remote_management_enabled !== false;
+      meta.textContent = navigator.onLine && enabled ? "CpIPOS IT Control Plane" : "Offline / รอเชื่อมต่อ";
+    }
+    if (label.includes("เวอร์ชัน") || label.includes("Version")) {
+      const policy = runtimeWindow().__CPIPOS_CONTROL_STATE__?.update || readUpdatePolicy();
+      meta.textContent = `CpIPOS Desktop ${policy?.current_version || "0.3.0"}`;
+    }
+  });
+}
+
 function renderRemote(host: HTMLElement) {
   const control = runtimeWindow().__CPIPOS_CONTROL_STATE__;
   const online = navigator.onLine;
@@ -142,8 +163,12 @@ function enhanceModal() {
 }
 
 function startRuntime() {
+  const refresh = () => window.requestAnimationFrame(() => {
+    reconcileSettingsMenu();
+    enhanceModal();
+  });
+  reconcileSettingsMenu();
   enhanceModal();
-  const refresh = () => window.requestAnimationFrame(enhanceModal);
   window.addEventListener("online", refresh);
   window.addEventListener("offline", refresh);
   window.addEventListener("cpipos:license-online-status", refresh);
