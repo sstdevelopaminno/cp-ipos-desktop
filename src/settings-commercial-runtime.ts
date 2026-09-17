@@ -16,17 +16,18 @@ type ControlState = {
   update?: UpdatePolicy;
 };
 
-declare global {
-  interface Window {
-    __CPIPOS_CONTROL_STATE__?: ControlState;
-    __CPIPOS_LICENSE_RUNTIME__?: {
-      mode?: "trial" | "licensed" | "locked" | "error";
-      deviceCode?: string;
-      payload?: { licenseId?: string; expiresAt?: string | null };
-    };
-  }
-}
+type LicenseState = {
+  mode?: "trial" | "licensed" | "locked" | "error";
+  deviceCode?: string;
+  payload?: { licenseId?: string; expiresAt?: string | null };
+};
 
+type RuntimeWindow = Window & {
+  __CPIPOS_CONTROL_STATE__?: ControlState;
+  __CPIPOS_LICENSE_RUNTIME__?: LicenseState;
+};
+
+const runtimeWindow = () => window as RuntimeWindow;
 const UPDATE_POLICY_KEY = "cpipos.update.policy.v1";
 const CONTROL_PLANE = String(import.meta.env.VITE_CPIPOS_IT_BASE_URL || "https://cp-ipos-it-web.vercel.app").replace(/\/$/, "");
 const textOf = (element: Element | null) => (element?.textContent || "").trim();
@@ -44,7 +45,7 @@ function readUpdatePolicy(): UpdatePolicy | null {
 }
 
 function licenseStatus() {
-  const runtime = window.__CPIPOS_LICENSE_RUNTIME__;
+  const runtime = runtimeWindow().__CPIPOS_LICENSE_RUNTIME__;
   if (runtime?.mode === "licensed") return "License ใช้งานจริง";
   if (runtime?.mode === "trial") return "ทดลองใช้งาน";
   if (runtime?.mode === "locked") return "ถูกล็อก";
@@ -52,7 +53,7 @@ function licenseStatus() {
 }
 
 function renderRemote(host: HTMLElement) {
-  const control = window.__CPIPOS_CONTROL_STATE__;
+  const control = runtimeWindow().__CPIPOS_CONTROL_STATE__;
   const online = navigator.onLine;
   const enabled = control?.remote_management_enabled !== false;
   const modes = control?.entitlements?.sales_modes?.join(" / ") || "รอ License / heartbeat";
@@ -78,7 +79,7 @@ function renderRemote(host: HTMLElement) {
 }
 
 function renderLicense(host: HTMLElement) {
-  const runtime = window.__CPIPOS_LICENSE_RUNTIME__;
+  const runtime = runtimeWindow().__CPIPOS_LICENSE_RUNTIME__;
   host.innerHTML = `<div class="commercial-card commercial-license">
     <span class="commercial-kicker">CUTTING POINT TECH IT SIGNED LICENSE</span>
     <h3>${cell(licenseStatus())}</h3>
@@ -93,7 +94,7 @@ function renderLicense(host: HTMLElement) {
 }
 
 function renderRelease(host: HTMLElement) {
-  const policy = window.__CPIPOS_CONTROL_STATE__?.update || readUpdatePolicy();
+  const policy = runtimeWindow().__CPIPOS_CONTROL_STATE__?.update || readUpdatePolicy();
   const current = policy?.current_version || "0.3.0";
   const latest = policy?.latest_version || "0.3.0";
   const minimum = policy?.minimum_version || "0.3.0";
@@ -127,7 +128,7 @@ function enhanceModal() {
   if (!body) return;
   const section = sectionFromModal();
   if (!section) return;
-  const stateKey = `${section}:${navigator.onLine}:${window.__CPIPOS_LICENSE_RUNTIME__?.mode || "unknown"}:${window.__CPIPOS_CONTROL_STATE__?.update?.latest_version || ""}`;
+  const stateKey = `${section}:${navigator.onLine}:${runtimeWindow().__CPIPOS_LICENSE_RUNTIME__?.mode || "unknown"}:${runtimeWindow().__CPIPOS_CONTROL_STATE__?.update?.latest_version || ""}`;
   if (body.dataset.commercialEnhanced === stateKey) return;
   body.dataset.commercialEnhanced = stateKey;
   body.querySelector(".commercial-settings-extension")?.remove();
