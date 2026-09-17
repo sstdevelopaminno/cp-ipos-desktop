@@ -1,5 +1,10 @@
 use serde::Serialize;
-use std::{fs, path::Path};
+use std::{
+    collections::hash_map::DefaultHasher,
+    fs,
+    hash::{Hash, Hasher},
+    path::Path,
+};
 use tauri::{Manager, Runtime};
 use tauri_plugin_sql::{Migration, MigrationKind};
 
@@ -66,6 +71,63 @@ fn get_local_storage_metrics<R: Runtime>(app: tauri::AppHandle<R>) -> Result<Loc
     })
 }
 
+#[cfg(target_os = "windows")]
+fn platform_machine_seed() -> Option<String> {
+    use std::process::Command;
+
+    let output = Command::new("reg")
+        .args([
+            "query",
+            r"HKLM\SOFTWARE\Microsoft\Cryptography",
+            "/v",
+            "MachineGuid",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .lines()
+        .find(|line| line.to_ascii_lowercase().contains("machineguid"))
+        .and_then(|line| line.split_whitespace().last())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn platform_machine_seed() -> Option<String> {
+    std::env::var("HOSTNAME").ok().filter(|value| !value.trim().is_empty())
+}
+
+fn hashed_device_seed(seed: &str) -> String {
+    let mut first = DefaultHasher::new();
+    "CPIPOS-DESKTOP-LICENSE-A".hash(&mut first);
+    seed.hash(&mut first);
+    let mut second = DefaultHasher::new();
+    "CPIPOS-DESKTOP-LICENSE-B".hash(&mut second);
+    seed.hash(&mut second);
+    format!("{:016X}{:016X}", first.finish(), second.finish())
+}
+
+#[tauri::command]
+fn get_license_device_code() -> String {
+    let seed = platform_machine_seed()
+        .or_else(|| std::env::var("COMPUTERNAME").ok())
+        .or_else(|| std::env::var("HOSTNAME").ok())
+        .unwrap_or_else(|| "CPIPOS-UNKNOWN-MACHINE".to_string());
+    let cleaned = seed
+        .chars()
+        .filter(|char| char.is_ascii_hexdigit())
+        .map(|char| char.to_ascii_uppercase())
+        .collect::<String>();
+    let source = if cleaned.len() >= 20 { cleaned } else { hashed_device_seed(&seed) };
+    let code = &source[..20];
+    format!("CP-{}-{}-{}-{}", &code[0..5], &code[5..10], &code[10..15], &code[15..20])
+}
+
 #[tauri::command]
 fn complete_startup_splash<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
     if let Some(main) = app.get_webview_window("main") {
@@ -94,7 +156,8 @@ pub fn run() {
             description: "retail_core_foundation",
             sql: include_str!("../migrations/0002_retail_core_foundation.sql"),
             kind: MigrationKind::Up,
-        },        Migration {
+        },
+        Migration {
             version: 3,
             description: "retail_localization_voids",
             sql: include_str!("../migrations/0003_retail_localization_voids.sql"),
@@ -108,7 +171,12 @@ pub fn run() {
                 .add_migrations("sqlite:cpipos.db", migrations)
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![save_product_image, get_local_storage_metrics, complete_startup_splash])
+        .invoke_handler(tauri::generate_handler![
+            save_product_image,
+            get_local_storage_metrics,
+            get_license_device_code,
+            complete_startup_splash
+        ])
         .run(tauri::generate_context!())
         .expect("error while running CpIPOS Desktop");
 }
