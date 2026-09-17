@@ -1,5 +1,5 @@
 import { useEffect, useState, type ComponentProps } from "react";
-import { GrocerySalesScreen } from "./GrocerySalesScreen";
+import { RetailSalesScreen as GrocerySalesScreen } from "./GrocerySalesScreen";
 import { salesModeAllowed } from "./license-entitlements";
 
 type Props = ComponentProps<typeof GrocerySalesScreen>;
