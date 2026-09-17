@@ -156,6 +156,9 @@ function friendlyError(code?: string) {
     case "LICENSE_DEVICE_NOT_ALLOWED": return "License นี้ไม่ได้ออกให้รหัสเครื่องนี้";
     case "LICENSE_EXPIRED": return "License หมดอายุแล้ว";
     case "LICENSE_NOT_ACTIVE_YET": return "License ยังไม่ถึงวันที่เริ่มใช้งาน";
+    case "LICENSE_REVOKED": return "ฝ่าย IT ได้ยกเลิก License นี้แล้ว กรุณาติดต่อบริษัทเพื่อเปิดใช้งานอีกครั้ง";
+    case "LICENSE_SUPERSEDED": return "License นี้มี Revision ใหม่แล้ว กรุณาใส่ License Key ล่าสุดจากฝ่าย IT";
+    case "LICENSE_NOT_REGISTERED": return "ไม่พบ License นี้ในระบบหลังบ้าน IT";
     case "CLOCK_ROLLBACK_DETECTED": return "ตรวจพบวันที่/เวลาของเครื่องย้อนหลัง ระบบจึงล็อกชั่วคราว";
     default: return code ? "License ไม่ผ่านการตรวจสอบจาก CUTTING POINT TECH IT" : "";
   }
@@ -216,6 +219,26 @@ export function LicenseGate({ children }: { children: ReactNode }) {
     return () => { alive = false; };
   }, []);
 
+  useEffect(() => {
+    window.__CPIPOS_LICENSE_RUNTIME__ = {
+      mode: state.mode,
+      token: state.token,
+      deviceCode: state.deviceCode,
+      payload: state.payload ? { licenseId: state.payload.licenseId, expiresAt: state.payload.expiresAt } : undefined
+    };
+  }, [state.mode, state.token, state.deviceCode, state.payload]);
+
+  useEffect(() => {
+    const onOnlineStatus = (event: Event) => {
+      const detail = (event as CustomEvent<{ lock?: boolean; code?: string }>).detail;
+      if (!detail?.lock) return;
+      setState(current => ({ ...current, loading: false, mode: "locked", message: friendlyError(detail.code || "LICENSE_REVOKED") }));
+      setOpen(true);
+    };
+    window.addEventListener("cpipos:license-online-status", onOnlineStatus);
+    return () => window.removeEventListener("cpipos:license-online-status", onOnlineStatus);
+  }, []);
+
   const statusLabel = useMemo(() => state.mode === "licensed" ? "License ใช้งานจริง" : state.mode === "trial" ? `ทดลอง ${state.daysRemaining || 0} วัน` : "ระบบถูกล็อก", [state]);
 
   const activate = async () => {
@@ -254,7 +277,7 @@ export function LicenseGate({ children }: { children: ReactNode }) {
       <label className="license-token-field">License Key ที่ออกโดย IT<textarea value={tokenInput} onChange={e => setTokenInput(e.target.value.trim())} placeholder="CP1.xxxxx.xxxxx" spellCheck={false} /></label>
       {state.message && <p className="license-error">{state.message}</p>}
       <div className="license-actions"><button className="license-primary" disabled={busy || !tokenInput.trim()} onClick={() => void activate()}>{busy ? "กำลังตรวจสอบ..." : "ตรวจสอบและเปิดใช้งาน"}</button>{!locked && <button className="license-secondary" onClick={() => setOpen(false)}>กลับ</button>}</div>
-      <p className="license-help">License ถูกตรวจสอบด้วยลายเซ็นดิจิทัล ECDSA P-256 แบบออฟไลน์ โปรแกรมไม่มี private key ของบริษัทอยู่ภายในเครื่องลูกค้า</p>
+      <p className="license-help">License ถูกตรวจสอบด้วยลายเซ็นดิจิทัล ECDSA P-256 แบบออฟไลน์ และเมื่อมีอินเทอร์เน็ตจะตรวจสถานะกับระบบ IT เป็นระยะ โดยโปรแกรมไม่มี private key ของบริษัทอยู่ภายในเครื่องลูกค้า</p>
     </section></div>}
   </>;
 }
