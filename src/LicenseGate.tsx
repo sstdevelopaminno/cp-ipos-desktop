@@ -119,10 +119,8 @@ async function loadRuntime(): Promise<{ db: Database | null; row: RuntimeRow; de
       await db.execute("INSERT INTO cpipos_license_runtime(id, install_id, trial_started_at, last_seen_at, token) VALUES(1, $1, $2, $2, '')", [installId, now]);
       rows = [{ install_id: installId, trial_started_at: now, last_seen_at: now, token: "" }];
     }
-    const deviceRows = await db.select<{ value: string }[]>("SELECT value FROM app_settings WHERE key = 'deviceId' LIMIT 1");
-    const deviceId = deviceRows[0]?.value || "desktop-pos";
     const row = rows[0];
-    return { db, row, deviceCode: await sha256Code(`${PRODUCT_ID}|${row.install_id}|${deviceId}`) };
+    return { db, row, deviceCode: await sha256Code(`${PRODUCT_ID}|${row.install_id}`) };
   } catch {
     const installKey = "cpipos.license.install.v1";
     const startKey = "cpipos.license.trial.start.v1";
@@ -136,7 +134,7 @@ async function loadRuntime(): Promise<{ db: Database | null; row: RuntimeRow; de
     return {
       db: null,
       row: { install_id: installId, trial_started_at: trialStarted, last_seen_at: lastSeen, token: localStorage.getItem(tokenKey) || "" },
-      deviceCode: await sha256Code(`${PRODUCT_ID}|${installId}|browser-preview`),
+      deviceCode: await sha256Code(`${PRODUCT_ID}|${installId}`),
     };
   }
 }
