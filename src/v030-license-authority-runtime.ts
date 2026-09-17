@@ -4,24 +4,29 @@ function applyV030LicenseAuthorityUi() {
   document.querySelectorAll<HTMLElement>(".settings-menu-card").forEach((card) => {
     const text = card.textContent || "";
     if (text.includes("ลายเส้นโปรแกรม") || text.includes("License และการผูกเครื่อง")) {
-      card.hidden = true;
-      card.setAttribute("aria-hidden", "true");
+      if (!card.hidden) card.hidden = true;
+      if (card.getAttribute("aria-hidden") !== "true") card.setAttribute("aria-hidden", "true");
     }
   });
 
+  const aboutVersion = `CpIPOS Desktop ${APP_VERSION}`;
   document.querySelectorAll<HTMLElement>(".settings-menu-card.gray .settings-menu-copy em").forEach((meta) => {
-    if (meta.textContent?.includes("CpIPOS Desktop")) meta.textContent = `CpIPOS Desktop ${APP_VERSION}`;
+    if (meta.textContent?.includes("CpIPOS Desktop") && meta.textContent !== aboutVersion) {
+      meta.textContent = aboutVersion;
+    }
   });
 
   document.querySelectorAll<HTMLElement>(".settings-modal-body.gray .metric").forEach((metric) => {
     const label = metric.querySelector("span")?.textContent?.trim();
     if (label === "Version") {
       const value = metric.querySelector<HTMLElement>("strong");
-      if (value) value.textContent = APP_VERSION;
+      if (value && value.textContent !== APP_VERSION) value.textContent = APP_VERSION;
     }
   });
 
   document.querySelectorAll<HTMLElement>(".settings-modal-body.rose").forEach((legacyLicenseModal) => {
+    if (legacyLicenseModal.dataset.cpiposLicenseAuthorityApplied === "1") return;
+    legacyLicenseModal.dataset.cpiposLicenseAuthorityApplied = "1";
     legacyLicenseModal.innerHTML = `
       <div class="license-security-list">
         <strong>License ถูกควบคุมโดย CUTTING POINT TECH IT</strong>
