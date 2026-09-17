@@ -40,6 +40,18 @@ function render(host: HTMLElement) {
         : cloudActive
           ? "รออินเทอร์เน็ต"
           : "ไม่ได้ซื้อ Cloud";
+  const statusKey = [
+    online ? "online" : "offline",
+    licenseMode,
+    mdmEnabled ? "mdm-on" : "mdm-off",
+    cloudConnected ? "cloud-on" : "cloud-off",
+    cloudPending ? "pending" : "no-pending",
+    cloud?.syncing ? "sync" : "idle",
+    cloud?.entitlement?.plan_code || "no-plan",
+    cloud?.lastError || ""
+  ].join(":");
+  if (host.dataset.statusKey === statusKey) return;
+  host.dataset.statusKey = statusKey;
 
   host.innerHTML = [
     statusCard("local-ready", "▣", "ฐานข้อมูลเครื่อง", "พร้อมขายออฟไลน์"),
@@ -64,7 +76,15 @@ function ensureStatus() {
 }
 
 function start() {
-  const refresh = () => window.requestAnimationFrame(ensureStatus);
+  let scheduled = false;
+  const refresh = () => {
+    if (scheduled) return;
+    scheduled = true;
+    window.requestAnimationFrame(() => {
+      scheduled = false;
+      ensureStatus();
+    });
+  };
   ensureStatus();
   window.addEventListener("online", refresh);
   window.addEventListener("offline", refresh);
