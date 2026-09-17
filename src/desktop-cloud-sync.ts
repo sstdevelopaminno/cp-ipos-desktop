@@ -3,9 +3,11 @@ import { invoke } from "@tauri-apps/api/core";
 
 const CONTROL_PLANE = String(import.meta.env.VITE_CPIPOS_IT_BASE_URL || "https://cp-ipos-it-web.vercel.app").replace(/\/$/, "");
 const HEARTBEAT_URL = `${CONTROL_PLANE}/api/desktop-license/heartbeat`;
-const DEFAULT_INTERVAL_MS = 3 * 60 * 1000;
+const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 const FIRST_SYNC_DELAY_MS = 15_000;
 const APP_VERSION = "0.3.0";
+const COMMAND_RESULTS_KEY = "cpipos.mdm.command-results.v1";
+const UPDATE_POLICY_KEY = "cpipos.update.policy.v1";
 
 type LicenseRuntime = {
   mode: "trial" | "licensed" | "locked" | "error";
@@ -40,9 +42,46 @@ type WindowsSystemHealth = {
   logicalProcessors?: number;
 };
 
+type MdmCommand = {
+  id: string;
+  type: "force_sync" | "refresh_license" | "recheck_printer" | "check_update" | "collect_health";
+  payload?: Record<string, unknown>;
+  issued_at?: string;
+  expires_at?: string;
+};
+
+type MdmCommandResult = {
+  id: string;
+  ok: boolean;
+  code?: string | null;
+  result?: Record<string, unknown> | null;
+  completedAt: string;
+};
+
+type UpdatePolicy = {
+  channel?: string;
+  current_version?: string;
+  latest_version?: string;
+  minimum_version?: string;
+  update_available?: boolean;
+  below_minimum?: boolean;
+  mandatory?: boolean;
+  auto_install?: boolean;
+  download_url?: string | null;
+  notes?: string | null;
+};
+
+type ControlEnvelope = {
+  remote_management_enabled?: boolean;
+  commands?: MdmCommand[];
+  entitlements?: { sales_modes?: string[]; features?: string[] };
+  update?: UpdatePolicy;
+};
+
 declare global {
   interface Window {
     __CPIPOS_LICENSE_RUNTIME__?: LicenseRuntime;
+    __CPIPOS_CONTROL_STATE__?: ControlEnvelope;
   }
 }
 
@@ -61,6 +100,17 @@ async function sha256(value: string) {
 
 function safeJson<T>(value: string, fallback: T): T {
   try { return JSON.parse(value) as T; } catch { return fallback; }
+}
+
+function readCommandResults(): MdmCommandResult[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(COMMAND_RESULTS_KEY) || "[]") as MdmCommandResult[];
+    return Array.isArray(parsed) ? parsed.slice(-20) : [];
+  } catch { return []; }
+}
+
+function writeCommandResults(rows: MdmCommandResult[]) {
+  localStorage.setItem(COMMAND_RESULTS_KEY, JSON.stringify(rows.slice(-20)));
 }
 
 async function getSettings(db: Database) {
@@ -134,10 +184,46 @@ async function readWindowsSystemHealth(): Promise<WindowsSystemHealth> {
   catch { return {}; }
 }
 
-async function syncOnce() {
-  if (running || stopped || !navigator.onLine) return;
+async function executeMdmCommands(commands: MdmCommand[], control: ControlEnvelope, storage: StorageMetrics, system: WindowsSystemHealth) {
+  const results: MdmCommandResult[] = [];
+  for (const command of commands.slice(0, 10)) {
+    const completedAt = new Date().toISOString();
+    try {
+      let result: Record<string, unknown> = {};
+      if (command.type === "force_sync") {
+        result = { synced: true, at: completedAt };
+      } else if (command.type === "refresh_license") {
+        result = { licenseValidatedByCurrentHeartbeat: true };
+      } else if (command.type === "recheck_printer") {
+        const printers = await invoke<Array<{ name?: string; status?: string; isDefault?: boolean; isOffline?: boolean }>>("list_windows_printers");
+        result = {
+          printerCount: printers.length,
+          defaultPrinter: printers.find(printer => printer.isDefault)?.name || null,
+          onlinePrinters: printers.filter(printer => !printer.isOffline).length
+        };
+      } else if (command.type === "check_update") {
+        result = { appVersion: APP_VERSION, update: control.update ?? null };
+      } else if (command.type === "collect_health") {
+        result = {
+          cpuPercent: system.cpuPercent ?? null,
+          memoryPercent: system.memoryPercent ?? null,
+          diskFreeBytes: system.diskFreeBytes ?? null,
+          databaseBytes: storage.databaseSize ?? null,
+          appDataBytes: storage.appDataSize ?? null
+        };
+      }
+      results.push({ id: command.id, ok: true, result, completedAt });
+    } catch (error) {
+      results.push({ id: command.id, ok: false, code: error instanceof Error ? error.message : "MDM_COMMAND_FAILED", completedAt });
+    }
+  }
+  return results;
+}
+
+async function syncOnce(): Promise<number> {
+  if (running || stopped || !navigator.onLine) return DEFAULT_INTERVAL_MS;
   const license = window.__CPIPOS_LICENSE_RUNTIME__;
-  if (!license || license.mode !== "licensed" || !license.token || !license.deviceCode) return;
+  if (!license || license.mode !== "licensed" || !license.token || !license.deviceCode) return DEFAULT_INTERVAL_MS;
 
   running = true;
   try {
@@ -149,6 +235,7 @@ async function syncOnce() {
       getPendingSales(db)
     ]);
     const memoryGb = Number((navigator as Navigator & { deviceMemory?: number }).deviceMemory || 0);
+    const commandResults = readCommandResults();
     const payload = {
       token: license.token,
       deviceCode: license.deviceCode,
@@ -179,6 +266,7 @@ async function syncOnce() {
         machineIdPresent: Boolean(system.machineId)
       },
       metadata: { platform: navigator.platform || "Windows", userAgent: navigator.userAgent.slice(0, 220) },
+      commandResults,
       sales: pendingSales.map(row => row.sale)
     };
 
@@ -195,27 +283,50 @@ async function syncOnce() {
       });
     } finally { window.clearTimeout(timeout); }
 
-    const result = await response.json().catch(() => ({})) as { valid?: boolean; lock?: boolean; code?: string; next_check_seconds?: number; sales_accepted?: number };
+    const result = await response.json().catch(() => ({})) as {
+      valid?: boolean;
+      lock?: boolean;
+      code?: string;
+      next_check_seconds?: number;
+      sales_accepted?: number;
+      control?: ControlEnvelope;
+    };
     if (result.lock) {
       window.dispatchEvent(new CustomEvent("cpipos:license-online-status", { detail: { lock: true, code: result.code || "LICENSE_REVOKED" } }));
-      return;
+      return DEFAULT_INTERVAL_MS;
     }
     if (response.ok && result.valid) {
       if (pendingSales.length && Number(result.sales_accepted || 0) > 0) await markSalesSynced(db, pendingSales);
+      writeCommandResults([]);
       window.dispatchEvent(new CustomEvent("cpipos:license-online-status", { detail: { lock: false, valid: true } }));
+
+      const control = result.control ?? {};
+      window.__CPIPOS_CONTROL_STATE__ = control;
+      window.dispatchEvent(new CustomEvent("cpipos:license-entitlements", { detail: control.entitlements ?? {} }));
+      if (control.update) {
+        localStorage.setItem(UPDATE_POLICY_KEY, JSON.stringify(control.update));
+        window.dispatchEvent(new CustomEvent("cpipos:update-policy", { detail: control.update }));
+      }
+
+      const newResults = await executeMdmCommands(Array.isArray(control.commands) ? control.commands : [], control, storage, system);
+      if (newResults.length) writeCommandResults(newResults);
+
       const seconds = Math.max(120, Math.min(900, Number(result.next_check_seconds || DEFAULT_INTERVAL_MS / 1000)));
-      schedule(seconds * 1000);
-      return;
+      return newResults.length ? 10_000 : seconds * 1000;
     }
   } catch (error) {
     console.debug("CpIPOS cloud sync deferred", error);
   } finally { running = false; }
+  return DEFAULT_INTERVAL_MS;
 }
 
 function schedule(delay = DEFAULT_INTERVAL_MS) {
   if (timer) window.clearTimeout(timer);
   if (stopped) return;
-  timer = window.setTimeout(async () => { await syncOnce(); schedule(); }, delay);
+  timer = window.setTimeout(async () => {
+    const nextDelay = await syncOnce();
+    schedule(nextDelay);
+  }, delay);
 }
 
 function start() {
