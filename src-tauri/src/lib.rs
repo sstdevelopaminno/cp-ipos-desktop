@@ -1,3 +1,5 @@
+mod system_health;
+
 use serde::Serialize;
 use serde_json::Value;
 use std::{ffi::{c_void, CString}, fs, path::Path, process::Command};
@@ -309,6 +311,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             save_product_image,
             get_local_storage_metrics,
+            system_health::get_windows_system_health,
             complete_startup_splash,
             list_windows_printers,
             print_test_receipt,
