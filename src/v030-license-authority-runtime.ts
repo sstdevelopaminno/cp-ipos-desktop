@@ -23,17 +23,6 @@ function applyV030LicenseAuthorityUi() {
       if (value && value.textContent !== APP_VERSION) value.textContent = APP_VERSION;
     }
   });
-
-  document.querySelectorAll<HTMLElement>(".settings-modal-body.rose").forEach((legacyLicenseModal) => {
-    if (legacyLicenseModal.dataset.cpiposLicenseAuthorityApplied === "1") return;
-    legacyLicenseModal.dataset.cpiposLicenseAuthorityApplied = "1";
-    legacyLicenseModal.innerHTML = `
-      <div class="license-security-list">
-        <strong>License ถูกควบคุมโดย CUTTING POINT TECH IT</strong>
-        <span>จำนวนเครื่อง แพ็กเกจ วันเริ่มใช้งาน และวันหมดอายุอ่านจาก License ที่มีลายเซ็นดิจิทัลเท่านั้น</span>
-        <span>กลับไปใช้ปุ่มสถานะ License ที่มุมหน้าจอเพื่อดู Device Code และใส่รหัส CP1 ที่ฝ่าย IT ออกให้</span>
-      </div>`;
-  });
 }
 
 let scheduled = false;
