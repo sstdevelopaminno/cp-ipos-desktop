@@ -31,6 +31,14 @@ type SaleRow = {
 
 type SyncStateRow = { sale_id: string; payload_hash: string };
 type StorageMetrics = { databaseSize?: number; mediaSize?: number; backupSize?: number; appDataSize?: number; appDataDir?: string };
+type WindowsSystemHealth = {
+  deviceName?: string;
+  machineId?: string;
+  cpuPercent?: number;
+  memoryPercent?: number;
+  diskFreeBytes?: number;
+  logicalProcessors?: number;
+};
 
 declare global {
   interface Window {
@@ -121,6 +129,11 @@ async function readStorageMetrics(): Promise<StorageMetrics> {
   catch { return {}; }
 }
 
+async function readWindowsSystemHealth(): Promise<WindowsSystemHealth> {
+  try { return await invoke<WindowsSystemHealth>("get_windows_system_health"); }
+  catch { return {}; }
+}
+
 async function syncOnce() {
   if (running || stopped || !navigator.onLine) return;
   const license = window.__CPIPOS_LICENSE_RUNTIME__;
@@ -129,18 +142,23 @@ async function syncOnce() {
   running = true;
   try {
     const db = await Database.load("sqlite:cpipos.db");
-    const [settings, storage, pendingSales] = await Promise.all([getSettings(db), readStorageMetrics(), getPendingSales(db)]);
+    const [settings, storage, system, pendingSales] = await Promise.all([
+      getSettings(db),
+      readStorageMetrics(),
+      readWindowsSystemHealth(),
+      getPendingSales(db)
+    ]);
     const memoryGb = Number((navigator as Navigator & { deviceMemory?: number }).deviceMemory || 0);
     const payload = {
       token: license.token,
       deviceCode: license.deviceCode,
       appVersion: APP_VERSION,
       runtimeVersion: "tauri2",
-      deviceName: settings.deviceName || null,
-      machineId: null,
-      cpuPercent: null,
-      memoryPercent: null,
-      diskFreeBytes: null,
+      deviceName: system.deviceName || settings.deviceName || null,
+      machineId: system.machineId || null,
+      cpuPercent: Number.isFinite(Number(system.cpuPercent)) ? Number(system.cpuPercent) : null,
+      memoryPercent: Number.isFinite(Number(system.memoryPercent)) ? Number(system.memoryPercent) : null,
+      diskFreeBytes: Number.isFinite(Number(system.diskFreeBytes)) ? Number(system.diskFreeBytes) : null,
       databaseBytes: Number(storage.databaseSize || 0),
       printerStatus: settings.printerConnectionStatus || (settings.printerSetupConfirmed === "true" ? "ready" : "not_configured"),
       printerName: settings.printerName || null,
@@ -148,14 +166,18 @@ async function syncOnce() {
       tamperDetected: false,
       connectivity: { online: navigator.onLine, source: "navigator" },
       systemHealth: {
-        cpuLogicalProcessors: Number(navigator.hardwareConcurrency || 0),
+        cpuLogicalProcessors: Number(system.logicalProcessors || navigator.hardwareConcurrency || 0),
         deviceMemoryGb: memoryGb || null,
         appDataBytes: Number(storage.appDataSize || 0),
         mediaBytes: Number(storage.mediaSize || 0),
         backupBytes: Number(storage.backupSize || 0)
       },
       printerHealth: { lastCheckedAt: settings.printerLastCheckedAt || null },
-      securitySignals: { localSignatureVerified: true, clockRollbackDetected: false },
+      securitySignals: {
+        localSignatureVerified: true,
+        clockRollbackDetected: false,
+        machineIdPresent: Boolean(system.machineId)
+      },
       metadata: { platform: navigator.platform || "Windows", userAgent: navigator.userAgent.slice(0, 220) },
       sales: pendingSales.map(row => row.sale)
     };
