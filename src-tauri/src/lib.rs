@@ -1,3 +1,5 @@
+mod license;
+
 use serde::Serialize;
 use serde_json::Value;
 use std::{ffi::{c_void, CString}, fs, path::Path, process::Command};
@@ -314,7 +316,10 @@ pub fn run() {
             print_test_receipt,
             print_receipt_text,
             print_receipt_raster,
-            open_cash_drawer
+            open_cash_drawer,
+            license::get_device_fingerprint,
+            license::get_license_status,
+            license::activate_offline_license
         ])
         .run(tauri::generate_context!())
         .expect("error while running CpIPOS Desktop");
