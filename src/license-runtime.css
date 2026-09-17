@@ -1,0 +1,184 @@
+.cpipos-license-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483600;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.82);
+  backdrop-filter: blur(8px);
+}
+
+.cpipos-license-gate-card {
+  width: min(680px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 28px;
+  border-radius: 24px;
+  background: #ffffff;
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.38);
+  color: #0f172a;
+}
+
+.cpipos-license-gate-logo {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #0f4c81;
+}
+
+.cpipos-license-pill {
+  display: inline-flex;
+  margin-top: 12px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #fee2e2;
+  color: #991b1b;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.cpipos-license-gate-card h1 {
+  margin: 16px 0 8px;
+  font-size: clamp(26px, 4vw, 38px);
+  line-height: 1.15;
+}
+
+.cpipos-license-gate-card > p {
+  margin: 0 0 18px;
+  color: #475569;
+  line-height: 1.65;
+}
+
+.cpipos-license-device-box {
+  display: grid;
+  gap: 8px;
+  margin: 20px 0;
+  padding: 16px;
+  border: 1px solid #bfdbfe;
+  border-radius: 16px;
+  background: #eff6ff;
+}
+
+.cpipos-license-device-box span {
+  font-size: 12px;
+  color: #475569;
+}
+
+.cpipos-license-device-box strong {
+  overflow-wrap: anywhere;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 17px;
+  letter-spacing: 0.03em;
+}
+
+.cpipos-license-device-box button,
+.cpipos-license-activate {
+  min-height: 44px;
+  border: 0;
+  border-radius: 12px;
+  padding: 0 16px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.cpipos-license-device-box button {
+  justify-self: start;
+  background: #dbeafe;
+  color: #1e3a8a;
+}
+
+.cpipos-license-input-label {
+  display: grid;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.cpipos-license-input-label textarea,
+.cpipos-native-license-card textarea,
+.cpipos-native-license-card input[readonly] {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  padding: 12px;
+  background: #ffffff;
+  color: #0f172a;
+  font: 13px/1.5 Consolas, "Courier New", monospace;
+  resize: vertical;
+}
+
+.cpipos-license-input-label textarea:focus,
+.cpipos-native-license-card textarea:focus {
+  outline: 3px solid rgba(37, 99, 235, 0.16);
+  border-color: #2563eb;
+}
+
+.cpipos-license-activate {
+  width: 100%;
+  margin-top: 14px;
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.cpipos-license-activate:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.cpipos-license-activation-status {
+  margin: 10px 0 0 !important;
+  font-size: 12px;
+}
+
+.cpipos-license-trial-badge {
+  position: fixed;
+  top: 10px;
+  right: 14px;
+  z-index: 2147483000;
+  min-height: 36px;
+  border: 1px solid #fdba74;
+  border-radius: 999px;
+  padding: 0 14px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-weight: 800;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
+  pointer-events: none;
+}
+
+.cpipos-native-license-card {
+  display: grid;
+  gap: 14px;
+}
+
+.cpipos-native-license-card label {
+  display: grid;
+  gap: 7px;
+  font-weight: 700;
+}
+
+html[data-cpipos-license-mode="locked"] body > #root {
+  filter: saturate(0.65);
+  pointer-events: none;
+  user-select: none;
+}
+
+@media (max-width: 720px) {
+  .cpipos-license-gate {
+    padding: 12px;
+  }
+
+  .cpipos-license-gate-card {
+    padding: 20px;
+    border-radius: 18px;
+    max-height: calc(100vh - 24px);
+  }
+
+  .cpipos-license-trial-badge {
+    top: 6px;
+    right: 8px;
+    font-size: 11px;
+  }
+}
