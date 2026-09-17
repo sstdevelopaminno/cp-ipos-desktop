@@ -22,6 +22,7 @@ type LicenseContextValue = {
 
 const LicenseContext = createContext<LicenseContextValue | null>(null);
 const DEV_DEVICE_CODE = "CP-DE000-DE000-DE000-DE000";
+const canUseDevPreview = () => typeof window !== "undefined" && ["localhost", "127.0.0.1"].includes(window.location.hostname);
 
 export function useDesktopLicense() {
   const value = useContext(LicenseContext);
@@ -160,9 +161,9 @@ export function LicenseGate({ children, language = "th" }: { children: ReactNode
       <div className={`license-status license-status--${status}`}><span className="license-status__dot"/><div><strong>{statusText(status, language)}</strong>{payload?.expiresAt ? <small>{language === "th" ? "หมดอายุ" : "Expires"}: {new Date(payload.expiresAt).toLocaleString(language === "th" ? "th-TH" : "en-US")}</small> : null}</div></div>
       <div className="license-device-box"><span>{language === "th" ? "รหัสเครื่องสำหรับออก License" : "Device code for license issuing"}</span><strong>{deviceCode}</strong><button type="button" onClick={() => void copyDevice()}>{copied ? (language === "th" ? "คัดลอกแล้ว" : "Copied") : (language === "th" ? "คัดลอกรหัสเครื่อง" : "Copy device code")}</button></div>
       <div className="license-guide"><b>1</b><span>{language === "th" ? "นำรหัสเครื่องด้านบนไปใส่ในระบบ IT > ออก License POS Desktop" : "Use the device code in IT > Issue POS Desktop License."}</span><b>2</b><span>{language === "th" ? "เลือกโหมดขายที่อนุญาตและอายุ License แล้วสร้าง License Key" : "Choose licensed sales modes and term, then issue the License Key."}</span><b>3</b><span>{language === "th" ? "นำ License Key ที่ได้มาวางด้านล่างและกดเปิดใช้งาน" : "Paste the issued License Key below and activate it."}</span></div>
-      <label className="license-token-label">{language === "th" ? "License Key" : "License Key"}<textarea value={token} onChange={(event) => setToken(event.target.value)} placeholder="CP1...." spellCheck={false}/></label>
+      <label className="license-token-label">License Key<textarea value={token} onChange={(event) => setToken(event.target.value)} placeholder="CP1...." spellCheck={false}/></label>
       <div className="license-actions"><button type="button" className="license-primary" disabled={!token.trim()} onClick={() => void save()}>{language === "th" ? "ตรวจสอบและเปิดใช้งาน" : "Verify & activate"}</button>{loadDesktopLicenseToken() ? <button type="button" onClick={() => void clear()}>{language === "th" ? "ล้าง License เดิม" : "Clear license"}</button> : null}</div>
-      {import.meta.env.DEV ? <button type="button" className="license-dev" onClick={() => setDevBypass(true)}>DEV PREVIEW · {language === "th" ? "เปิดดู UI โดยไม่ใช้ License" : "Preview UI without license"}</button> : null}
+      {canUseDevPreview() ? <button type="button" className="license-dev" onClick={() => setDevBypass(true)}>DEV PREVIEW · {language === "th" ? "เปิดดู UI โดยไม่ใช้ License" : "Preview UI without license"}</button> : null}
       <p className="license-footnote">{language === "th" ? "License ถูกตรวจด้วยลายเซ็นดิจิทัล, รหัสเครื่อง, วันเริ่มใช้งาน และวันหมดอายุทุกครั้งก่อนเข้าโปรแกรม" : "The app verifies the digital signature, device binding, start date and expiry before opening the POS."}</p>
     </section>
   </main>;
