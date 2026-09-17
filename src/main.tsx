@@ -6,6 +6,7 @@ import "./startup-stuck-recovery";
 import "./browser-printer-preview-unblock";
 import "./printer-first-run-fix";
 import App from "./App";
+import { LicenseGate } from "./LicenseGate";
 import "./login-security-guard";
 import "./pos-keyboard-shortcuts";
 import "./sales-pos-input-fixes";
@@ -70,7 +71,9 @@ class BootBoundary extends Component<{ children: ReactNode }, BootBoundaryState>
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <BootBoundary>
-      <App />
+      <LicenseGate>
+        <App />
+      </LicenseGate>
     </BootBoundary>
   </StrictMode>
 );
