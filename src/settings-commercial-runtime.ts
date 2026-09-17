@@ -25,7 +25,7 @@ type LicenseState = {
 
 type CloudPlan = { code: string; days: number; label_th: string; label_en: string; price_thb: number | null; active: boolean };
 type CloudPurchase = { id: string; plan_code: string; plan_days: number; price_thb: number | null; status: string; requested_at: string; decided_at?: string | null; decision_note?: string | null };
-type CloudEntitlement = { id: string; plan_code: string; cloud_code: string; status: string; starts_at: string; expires_at: string; last_backup_at?: string | null };
+type CloudEntitlement = { id: string; plan_code: string; cloud_code: string; status: string; starts_at: string; expires_at: string; last_backup_at?: string | null; expired_at?: string | null; cancelled_at?: string | null; cancellation_reason?: string | null };
 type CloudSnapshot = { id: string; snapshot_key: string; database_bytes: number; status: string; completed_at?: string | null };
 type CloudState = {
   plans: CloudPlan[];
@@ -33,10 +33,15 @@ type CloudState = {
   entitlement: CloudEntitlement | null;
   snapshots: CloudSnapshot[];
   connected: boolean;
+  cloud_readable?: boolean;
+  renewal_required?: boolean;
+  lifecycle_status?: string;
   automatic_backup: boolean;
   syncing: boolean;
   lastError?: string;
   checkedAt?: string;
+  lastOffloadedRows?: number;
+  lastOffloadedAt?: string;
 };
 
 type RuntimeWindow = Window & {
@@ -47,6 +52,14 @@ type RuntimeWindow = Window & {
 
 const runtimeWindow = () => window as RuntimeWindow;
 const UPDATE_POLICY_KEY = "cpipos.update.policy.v1";
+const FALLBACK_CLOUD_PLANS: CloudPlan[] = [7, 15, 30, 60, 90].map(days => ({
+  code: `BACKUP_${days}D`,
+  days,
+  label_th: `Cloud สำรองข้อมูล ${days} วัน`,
+  label_en: `Cloud backup ${days} days`,
+  price_thb: null,
+  active: true
+}));
 const textOf = (element: Element | null) => (element?.textContent || "").trim();
 const cell = (value: unknown) => String(value ?? "")
   .replace(/&/g, "&amp;")
@@ -70,7 +83,7 @@ function licenseStatus() {
 }
 
 function formatMoney(value: number | null | undefined) {
-  if (value == null) return "รอกำหนดราคา";
+  if (value == null) return "รอฝ่าย IT กำหนดราคา";
   return new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", maximumFractionDigits: 2 }).format(value);
 }
 
@@ -96,9 +109,10 @@ function reconcileSettingsMenu() {
     }
     if (label.includes("Backup") || label.includes("สำรอง")) {
       const cloud = runtimeWindow().__CPIPOS_CLOUD_BACKUP__;
-      if (cloud?.entitlement && cloud.connected) meta.textContent = `Cloud ${cloud.entitlement.plan_code} · ออนไลน์`;
+      if (cloud?.renewal_required) meta.textContent = "Cloud หมดอายุ · รอ IT";
+      else if (cloud?.entitlement && cloud.connected) meta.textContent = `Cloud ${cloud.entitlement.plan_code} · ออนไลน์`;
       else if (cloud?.request?.status === "pending") meta.textContent = "รอ IT ยืนยัน Cloud";
-      else meta.textContent = "Cloud สำรองข้อมูลแบบซื้อเพิ่ม";
+      else meta.textContent = "เลือกซื้อ Cloud สำรองข้อมูล";
     }
     if (label.includes("เวอร์ชัน") || label.includes("Version")) {
       const policy = runtimeWindow().__CPIPOS_CONTROL_STATE__?.update || readUpdatePolicy();
@@ -131,34 +145,51 @@ function renderBackup(host: HTMLElement) {
   const licensed = license?.mode === "licensed";
   const pending = cloud?.request?.status === "pending" ? cloud.request : null;
   const entitlement = cloud?.entitlement || null;
-  const plans = cloud?.plans || [];
+  const expiredPending = entitlement?.status === "expired_pending" || cloud?.renewal_required;
+  const plans = cloud?.plans?.length ? cloud.plans : FALLBACK_CLOUD_PLANS;
 
   const planCards = plans.map(plan => {
-    const unavailable = plan.price_thb == null || !online || !licensed || Boolean(pending) || Boolean(cloud?.syncing);
+    const noPrice = plan.price_thb == null;
+    const unavailable = noPrice || !online || !licensed || Boolean(pending) || Boolean(entitlement) || Boolean(cloud?.syncing);
+    const note = !licensed
+      ? "เปิดใช้งาน License Desktop ก่อน แล้วจึงส่งคำขอซื้อไปยัง IT"
+      : !online
+        ? "เชื่อมต่ออินเทอร์เน็ตเพื่อส่งคำขอซื้อ"
+        : noPrice
+          ? "รอฝ่าย IT กำหนดราคาแพ็กเกจ"
+          : "คลิกเพื่อส่งคำขอซื้อไปยังระบบหลังบ้าน IT";
     return `<button class="cloud-plan-card" data-plan="${cell(plan.code)}" ${unavailable ? "disabled" : ""}>
+      <span class="cloud-plan-icon">☁</span>
       <span class="cloud-days">${plan.days} วัน</span>
       <strong>${cell(plan.label_th)}</strong>
       <em>${cell(formatMoney(plan.price_thb))}</em>
-      <small>${plan.price_thb == null ? "รอฝ่ายบริษัทกำหนดราคา" : "กดซื้อเพื่อส่งคำขอไปยังฝ่าย IT"}</small>
+      <small>${cell(note)}</small>
     </button>`;
   }).join("");
 
+  const lifecycle = expiredPending
+    ? `<div class="cloud-expired-card"><div><span>!</span><strong>Cloud หมดอายุ · รอฝ่าย IT ตัดสินใจ</strong></div><p>หยุด Backup ใหม่ชั่วคราว แต่ข้อมูลเดิมบน Cloud ยังเปิดอ่านได้เมื่อออนไลน์ ฝ่าย IT จะเลือก “ต่อ Cloud” หรือ “ยกเลิก Cloud” หากยกเลิก ข้อมูล Cloud ของ License เครื่องนี้จะถูกลบทันที</p><span>หมดอายุ: ${cell(formatDate(entitlement?.expires_at))}</span></div>`
+    : entitlement
+      ? `<div class="cloud-active-card">
+        <div><span class="cloud-live-dot">●</span><strong>Cloud เชื่อมต่อแล้ว</strong></div>
+        <code>${cell(entitlement.cloud_code)}</code>
+        <span>แพ็กเกจ: ${cell(entitlement.plan_code)}</span>
+        <span>ใช้งานถึง: ${cell(formatDate(entitlement.expires_at))}</span>
+        <span>สำรองล่าสุด: ${cell(formatDate(entitlement.last_backup_at))}</span>
+        <span>เมื่อฐานข้อมูลใหญ่หรือพื้นที่ดิสก์ต่ำ ระบบจะส่ง Snapshot ไป Cloud ตรวจสอบความครบถ้วน แล้วล้างเฉพาะข้อมูลประวัติที่ย้ายสำเร็จออกจากเครื่องโดยอัตโนมัติ</span>
+        ${cloud?.lastOffloadedAt ? `<span>ย้ายออกจากเครื่องล่าสุด: ${cell(formatDate(cloud.lastOffloadedAt))} · ${Number(cloud.lastOffloadedRows || 0).toLocaleString("th-TH")} รายการ</span>` : ""}
+        <button class="commercial-cloud-now" data-action="backup-now" ${!online || cloud?.syncing ? "disabled" : ""}>${cloud?.syncing ? "กำลังสำรองข้อมูล..." : "สำรองข้อมูลตอนนี้"}</button>
+      </div>`
+      : "";
+
   host.innerHTML = `<div class="commercial-card cloud-backup-card">
-    <span class="commercial-kicker">CLOUD BACKUP / RESTORE</span>
-    ${entitlement ? `<div class="cloud-active-card">
-      <div><span class="cloud-live-dot">●</span><strong>Cloud เชื่อมต่อแล้ว</strong></div>
-      <code>${cell(entitlement.cloud_code)}</code>
-      <span>แพ็กเกจ: ${cell(entitlement.plan_code)}</span>
-      <span>ใช้งานถึง: ${cell(formatDate(entitlement.expires_at))}</span>
-      <span>สำรองล่าสุด: ${cell(formatDate(entitlement.last_backup_at))}</span>
-      <span>ระบบสำรองข้อมูลอัตโนมัติเมื่อออนไลน์ และเร่งสำรองเมื่อฐานข้อมูลโตหรือพื้นที่เครื่องเหลือน้อย</span>
-      <button class="commercial-cloud-now" data-action="backup-now" ${!online || cloud?.syncing ? "disabled" : ""}>${cloud?.syncing ? "กำลังสำรองข้อมูล..." : "สำรองข้อมูลตอนนี้"}</button>
-    </div>` : ""}
-    ${pending ? `<div class="cloud-pending-card"><strong>รอฝ่าย IT ยืนยันการซื้อ Cloud</strong><span>${pending.plan_days} วัน · ${cell(formatMoney(pending.price_thb))}</span><small>คำขอถูกล็อกไว้แล้ว เมื่อ IT ยืนยัน ระบบจะสร้าง Cloud Code และเชื่อมต่อเครื่องนี้ให้อัตโนมัติเมื่อมีอินเทอร์เน็ต</small></div>` : ""}
-    ${!entitlement && !pending ? `<h3>เลือกแพ็กเกจ Cloud สำรองข้อมูล</h3><p>บริการนี้เป็นส่วนเสริมแบบชำระเงิน ข้อมูลจะสำรองไปยังระบบ Cloud ของบริษัทหลังจากฝ่าย IT ยืนยันสิทธิ์เท่านั้น</p><div class="cloud-plan-grid">${planCards || `<div class="commercial-status">${licensed ? (online ? "กำลังโหลดแพ็กเกจจากระบบ IT..." : "ออฟไลน์ — เชื่อมต่ออินเทอร์เน็ตเพื่อดูแพ็กเกจ") : "ต้องเปิดใช้งาน License Desktop ก่อนซื้อ Cloud"}</div>`}</div>` : ""}
+    <div class="cloud-hero"><span class="cloud-hero-icon">☁</span><div><span class="commercial-kicker">CLOUD BACKUP / RESTORE</span><h3>Cloud สำรองข้อมูล CpIPOS Desktop</h3><p>เลือกแพ็กเกจ Cloud 7 / 15 / 30 / 60 / 90 วัน เมื่อกดซื้อระบบจะส่งคำขอไปยังฝ่าย IT และเชื่อมต่ออัตโนมัติหลังอนุมัติ</p></div></div>
+    ${lifecycle}
+    ${pending ? `<div class="cloud-pending-card"><strong>รอฝ่าย IT ยืนยันการซื้อ Cloud</strong><span>${pending.plan_days} วัน · ${cell(formatMoney(pending.price_thb))}</span><small>คำขอถูกล็อกไว้แล้ว เมื่อ IT ยืนยัน ระบบจะสร้าง Cloud Code และเชื่อมต่อเครื่องนี้อัตโนมัติเมื่อมีอินเทอร์เน็ต</small></div>` : ""}
+    ${!entitlement && !pending ? `<div class="cloud-plan-grid">${planCards}</div>` : ""}
     ${entitlement ? `<div class="cloud-snapshots"><strong>Cloud Archive ล่าสุด</strong>${(cloud?.snapshots || []).slice(0, 5).map(item => `<span>${cell(formatDate(item.completed_at))} · ${cell(item.status)} · ${Math.max(0, Number(item.database_bytes || 0) / 1024 / 1024).toFixed(1)} MB</span>`).join("") || "<span>ยังไม่มี Snapshot</span>"}</div>` : ""}
     ${cloud?.lastError ? `<p class="commercial-status cloud-error">${cell(cloud.lastError)}</p>` : ""}
-    <div class="cloud-connection-line"><span>${online ? "● ONLINE" : "○ OFFLINE"}</span><span>${licensed ? cell(licenseStatus()) : "ต้องเปิด License"}</span><span>${entitlement ? "AUTO BACKUP ON" : "CLOUD NOT ACTIVE"}</span></div>
+    <div class="cloud-connection-line"><span>${online ? "● ONLINE" : "○ OFFLINE"}</span><span>${licensed ? cell(licenseStatus()) : "ต้องเปิด License"}</span><span>${expiredPending ? "READ ONLY · WAIT IT" : entitlement ? "AUTO BACKUP ON" : "CLOUD NOT ACTIVE"}</span></div>
   </div>`;
 
   host.querySelectorAll<HTMLButtonElement>("[data-plan]").forEach(button => {
@@ -239,7 +270,7 @@ function enhanceModal() {
   if (!section) return;
   hideLegacyFields(section, body);
   const cloud = runtimeWindow().__CPIPOS_CLOUD_BACKUP__;
-  const stateKey = `${section}:${navigator.onLine}:${runtimeWindow().__CPIPOS_LICENSE_RUNTIME__?.mode || "unknown"}:${runtimeWindow().__CPIPOS_CONTROL_STATE__?.update?.latest_version || ""}:${cloud?.request?.status || ""}:${cloud?.entitlement?.cloud_code || ""}:${cloud?.syncing ? "sync" : "idle"}:${cloud?.snapshots?.[0]?.id || ""}:${cloud?.checkedAt || ""}`;
+  const stateKey = `${section}:${navigator.onLine}:${runtimeWindow().__CPIPOS_LICENSE_RUNTIME__?.mode || "unknown"}:${runtimeWindow().__CPIPOS_CONTROL_STATE__?.update?.latest_version || ""}:${cloud?.request?.status || ""}:${cloud?.entitlement?.cloud_code || ""}:${cloud?.lifecycle_status || ""}:${cloud?.syncing ? "sync" : "idle"}:${cloud?.snapshots?.[0]?.id || ""}:${cloud?.checkedAt || ""}:${cloud?.lastOffloadedAt || ""}`;
   if (body.dataset.commercialEnhanced === stateKey) return;
   body.dataset.commercialEnhanced = stateKey;
   body.querySelector(".commercial-settings-extension")?.remove();
@@ -266,6 +297,7 @@ function startRuntime() {
   window.addEventListener("cpipos:license-entitlements", refresh);
   window.addEventListener("cpipos:update-policy", refresh);
   window.addEventListener("cpipos:cloud-state", refresh);
+  window.addEventListener("cpipos:cloud-archive-updated", refresh);
   const observer = new MutationObserver(refresh);
   observer.observe(document.body, { childList: true, subtree: true });
 }
