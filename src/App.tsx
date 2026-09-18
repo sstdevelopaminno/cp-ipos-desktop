@@ -9,9 +9,10 @@ import { AppSidebar } from "./AppSidebar";
 import { SalesHistoryScreenV2 } from "./SalesHistoryScreen";
 import { ProductsScreenV2 } from "./ProductsScreen";
 import { ReportsDashboardScreen } from "./ReportsDashboardScreen";
+import { TableManagementScreen } from "./TableManagementScreen";
 import "./inventory-ui.css";
 
-type View = "sales" | "products" | "salesHistory" | "reports" | "employees" | "settings";
+type View = "sales" | "tables" | "products" | "salesHistory" | "reports" | "employees" | "settings";
 const STAFF_ALLOWED_VIEWS = new Set<View>(["sales", "salesHistory"]);
 const canUseAdminViews = (staff: Staff | null) => staff?.role === "owner" || staff?.role === "manager";
 const canAccessView = (staff: Staff | null, view: View) => canUseAdminViews(staff) || STAFF_ALLOWED_VIEWS.has(view);
@@ -204,6 +205,7 @@ export default function App() {
 
   const nav = [
     { id: "sales", label: t(language, "sales"), icon: "sale" as const },
+    { id: "tables", label: language === "th" ? "จัดการโต๊ะ" : "Tables", icon: "tables" as const },
     { id: "products", label: t(language, "products"), icon: "stock" as const },
     { id: "salesHistory", label: t(language, "history"), icon: "history" as const },
     { id: "reports", label: t(language, "reports"), icon: "report" as const },
@@ -231,6 +233,7 @@ export default function App() {
       </header>
       <div className={`view-body ${activeView === "sales" ? "sales-view" : ""} ${activeView === "reports" ? "reports-view" : ""}`}>
         {activeView === "sales" && <RetailSalesScreen repo={repo} staff={staff} shift={shift} settings={settings} products={products} language={language} refreshProducts={() => refreshProducts(repo)} />}
+        {activeView === "tables" && <TableManagementScreen language={language} />}
         {activeView === "products" && <ProductsScreenV2 repo={repo} staff={staff} products={products} language={language} refreshProducts={() => refreshProducts(repo)} requestStockNotification={requestStockNotification} />}
         {activeView === "salesHistory" && <SalesHistoryScreenV2 repo={repo} staff={staff} shift={shift} settings={settings} language={language} />}
         {activeView === "reports" && <ReportsScreen repo={repo} language={language} />}
