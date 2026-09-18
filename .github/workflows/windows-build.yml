@@ -17,11 +17,14 @@ on:
           - beta
           - customer-test
   push:
+    branches:
+      - dev/ui-system
     tags:
       - "v*"
 
 jobs:
   build:
+    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/v') || github.event.head_commit.message == 'release: build CpIPOS Desktop v0.3.0'
     permissions:
       contents: write
     strategy:
@@ -35,7 +38,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
+
       - name: Resolve release metadata
         shell: pwsh
         run: |
@@ -49,8 +56,19 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($channel)) { $channel = "stable" }
           "CPIPOS_RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
           "CPIPOS_RELEASE_CHANNEL=$channel" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Frontend stability build
+        run: npm run build
+
+      - name: SQLite transaction smoke test
+        run: python scripts/test_sqlite_migrations.py
+
+      - name: Rust stability check
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
       - name: Build CpIPOS Desktop installers
         uses: tauri-apps/tauri-action@v0
         env:
@@ -62,9 +80,16 @@ jobs:
             CpIPOS Desktop Windows installer
 
             Channel: ${{ env.CPIPOS_RELEASE_CHANNEL }}
-            Offline-first release. Production activation requires a CUTTING POINT TECH IT-signed license bound to approved device fingerprints.
+
+            Offline-first POS release for Windows.
+            Includes signed offline License enforcement, 7-day trial lock, licensed sales-mode entitlements,
+            MDM heartbeat/telemetry, Cloud Backup integration, receipt printing, cash drawer support,
+            PromptPay/QR payment, grocery barcode workflow, takeaway mode and dine-in/table mode.
+
+            Production activation requires a CUTTING POINT TECH IT-signed License bound to approved device fingerprints.
           releaseDraft: false
           prerelease: ${{ env.CPIPOS_RELEASE_CHANNEL != 'stable' }}
+
       - name: Upload installer artifacts
         uses: actions/upload-artifact@v4
         if: always()
