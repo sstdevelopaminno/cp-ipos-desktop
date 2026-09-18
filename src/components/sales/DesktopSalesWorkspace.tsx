@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { PosRepository } from "../../data/repository";
 import type { AppSettings, CartLine, Language, Product, Receipt, Shift, Staff } from "../../domain/types";
 import { productName } from "../../i18n";
+import { listSalesTables, SALES_TABLES_EVENT, type SalesTable } from "../../sales-tables";
 import { useDesktopLicense } from "../license/LicenseGate";
 import "./desktop-sales-workspace.css";
 
@@ -11,7 +12,6 @@ type TableBills = Record<string, TableBill>;
 type PaymentStep = "review" | "cash" | "transfer" | null;
 type NoticeKind = "ok" | "warn" | "error";
 
-const TABLE_CODES = Array.from({ length: 20 }, (_, index) => `T${String(index + 1).padStart(2, "0")}`);
 const TABLE_BILLS_KEY = "cpipos.desktop.table-bills.v1";
 const GROCERY_CART_KEY = "cpipos.desktop.grocery-cart.v1";
 const TAKEAWAY_CART_KEY = "cpipos.desktop.takeaway-cart.v1";
@@ -116,6 +116,7 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
   const [takeawayCart, setTakeawayCart] = useState<CartLine[]>(() => readJson<CartLine[]>(TAKEAWAY_CART_KEY, []));
   const [tableBills, setTableBills] = useState<TableBills>(() => readJson<TableBills>(TABLE_BILLS_KEY, {}));
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
+  const [salesTables, setSalesTables] = useState<SalesTable[]>(() => listSalesTables().filter((table) => table.active));
   const [category, setCategory] = useState("all");
   const [query, setQuery] = useState("");
   const [barcode, setBarcode] = useState("");
@@ -133,6 +134,11 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
   const [clock, setClock] = useState(() => new Date());
 
   useEffect(() => { const timer = window.setInterval(() => setClock(new Date()), 1000); return () => window.clearInterval(timer); }, []);
+  useEffect(() => {
+    const refreshTables = () => setSalesTables(listSalesTables().filter((table) => table.active));
+    window.addEventListener(SALES_TABLES_EVENT, refreshTables);
+    return () => window.removeEventListener(SALES_TABLES_EVENT, refreshTables);
+  }, []);
   useEffect(() => {
     if (!fixedMode) return;
     setMode(fixedMode);
@@ -307,16 +313,16 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
 
   const renderTables = () => mode === "dine_in" && !selectedTable ? <section className="table-browser-panel">
     <div className="table-browser-toolbar"><div className="table-tabs"><button className="active">{th ? "รายการโต๊ะ" : "Table list"}</button><span>{th ? "ทั้งหมด" : "All"}</span></div></div>
-    <div className="table-grid">{TABLE_CODES.map((tableCode) => {
-      const bill = tableBills[tableCode];
+    <div className="table-grid">{salesTables.map((table) => {
+      const bill = tableBills[table.code];
       const amount = bill?.items.reduce((sum, line) => sum + line.quantity * line.price, 0) ?? 0;
-      return <button key={tableCode} className={bill ? "occupied" : "available"} onClick={() => openTable(tableCode)}><strong>{tableCode}</strong><span>{bill ? (th ? "มีบิล" : "Open") : (th ? "ว่าง" : "Available")}</span><small>{bill ? `${bill.items.length} ${th ? "รายการ" : "items"} · ${money(amount)}` : (th ? "เปิดบิล" : "Open bill")}</small></button>;
+      return <button key={table.id} className={bill ? "occupied" : "available"} onClick={() => openTable(table.code)}><strong>{table.code}</strong><span>{table.name}</span><small>{bill ? `${th ? "มีบิล" : "Open"} · ${bill.items.length} ${th ? "รายการ" : "items"} · ${money(amount)}` : (th ? "ว่าง · เปิดบิล" : "Available · Open bill")}</small></button>;
     })}</div>
   </section> : null;
 
-  const renderCatalog = () => mode === "grocery" || mode === "takeaway" || selectedTable ? <section className={`product-browser ${mode === "dine_in" ? "product-browser--dine-in" : ""}`}>
-    {mode !== "dine_in" ? <div className="catalog-tools"><button className="orange-chip">{th ? "เครื่องดื่ม" : "Products"}</button><label className="search-field"><Icon name="search"/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={th ? "ค้นหาสินค้า" : "Search products"}/></label><label className="scan-field"><input ref={scanRef} value={barcode} onChange={(event) => setBarcode(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void scanBarcode(); }} placeholder={th ? "สแกนบาร์โค้ด" : "Scan barcode"}/><button onClick={() => void scanBarcode()}>{th ? "เพิ่ม" : "Add"}</button></label></div> : null}
-    <div className={`category-row ${mode === "dine_in" ? "category-row--dine-in-top" : ""}`}>{categories.map((item) => <button key={item.id} className={category === item.id ? "active" : ""} onClick={() => setCategory(item.id)}>{item.name}</button>)}</div>
+  const renderCatalog = () => mode === "grocery" || mode === "takeaway" || selectedTable ? <section className={`product-browser ${mode !== "grocery" ? "product-browser--restaurant" : ""}`}>
+    {mode === "grocery" ? <div className="catalog-tools"><button className="orange-chip">{th ? "เครื่องดื่ม" : "Products"}</button><label className="search-field"><Icon name="search"/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={th ? "ค้นหาสินค้า" : "Search products"}/></label><label className="scan-field"><input ref={scanRef} value={barcode} onChange={(event) => setBarcode(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void scanBarcode(); }} placeholder={th ? "สแกนบาร์โค้ด" : "Scan barcode"}/><button onClick={() => void scanBarcode()}>{th ? "เพิ่ม" : "Add"}</button></label></div> : null}
+    <div className={`category-row ${mode !== "grocery" ? "category-row--restaurant-top" : ""}`}>{categories.map((item) => <button key={item.id} className={category === item.id ? "active" : ""} onClick={() => setCategory(item.id)}>{item.name}</button>)}</div>
     <div className="desktop-product-grid">{visibleProducts.map((product) => <button key={product.id} className="desktop-product-card" disabled={product.stockQuantity <= 0} onClick={() => addProduct(product)}><span className="product-image">{product.imagePath ? <img src={product.imagePath} alt=""/> : productName(language, product).slice(0, 1)}</span><strong>{productName(language, product)}</strong><small>{product.barcode || product.productCode}</small><em>{th ? "คงเหลือ" : "Stock"}: {product.stockQuantity}</em><b>{money(product.price)}</b></button>)}</div>
   </section> : null;
 
@@ -340,7 +346,7 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
 
     {cancelBillOpen ? <Modal className="cancel-bill-modal" onClose={() => !busy && setCancelBillOpen(false)}><header className="desktop-pos-modal__header"><div><h2>{th ? "ยกเลิกบิล" : "Cancel bill"}</h2><p>{th ? "ต้องยืนยันด้วย PIN ผู้จัดการหรือเจ้าของร้าน" : "Owner or manager PIN is required."}</p></div><button className="icon-close" onClick={() => setCancelBillOpen(false)}>×</button></header><label>PIN<input type="password" value={cancelPin} onChange={(event) => setCancelPin(event.target.value)}/></label><label>{th ? "เหตุผล" : "Reason"}<input value={cancelReason} onChange={(event) => setCancelReason(event.target.value)}/></label>{cancelError ? <p className="form-error">{cancelError}</p> : null}<div className="modal-actions"><button onClick={() => setCancelBillOpen(false)}>{th ? "กลับ" : "Back"}</button><button className="cancel-action" disabled={busy || !cancelPin || !cancelReason.trim()} onClick={() => void cancelCurrentBill()}>{th ? "ยืนยันยกเลิกบิล" : "Confirm cancellation"}</button></div></Modal> : null}
 
-    {moveOpen && selectedTable ? <Modal className="move-table-modal" onClose={() => setMoveOpen(false)}><header className="desktop-pos-modal__header"><div><h2>{th ? `ย้ายโต๊ะ ${selectedTable}` : `Move ${selectedTable}`}</h2><p>{th ? "เลือกโต๊ะว่างปลายทาง" : "Choose an available destination table."}</p></div><button className="icon-close" onClick={() => setMoveOpen(false)}>×</button></header><div className="move-table-grid">{TABLE_CODES.filter((code) => code !== selectedTable).map((code) => <button key={code} disabled={Boolean(tableBills[code])} onClick={() => moveTable(code)}><strong>{code}</strong><span>{tableBills[code] ? (th ? "มีบิล" : "Occupied") : (th ? "ว่าง" : "Available")}</span></button>)}</div></Modal> : null}
+    {moveOpen && selectedTable ? <Modal className="move-table-modal" onClose={() => setMoveOpen(false)}><header className="desktop-pos-modal__header"><div><h2>{th ? `ย้ายโต๊ะ ${selectedTable}` : `Move ${selectedTable}`}</h2><p>{th ? "เลือกโต๊ะว่างปลายทางจากรายการโต๊ะที่เปิดใช้งาน" : "Choose an available active table."}</p></div><button className="icon-close" onClick={() => setMoveOpen(false)}>×</button></header><div className="move-table-grid">{salesTables.filter((table) => table.code !== selectedTable).map((table) => <button key={table.id} disabled={Boolean(tableBills[table.code])} onClick={() => moveTable(table.code)}><strong>{table.code}</strong><span>{tableBills[table.code] ? (th ? "มีบิล" : "Occupied") : table.name}</span></button>)}</div></Modal> : null}
 
     {receipt ? <Modal className="receipt-success-modal" onClose={() => setReceipt(null)}><header className="desktop-pos-modal__header"><div><h2>{th ? "สรุปชำระเงินสำเร็จ" : "Payment complete"}</h2><p>{th ? "บันทึกการขายเรียบร้อย" : "Sale saved successfully."}</p></div><button className="close-text" onClick={() => setReceipt(null)}>{th ? "ปิดหน้าต่าง" : "Close"}</button></header><article className="receipt-preview"><img src="/icon.png" alt="CpIPOS"/><h3>{receipt.settings.storeName}</h3><p>{receipt.settings.branchName}</p><div className="receipt-meta"><span>{th ? "ผู้ขาย" : "Seller"}</span><strong>{staff.displayName}</strong><span>{th ? "เลขที่บิล" : "Receipt"}</span><strong>{receipt.receiptNo}</strong><span>{th ? "วันที่" : "Date"}</span><strong>{new Date(receipt.createdAt).toLocaleString(th ? "th-TH" : "en-US")}</strong></div><div className="receipt-lines">{receipt.items.map((item) => <div key={item.id || item.name}><span>{item.name} × {item.quantity}</span><strong>{money(item.lineTotal)}</strong></div>)}</div><div className="receipt-grand"><span>{th ? "ยอดที่ต้องชำระ" : "Total"}</span><strong>{money(receipt.total)}</strong></div><div className="receipt-lines"><div><span>{th ? "ชำระเงิน" : "Payment"}</span><strong>{receipt.paymentMethod === "cash" ? (th ? "เงินสด" : "Cash") : (th ? "โอน / QR" : "Transfer / QR")}</strong></div>{receipt.paymentMethod === "cash" ? <><div><span>{th ? "รับเงินจากลูกค้า" : "Received"}</span><strong>{money(receipt.paid)}</strong></div><div><span>{th ? "เงินทอน" : "Change"}</span><strong>{money(receipt.changeAmount)}</strong></div></> : null}</div><p className="receipt-footer">{receipt.settings.receiptFooter}</p></article><div className="receipt-actions"><button onClick={() => printDocument(receiptHtml(receipt))}>{th ? "พิมพ์ใบเสร็จ" : "Print receipt"}</button><button className="checkout-button" onClick={() => setReceipt(null)}>{th ? "เริ่มบิลใหม่" : "New sale"}</button></div></Modal> : null}
   </section>;
