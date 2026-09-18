@@ -226,6 +226,13 @@ export function LicenseGate({ children }: { children: ReactNode }) {
       deviceCode: state.deviceCode,
       payload: state.payload ? { licenseId: state.payload.licenseId, expiresAt: state.payload.expiresAt } : undefined
     };
+    window.dispatchEvent(new CustomEvent("cpipos:license-entitlements", {
+      detail: {
+        mode: state.mode,
+        features: state.payload?.features || [],
+        licenseId: state.payload?.licenseId || null
+      }
+    }));
   }, [state.mode, state.token, state.deviceCode, state.payload]);
 
   useEffect(() => {
