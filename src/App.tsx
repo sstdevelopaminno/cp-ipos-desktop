@@ -114,6 +114,7 @@ export default function App() {
   const [screenProfile, setScreenProfile] = useState<ScreenProfile>(() => detectScreenProfile());
   const [closeShift, setCloseShift] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
+  const [salesModeLabel, setSalesModeLabel] = useState("ร้านชำ / ค้าปลีก");
   const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
     const saved = localStorage.getItem("cpipos.nav.collapsed");
     return saved === null ? detectScreenProfile().compactNav : saved === "1";
@@ -143,6 +144,14 @@ export default function App() {
   }, []);
   useEffect(() => { const id = window.setInterval(() => setSplashStep(s => s >= 3 ? s : Math.min(2, s + 1)), 260); return () => window.clearInterval(id); }, []);
   useEffect(() => { localStorage.setItem("cpipos.nav.collapsed", navCollapsed ? "1" : "0"); }, [navCollapsed]);
+  useEffect(() => {
+    const onModeChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ label?: string }>).detail;
+      if (detail?.label) setSalesModeLabel(detail.label);
+    };
+    window.addEventListener("cpipos:sales-mode-changed", onModeChanged);
+    return () => window.removeEventListener("cpipos:sales-mode-changed", onModeChanged);
+  }, []);
   useEffect(() => { if (staff && !canAccessView(staff, view)) setView("sales"); }, [staff, view]);
   useEffect(() => {
     let alive = true;
@@ -212,7 +221,12 @@ export default function App() {
     <AppSidebar collapsed={effectiveNavCollapsed} compactLocked={screenProfile.compactNav} active={activeView} items={visibleNav} onToggle={() => { if (!screenProfile.compactNav) setNavCollapsed(v => !v); }} onSelect={id => { const next = id as View; if (canAccessView(staff, next)) setView(next); }} onCloseShift={() => setCloseShift(true)} onLogout={() => setLogoutOpen(true)} />
     <section className="workspace">
       <header className="topbar">
-        <div><strong>CpIPOS</strong><span>{settings.storeName} / {settings.branchName}</span></div>
+        <div className="topbar-brand"><strong>CpIPOS</strong><span>{settings.storeName} / {settings.branchName}</span></div>
+        {activeView === "sales" && <button className="topbar-mode-switch" onClick={() => window.dispatchEvent(new CustomEvent("cpipos:open-sales-mode-picker"))} title="เลือกหรือสลับโหมดการขาย">
+          <span className="topbar-mode-switch__icon">⌂</span>
+          <span><small>เลือก / สลับโหมด</small><strong>{salesModeLabel}</strong></span>
+          <b>⌄</b>
+        </button>}
         <div className="topbar-meta"><span>{t(language, "cashier")}: {staff.displayName}</span><span>{t(language, "role")}: {staff.role}</span><span>{t(language, "currentShift")}: {shift.id.slice(0, 8)}</span><span>วันที่/เวลา: {clock}</span><button onClick={() => setCloseShift(true)}>{t(language, "closeShift")}</button></div>
       </header>
       <div className={`view-body ${activeView === "sales" ? "sales-view" : ""} ${activeView === "reports" ? "reports-view" : ""}`}>
