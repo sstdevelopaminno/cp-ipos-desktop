@@ -9,9 +9,9 @@ type PatchableDatabaseCtor = typeof Database & {
   __cpiposStartupPatched?: boolean;
 };
 
-const STARTUP_GUARD_MS = 12_000;
-const DB_LOAD_TIMEOUT_MS = 20_000;
-const DB_QUERY_TIMEOUT_MS = 30_000;
+const STARTUP_GUARD_MS = 35_000;
+const DB_LOAD_TIMEOUT_MS = 60_000;
+const DB_QUERY_TIMEOUT_MS = 60_000;
 const STARTUP_RECOVERY_KEY = "cpipos.startup.recoveryShown.v1";
 const FAST_PRINTER_MODE_KEY = "cpipos.printer.fastFirstSetup.v1";
 
@@ -111,7 +111,7 @@ const showRecoveryPanel = () => {
 
   const panel = document.createElement("div");
   panel.className = "startup-recovery-panel";
-  panel.innerHTML = `<strong>โปรแกรมใช้เวลาเปิดฐานข้อมูลนานกว่าปกติ</strong><small>ระบบจะไม่ปล่อยให้ค้างเงียบ ๆ ให้ลองเปิดใหม่ หรือซ่อม session/ตั้งค่าเครื่องพิมพ์รอบแรกโดยไม่ลบข้อมูลขายและไม่ข้าม License</small><p data-startup-recovery-status>พร้อมกู้คืนการเริ่มต้น</p><div><button type="button" data-reload>ลองเปิดใหม่</button><button type="button" data-repair>ซ่อมแล้วเปิดใหม่</button></div>`;
+  panel.innerHTML = `<strong>โปรแกรมใช้เวลาเปิดฐานข้อมูลนานกว่าปกติ</strong><small>ระบบจะรอฐานข้อมูลได้นานขึ้นสำหรับเครื่อง Windows ช้า และ MDM จะไม่เปิดฐานข้อมูลเองระหว่างเริ่มระบบ</small><p data-startup-recovery-status>พร้อมกู้คืนการเริ่มต้น</p><div><button type="button" data-reload>ลองเปิดใหม่</button><button type="button" data-repair>ซ่อมแล้วเปิดใหม่</button></div>`;
   panel.querySelector("[data-reload]")?.addEventListener("click", () => window.location.reload());
   panel.querySelector("[data-repair]")?.addEventListener("click", () => void repairStartupState());
   card.appendChild(panel);
