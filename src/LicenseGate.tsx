@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import Database from "@tauri-apps/plugin-sql";
 import "./license-gate.css";
 
@@ -7,6 +8,8 @@ const CLOCK_ROLLBACK_TOLERANCE_MS = 6 * 60 * 60 * 1000;
 const PRODUCT_ID = "CPIPOS-DESKTOP";
 const ISSUER = "CUTTING-POINT-TECH-IT";
 const PUBLIC_KEY_SPKI_BASE64 = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEs9PUGIOQlWxNNFA23/Rfcqk1yRCZN2Jq09f3qL8633xktajPKMpOY580I1MwxW5ocb826zeuthot/7FcXJASVQ==";
+const LINE_CONTACT_URL = "https://lin.ee/zlvGPLz";
+const SALES_PHONE = "0985460355";
 
 type LicensePayload = {
   v: 1;
@@ -96,6 +99,24 @@ async function sha256Code(value: string) {
   return `CP-${hex.slice(0, 5)}-${hex.slice(5, 10)}-${hex.slice(10, 15)}-${hex.slice(15, 20)}`;
 }
 
+async function readNativeTrialStartedAt() {
+  try {
+    const value = await invoke<number>("get_or_create_trial_started_at_ms");
+    if (!Number.isFinite(value) || value <= 0) return null;
+    return new Date(value).toISOString();
+  } catch {
+    return null;
+  }
+}
+
+function earliestIso(...values: Array<string | null | undefined>) {
+  const valid = values
+    .map(value => ({ value, time: value ? Date.parse(value) : NaN }))
+    .filter((entry): entry is { value: string; time: number } => Boolean(entry.value) && Number.isFinite(entry.time))
+    .sort((a, b) => a.time - b.time);
+  return valid[0]?.value || null;
+}
+
 async function openRuntimeDb() {
   const db = await Database.load("sqlite:cpipos.db");
   await db.execute(`CREATE TABLE IF NOT EXISTS cpipos_license_runtime (
@@ -111,15 +132,22 @@ async function openRuntimeDb() {
 
 async function loadRuntime(): Promise<{ db: Database | null; row: RuntimeRow; deviceCode: string }> {
   const now = new Date().toISOString();
+  const nativeTrialStartedAt = await readNativeTrialStartedAt();
   try {
     const db = await openRuntimeDb();
     let rows = await db.select<RuntimeRow[]>("SELECT install_id, trial_started_at, last_seen_at, token FROM cpipos_license_runtime WHERE id = 1");
     if (!rows.length) {
       const installId = crypto.randomUUID();
-      await db.execute("INSERT INTO cpipos_license_runtime(id, install_id, trial_started_at, last_seen_at, token) VALUES(1, $1, $2, $2, '')", [installId, now]);
-      rows = [{ install_id: installId, trial_started_at: now, last_seen_at: now, token: "" }];
+      const trialStartedAt = earliestIso(nativeTrialStartedAt, now) || now;
+      await db.execute("INSERT INTO cpipos_license_runtime(id, install_id, trial_started_at, last_seen_at, token) VALUES(1, $1, $2, $3, '')", [installId, trialStartedAt, now]);
+      rows = [{ install_id: installId, trial_started_at: trialStartedAt, last_seen_at: now, token: "" }];
     }
     const row = rows[0];
+    const anchoredTrialStartedAt = earliestIso(row.trial_started_at, nativeTrialStartedAt) || row.trial_started_at;
+    if (anchoredTrialStartedAt !== row.trial_started_at) {
+      await db.execute("UPDATE cpipos_license_runtime SET trial_started_at = $1, updated_at = CURRENT_TIMESTAMP WHERE id = 1", [anchoredTrialStartedAt]);
+      row.trial_started_at = anchoredTrialStartedAt;
+    }
     return { db, row, deviceCode: await sha256Code(`${PRODUCT_ID}|${row.install_id}`) };
   } catch {
     const installKey = "cpipos.license.install.v1";
@@ -128,7 +156,7 @@ async function loadRuntime(): Promise<{ db: Database | null; row: RuntimeRow; de
     const tokenKey = "cpipos.license.token.v1";
     const installId = localStorage.getItem(installKey) || crypto.randomUUID();
     localStorage.setItem(installKey, installId);
-    const trialStarted = localStorage.getItem(startKey) || now;
+    const trialStarted = earliestIso(localStorage.getItem(startKey), nativeTrialStartedAt, now) || now;
     localStorage.setItem(startKey, trialStarted);
     const lastSeen = localStorage.getItem(seenKey) || now;
     return {
@@ -277,12 +305,13 @@ export function LicenseGate({ children }: { children: ReactNode }) {
   const locked = state.mode === "locked" || state.mode === "error";
   return <>
     {!locked && children}
-    {locked && <main className="license-lock-page"><section className="license-lock-card"><img src="/icon.png" alt="CpIPOS" /><span className="license-lock-pill">OFFLINE LICENSE REQUIRED</span><h1>CpIPOS ถูกล็อกการใช้งานชั่วคราว</h1><p>{state.message || "กรุณาใส่ License ที่ออกโดย CUTTING POINT TECH IT"}</p><div className="license-device-box"><span>รหัสเครื่องสำหรับส่งให้ IT</span><strong>{state.deviceCode}</strong><button onClick={() => void copyDevice()}>{copyText}</button></div><button className="license-primary" onClick={() => setOpen(true)}>ใส่ License เพื่อเปิดใช้งาน</button></section></main>}
+    {locked && <main className="license-lock-page"><section className="license-lock-card"><img src="/icon.png" alt="CpIPOS" /><span className="license-lock-pill">TRIAL ENDED · LICENSE REQUIRED</span><h1>ครบกำหนดทดลองใช้งาน CpIPOS Desktop</h1><p>{state.message || "กรุณาซื้อโปรแกรมและใส่ลายเส้น License ที่ออกโดยฝ่าย IT"}</p><div className="license-lock-contact"><img src="/line-contact-qr.svg" alt="LINE ซื้อโปรแกรม CpIPOS" /><div><strong>ติดต่อซื้อโปรแกรม</strong><span>โทร {SALES_PHONE}</span><span>LINE: สแกน QR Code</span></div></div><div className="license-device-box"><span>รหัสเครื่องสำหรับส่งให้ IT</span><strong>{state.deviceCode}</strong><button onClick={() => void copyDevice()}>{copyText}</button></div><button className="license-primary" onClick={() => setOpen(true)}>ซื้อ / ใส่ลายเส้น License</button></section></main>}
 
     {!locked && <button className={`license-floating ${state.mode}`} onClick={() => setOpen(true)} title="สถานะ License"><span>{state.mode === "licensed" ? "✓" : "T"}</span><strong>{statusLabel}</strong></button>}
 
     {open && <div className="license-modal-backdrop"><section className="license-modal">
-      <header><div><span className="license-kicker">CUTTING POINT TECH CO., LTD.</span><h2>เปิดใช้งาน CpIPOS Desktop</h2></div>{!locked && <button className="license-close" onClick={() => setOpen(false)}>×</button>}</header>
+      <header><div><span className="license-kicker">CUTTING POINT TECH CO., LTD.</span><h2>{locked ? "ซื้อโปรแกรม / เปิดใช้งาน CpIPOS Desktop" : "เปิดใช้งาน CpIPOS Desktop"}</h2></div>{!locked && <button className="license-close" onClick={() => setOpen(false)}>×</button>}</header>
+      {locked && <div className="license-purchase-panel"><div className="license-purchase-brand"><img src="/icon.png" alt="CpIPOS" /><div><strong>หมดช่วงทดลองใช้งาน 7 วัน</strong><p>สแกน LINE เพื่อติดต่อซื้อโปรแกรม จากนั้นส่งรหัสเครื่องด้านล่างให้ฝ่าย IT เพื่อออกลายเส้น License สำหรับเครื่องนี้</p><div className="license-contact-chips"><span>โทร {SALES_PHONE}</span><span>LINE {LINE_CONTACT_URL.replace("https://", "")}</span></div></div></div><div className="license-line-qr"><img src="/line-contact-qr.svg" alt="LINE ซื้อโปรแกรม CpIPOS" /><b>สแกน LINE เพื่อซื้อโปรแกรม</b></div></div>}
       <div className="license-status-grid">
         <div><span>สถานะ</span><strong>{statusLabel}</strong></div>
         <div><span>รหัสเครื่อง</span><strong>{state.deviceCode}</strong></div>
@@ -290,9 +319,9 @@ export function LicenseGate({ children }: { children: ReactNode }) {
         {state.mode === "trial" && <><div><span>ทดลองคงเหลือ</span><strong>{state.daysRemaining} วัน</strong></div><div><span>ทดลองถึง</span><strong>{formatDate(state.trialEndsAt)}</strong></div></>}
       </div>
       <div className="license-device-box compact"><span>ส่งรหัสนี้ให้ฝ่าย IT เพื่อออก License สำหรับเครื่องนี้</span><strong>{state.deviceCode}</strong><button onClick={() => void copyDevice()}>{copyText}</button></div>
-      <label className="license-token-field">License Key ที่ออกโดย IT<textarea value={tokenInput} onChange={e => setTokenInput(e.target.value.trim())} placeholder="CP1.xxxxx.xxxxx" spellCheck={false} /></label>
+      <label className="license-token-field">{locked ? "ใส่ลายเส้น License ที่ได้รับจากฝ่าย IT" : "License Key ที่ออกโดย IT"}<textarea value={tokenInput} onChange={e => setTokenInput(e.target.value.trim())} placeholder="CP1.xxxxx.xxxxx" spellCheck={false} /></label>
       {state.message && <p className="license-error">{state.message}</p>}
-      <div className="license-actions"><button className="license-primary" disabled={busy || !tokenInput.trim()} onClick={() => void activate()}>{busy ? "กำลังตรวจสอบ..." : "ตรวจสอบและเปิดใช้งาน"}</button>{!locked && <button className="license-secondary" onClick={() => setOpen(false)}>กลับ</button>}</div>
+      <div className="license-actions"><button className="license-primary" disabled={busy || !tokenInput.trim()} onClick={() => void activate()}>{busy ? "กำลังตรวจสอบลายเส้น..." : (locked ? "ตรวจสอบลายเส้นและเปิดใช้งานทันที" : "ตรวจสอบและเปิดใช้งาน")}</button>{!locked && <button className="license-secondary" onClick={() => setOpen(false)}>กลับ</button>}</div>
       <p className="license-help">License ถูกตรวจสอบด้วยลายเซ็นดิจิทัล ECDSA P-256 แบบออฟไลน์ และเมื่อมีอินเทอร์เน็ตจะตรวจสถานะกับระบบ IT เป็นระยะ โดยโปรแกรมไม่มี private key ของบริษัทอยู่ภายในเครื่องลูกค้า</p>
     </section></div>}
   </>;
