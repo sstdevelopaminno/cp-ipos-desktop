@@ -47,6 +47,7 @@ type GateState = {
 };
 
 const textEncoder = new TextEncoder();
+const runtimeBridge = () => window as Window & { __CPIPOS_LICENSE_RUNTIME__?: any };
 
 function normalizeLicenseToken(value: string) {
   return String(value || "").replace(/\s+/g, "").trim();
@@ -65,13 +66,7 @@ function decodeJsonPart(value: string) {
 async function importPublicKeys() {
   return await Promise.all([...new Set(PUBLIC_KEY_RING)].map((keyBase64) => {
     const binary = Uint8Array.from(atob(keyBase64), c => c.charCodeAt(0));
-    return crypto.subtle.importKey(
-      "spki",
-      binary,
-      { name: "ECDSA", namedCurve: "P-256" },
-      false,
-      ["verify"],
-    );
+    return crypto.subtle.importKey("spki", binary, { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
   }));
 }
 
@@ -84,12 +79,7 @@ async function verifyToken(tokenInput: string, deviceCode: string, nowMs: number
   const publicKeys = await importPublicKeys();
   let ok = false;
   for (const publicKey of publicKeys) {
-    ok = await crypto.subtle.verify(
-      { name: "ECDSA", hash: "SHA-256" },
-      publicKey,
-      signature,
-      textEncoder.encode(parts[1]),
-    );
+    ok = await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, publicKey, signature, textEncoder.encode(parts[1]));
     if (ok) break;
   }
   if (!ok) throw new Error("LICENSE_SIGNATURE_INVALID");
@@ -123,8 +113,7 @@ async function readNativeTrialStartedAt() {
 }
 
 function earliestIso(...values: Array<string | null | undefined>) {
-  const valid = values
-    .map(value => ({ value, time: value ? Date.parse(value) : NaN }))
+  const valid = values.map(value => ({ value, time: value ? Date.parse(value) : NaN }))
     .filter((entry): entry is { value: string; time: number } => Boolean(entry.value) && Number.isFinite(entry.time))
     .sort((a, b) => a.time - b.time);
   return valid[0]?.value || null;
@@ -172,11 +161,7 @@ async function loadRuntime(): Promise<{ db: Database | null; row: RuntimeRow; de
     const trialStarted = earliestIso(localStorage.getItem(startKey), nativeTrialStartedAt, now) || now;
     localStorage.setItem(startKey, trialStarted);
     const lastSeen = localStorage.getItem(seenKey) || now;
-    return {
-      db: null,
-      row: { install_id: installId, trial_started_at: trialStarted, last_seen_at: lastSeen, token: localStorage.getItem(tokenKey) || "" },
-      deviceCode: await sha256Code(`${PRODUCT_ID}|${installId}`),
-    };
+    return { db: null, row: { install_id: installId, trial_started_at: trialStarted, last_seen_at: lastSeen, token: localStorage.getItem(tokenKey) || "" }, deviceCode: await sha256Code(`${PRODUCT_ID}|${installId}`) };
   }
 }
 
@@ -211,11 +196,7 @@ async function evaluateGate(candidateToken?: string): Promise<GateState> {
   const nowIso = new Date(nowMs).toISOString();
   const lastSeenMs = Date.parse(runtime.row.last_seen_at);
   const token = normalizeLicenseToken(candidateToken ?? runtime.row.token);
-
-  if (Number.isFinite(lastSeenMs) && nowMs + CLOCK_ROLLBACK_TOLERANCE_MS < lastSeenMs) {
-    return { loading: false, mode: "locked", deviceCode: runtime.deviceCode, token, message: friendlyError("CLOCK_ROLLBACK_DETECTED") };
-  }
-
+  if (Number.isFinite(lastSeenMs) && nowMs + CLOCK_ROLLBACK_TOLERANCE_MS < lastSeenMs) return { loading: false, mode: "locked", deviceCode: runtime.deviceCode, token, message: friendlyError("CLOCK_ROLLBACK_DETECTED") };
   if (token.trim()) {
     try {
       const payload = await verifyToken(token, runtime.deviceCode, nowMs);
@@ -232,7 +213,6 @@ async function evaluateGate(candidateToken?: string): Promise<GateState> {
       return { loading: false, mode: "locked", deviceCode: runtime.deviceCode, token, message: friendlyError(code) };
     }
   }
-
   const trialStartedMs = Date.parse(runtime.row.trial_started_at);
   const trialEndsMs = trialStartedMs + TRIAL_DAYS * 86400000;
   if (!Number.isFinite(trialStartedMs)) return { loading: false, mode: "error", deviceCode: runtime.deviceCode, token: "", message: "ไม่สามารถอ่านสถานะทดลองใช้งานได้" };
@@ -248,7 +228,7 @@ function formatDate(value?: string | null) {
 }
 
 function publishLicenseRuntime(state: GateState) {
-  window.__CPIPOS_LICENSE_RUNTIME__ = {
+  runtimeBridge().__CPIPOS_LICENSE_RUNTIME__ = {
     mode: state.mode,
     token: state.token,
     deviceCode: state.deviceCode,
@@ -297,14 +277,7 @@ export function LicenseGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     publishLicenseRuntime(state);
-    window.dispatchEvent(new CustomEvent("cpipos:license-entitlements", {
-      detail: {
-        mode: state.mode,
-        features: state.payload?.features || [],
-        licenseId: state.payload?.licenseId || null,
-        expiresAt: state.payload?.expiresAt || state.trialEndsAt || null
-      }
-    }));
+    window.dispatchEvent(new CustomEvent("cpipos:license-entitlements", { detail: { mode: state.mode, features: state.payload?.features || [], licenseId: state.payload?.licenseId || null, expiresAt: state.payload?.expiresAt || state.trialEndsAt || null } }));
   }, [state.mode, state.token, state.deviceCode, state.payload, state.trialEndsAt, state.daysRemaining]);
 
   useEffect(() => {
@@ -318,12 +291,7 @@ export function LicenseGate({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("cpipos:license-online-status", onOnlineStatus);
   }, []);
 
-  const statusLabel = useMemo(() => {
-    if (state.mode === "licensed") return "License ใช้งานจริง";
-    if (state.mode === "trial") return `ทดลองใช้งานฟรี ${state.daysRemaining || 0} วัน`;
-    return "ระบบถูกล็อก";
-  }, [state]);
-
+  const statusLabel = useMemo(() => state.mode === "licensed" ? "License ใช้งานจริง" : state.mode === "trial" ? `ทดลองใช้งานฟรี ${state.daysRemaining || 0} วัน` : "ระบบถูกล็อก", [state]);
   const activate = async () => {
     setBusy(true);
     const cleanToken = normalizeLicenseToken(tokenInput);
@@ -333,15 +301,9 @@ export function LicenseGate({ children }: { children: ReactNode }) {
     setBusy(false);
     if (next.mode === "licensed") setOpen(false);
   };
-
-  const copyDevice = async () => {
-    await navigator.clipboard.writeText(state.deviceCode);
-    setCopyText("คัดลอกแล้ว");
-    window.setTimeout(() => setCopyText("คัดลอกรหัสเครื่อง"), 1400);
-  };
+  const copyDevice = async () => { await navigator.clipboard.writeText(state.deviceCode); setCopyText("คัดลอกแล้ว"); window.setTimeout(() => setCopyText("คัดลอกรหัสเครื่อง"), 1400); };
 
   if (state.loading) return <main className="license-loading"><section><img src="/icon.png" alt="CpIPOS" /><h1>กำลังตรวจสอบสิทธิ์การใช้งาน</h1><p>ตรวจสอบ License แบบออฟไลน์...</p></section></main>;
-
   publishLicenseRuntime(state);
   const locked = state.mode === "locked" || state.mode === "error";
   const showActivationForm = locked || state.mode === "trial";
@@ -350,18 +312,11 @@ export function LicenseGate({ children }: { children: ReactNode }) {
   return <>
     {!locked && children}
     {locked && <main className="license-lock-page"><section className="license-lock-card"><img src="/icon.png" alt="CpIPOS" /><span className="license-lock-pill">TRIAL ENDED · LICENSE REQUIRED</span><h1>ครบกำหนดทดลองใช้งาน CpIPOS Desktop</h1><p>{state.message || "กรุณาซื้อโปรแกรมและใส่ลายเส้น License ที่ออกโดยฝ่าย IT"}</p><div className="license-lock-contact"><img src="/line-contact-qr.svg" alt="LINE ซื้อโปรแกรม CpIPOS" /><div><strong>ติดต่อซื้อโปรแกรม</strong><span>โทร {SALES_PHONE}</span><span>LINE: สแกน QR Code</span></div></div><div className="license-device-box"><span>รหัสเครื่องสำหรับส่งให้ IT</span><strong>{state.deviceCode}</strong><button onClick={() => void copyDevice()}>{copyText}</button></div><button className="license-primary" onClick={() => setOpen(true)}>ซื้อ / ใส่ลายเส้น License</button></section></main>}
-
     {state.mode === "trial" && <button className="license-floating trial" onClick={() => setOpen(true)} title="ทดลองใช้งานฟรี"><span>T</span><strong>{statusLabel}</strong></button>}
-
     {open && <div className="license-modal-backdrop"><section className="license-modal">
       <header><div><span className="license-kicker">CUTTING POINT TECH CO., LTD.</span><h2>{locked ? "ซื้อโปรแกรม / เปิดใช้งาน CpIPOS Desktop" : state.mode === "licensed" ? "สถานะ License" : "เปิดใช้งาน CpIPOS Desktop"}</h2></div>{!locked && <button className="license-close" onClick={() => setOpen(false)}>×</button>}</header>
       {locked && <div className="license-purchase-panel"><div className="license-purchase-brand"><img src="/icon.png" alt="CpIPOS" /><div><strong>หมดช่วงทดลองใช้งาน 7 วัน</strong><p>สแกน LINE เพื่อติดต่อซื้อโปรแกรม จากนั้นส่งรหัสเครื่องด้านล่างให้ฝ่าย IT เพื่อออกลายเส้น License สำหรับเครื่องนี้</p><div className="license-contact-chips"><span>โทร {SALES_PHONE}</span><span>LINE {LINE_CONTACT_URL.replace("https://", "")}</span></div></div></div><div className="license-line-qr"><img src="/line-contact-qr.svg" alt="LINE ซื้อโปรแกรม CpIPOS" /><b>สแกน LINE เพื่อซื้อโปรแกรม</b></div></div>}
-      <div className="license-status-grid">
-        <div><span>สถานะ</span><strong>{statusLabel}</strong></div>
-        <div><span>รหัสเครื่อง</span><strong>{state.deviceCode}</strong></div>
-        {state.payload && <><div><span>License ID</span><strong>{state.payload.licenseId}</strong></div><div><span>แพ็กเกจ</span><strong>{state.payload.plan}</strong></div><div><span>จำนวนเครื่อง</span><strong>{state.payload.devices.length}/{state.payload.maxDevices}</strong></div><div><span>หมดอายุ</span><strong>{formatDate(state.payload.expiresAt)}</strong></div><div><span>โหมดที่ใช้งาน</span><strong>{modes.length ? modes.join(" / ") : "-"}</strong></div></>}
-        {state.mode === "trial" && <><div><span>ทดลองคงเหลือ</span><strong>{state.daysRemaining} วัน</strong></div><div><span>ทดลองถึง</span><strong>{formatDate(state.trialEndsAt)}</strong></div></>}
-      </div>
+      <div className="license-status-grid"><div><span>สถานะ</span><strong>{statusLabel}</strong></div><div><span>รหัสเครื่อง</span><strong>{state.deviceCode}</strong></div>{state.payload && <><div><span>License ID</span><strong>{state.payload.licenseId}</strong></div><div><span>แพ็กเกจ</span><strong>{state.payload.plan}</strong></div><div><span>จำนวนเครื่อง</span><strong>{state.payload.devices.length}/{state.payload.maxDevices}</strong></div><div><span>หมดอายุ</span><strong>{formatDate(state.payload.expiresAt)}</strong></div><div><span>โหมดที่ใช้งาน</span><strong>{modes.length ? modes.join(" / ") : "-"}</strong></div></>}{state.mode === "trial" && <><div><span>ทดลองคงเหลือ</span><strong>{state.daysRemaining} วัน</strong></div><div><span>ทดลองถึง</span><strong>{formatDate(state.trialEndsAt)}</strong></div></>}</div>
       <div className="license-device-box compact"><span>ส่งรหัสนี้ให้ฝ่าย IT เพื่อออก License สำหรับเครื่องนี้</span><strong>{state.deviceCode}</strong><button onClick={() => void copyDevice()}>{copyText}</button></div>
       {showActivationForm && <label className="license-token-field">{locked ? "ใส่ลายเส้น License ที่ได้รับจากฝ่าย IT" : "ใส่ License Key ที่ออกโดย IT"}<textarea value={tokenInput} onChange={e => setTokenInput(e.target.value)} placeholder="CP1.xxxxx.xxxxx" spellCheck={false} /></label>}
       {state.mode === "licensed" && <p className="license-secure-note">โปรแกรมตรวจสอบ License สำเร็จแล้ว จึงซ่อนลายเส้น License Key ทั้งหมดจากหน้าจอ เหลือเฉพาะสถานะและข้อมูลสัญญาที่จำเป็นเท่านั้น</p>}
