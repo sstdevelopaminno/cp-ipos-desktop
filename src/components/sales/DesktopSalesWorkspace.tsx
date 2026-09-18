@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type { PosRepository } from "../../data/repository";
 import type { AppSettings, CartLine, Language, Product, Shift, Staff } from "../../domain/types";
 import { productName } from "../../i18n";
@@ -37,13 +38,14 @@ function writeJson(key: string, value: unknown) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* persistence is best-effort */ }
 }
 
-function Icon({ name }: { name: "bag" | "table" | "buffet" | "delivery" | "search" | "menu" }) {
+function Icon({ name }: { name: "bag" | "table" | "buffet" | "delivery" | "search" | "menu" | "drawer" }) {
   const common = { width: 27, height: 27, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
   if (name === "table") return <svg {...common}><path d="M4 9h16M6 9V6h12v3M7 9v10m10-10v10M5 19h4m6 0h4" /></svg>;
   if (name === "buffet") return <svg {...common}><path d="M4 13h16M6 13a6 6 0 0 1 12 0M12 7V5M7 18h10" /></svg>;
   if (name === "delivery") return <svg {...common}><path d="M3 15h11V7H8l-2 4H3v4Zm11-5h4l3 3v2h-7v-5Z"/><circle cx="7" cy="17" r="2"/><circle cx="18" cy="17" r="2"/></svg>;
   if (name === "search") return <svg {...common}><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg>;
   if (name === "menu") return <svg {...common}><path d="M4 7h16M4 12h16M4 17h16"/></svg>;
+  if (name === "drawer") return <svg {...common}><path d="M4 7h16v10H4zM4 11h16M9 14h6"/><path d="M7 4h10l2 3H5l2-3Z"/></svg>;
   return <svg {...common}><path d="M6 9h12l1 11H5L6 9Zm3 0V7a3 3 0 0 1 6 0v2"/></svg>;
 }
 
@@ -87,6 +89,9 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
   const [cancelReason, setCancelReason] = useState("");
   const [cancelError, setCancelError] = useState("");
   const [moveOpen, setMoveOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerPin, setDrawerPin] = useState("");
+  const [drawerError, setDrawerError] = useState("");
   const [notice, setNotice] = useState<{ kind: NoticeKind; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [clock, setClock] = useState(() => new Date());
@@ -228,6 +233,46 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
     }
   };
 
+  const openDrawerNative = async () => {
+    if (settings.cashDrawerEnabled === false) throw new Error("CASH_DRAWER_DISABLED");
+    if (!settings.printerName?.trim()) throw new Error("PRINTER_NOT_CONFIGURED");
+    await invoke("open_cash_drawer", { printerName: settings.printerName.trim() });
+  };
+
+  const requestManualDrawer = () => {
+    if (settings.cashDrawerEnabled === false) {
+      showNotice("warn", th ? "ยังไม่ได้เปิดใช้งานลิ้นชักเงินสดในเมนูตั้งค่า" : "Cash drawer is disabled in Settings.");
+      return;
+    }
+    if (!settings.printerName?.trim()) {
+      showNotice("warn", th ? "กรุณาตั้งค่าเครื่องพิมพ์ก่อนเปิดลิ้นชัก" : "Configure a receipt printer before opening the drawer.");
+      return;
+    }
+    setDrawerPin("");
+    setDrawerError("");
+    setDrawerOpen(true);
+  };
+
+  const confirmManualDrawer = async () => {
+    if (busy || drawerPin.length !== 4) return;
+    setBusy(true);
+    setDrawerError("");
+    try {
+      const authorizer = await repo.verifyPin(drawerPin);
+      if (!authorizer || !["owner", "manager"].includes(authorizer.role)) {
+        throw new Error(th ? "ต้องใช้ PIN ผู้จัดการหรือเจ้าของร้าน" : "Owner/manager PIN required");
+      }
+      await openDrawerNative();
+      setDrawerOpen(false);
+      setDrawerPin("");
+      showNotice("ok", th ? "เปิดลิ้นชักแล้ว" : "Cash drawer opened");
+    } catch (error) {
+      setDrawerError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const completePayment = async (method: "cash" | "transfer", paid: number) => {
     if (!cart.length || busy) return;
     const tableCodeAtPayment = mode === "dine_in" ? selectedTable : null;
@@ -253,9 +298,19 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
       if (printableReceipt) {
         setReceipt(printableReceipt);
         if (settings.printerAutoPrintReceipt !== false) {
-          void printReceiptNative(printableReceipt).catch(() => {
+          try {
+            await printReceiptNative(printableReceipt);
+          } catch {
             showNotice("warn", th ? "บันทึกบิลแล้ว แต่พิมพ์ใบเสร็จอัตโนมัติไม่สำเร็จ" : "Sale saved, but automatic receipt printing failed");
-          });
+          }
+        }
+      }
+
+      if (method === "cash" && settings.cashDrawerEnabled !== false) {
+        try {
+          await openDrawerNative();
+        } catch {
+          showNotice("warn", th ? "รับชำระเงินสดแล้ว แต่เปิดลิ้นชักอัตโนมัติไม่สำเร็จ" : "Cash sale completed, but the cash drawer did not open.");
         }
       }
 
@@ -331,7 +386,7 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
     <div className="desktop-product-grid">{visibleProducts.map((product) => <button key={product.id} className="desktop-product-card" disabled={product.stockQuantity <= 0} onClick={() => addProduct(product)}><span className="product-image">{product.imagePath ? <img src={productImageSrc(product.imagePath)} alt=""/> : productName(language, product).slice(0, 1)}</span><strong>{productName(language, product)}</strong><small>{product.barcode || product.productCode}</small><em>{th ? "คงเหลือ" : "Stock"}: {product.stockQuantity}</em><b>{money(product.price)}</b></button>)}</div>
   </section> : null;
 
-  const renderCart = () => <aside className="desktop-cart-panel"><header><h2>{th ? `รายการสินค้า (${cart.length})` : `Cart (${cart.length})`}</h2><button disabled={!cart.length} onClick={() => setCart(() => [])}>{th ? "ล้างรายการ" : "Clear"}</button></header><div className="desktop-cart-list">{cart.length === 0 ? <div className="cart-empty"><img src="/icon.png" alt="CpIPOS"/></div> : cart.map((line) => <article key={line.id} className="desktop-cart-line"><div className="cart-product-mark">{productName(language, line).slice(0, 1)}</div><div className="cart-line-info"><strong>{productName(language, line)}</strong><small>{money(line.price)}</small><div className="cart-qty"><button onClick={() => setCart((current) => current.map((item) => item.id === line.id ? { ...item, quantity: Math.max(1, item.quantity - 1) } : item))}>−</button><span>{line.quantity}</span><button onClick={() => setCart((current) => current.map((item) => item.id === line.id ? { ...item, quantity: item.quantity + 1 } : item))}>+</button><button className="line-remove" onClick={() => setCart((current) => current.filter((item) => item.id !== line.id))}>×</button></div></div><strong>{money(line.price * line.quantity)}</strong></article>)}</div><footer>{selectedTable && activeTableBill ? <div className="bill-identity"><span>{th ? "เลขที่บิล" : "Bill"}</span><strong>{activeTableBill.billNo}</strong><span>{th ? "สถานะ" : "Status"}</span><strong>{th ? "นั่งโต๊ะ" : "Dine-in"}</strong></div> : null}<div className="cart-total"><span>{th ? "ยอดรวม" : "Total"}</span><strong>{money(total)}</strong></div><div className="cart-actions"><button disabled={!cart.length} className="muted-action">{th ? "สมาชิก" : "Member"}</button><button disabled={!cart.length} className="discount-action">{th ? "ส่วนลด" : "Discount"}</button></div><button className="checkout-button" disabled={!cart.length} onClick={() => setPaymentStep("review")}>{selectedTable || mode === "grocery" ? (th ? "ชำระเงิน" : "Pay") : (th ? "สร้างออเดอร์ POS" : "Create POS order")}</button></footer></aside>;
+  const renderCart = () => <aside className="desktop-cart-panel"><header><h2>{th ? `รายการสินค้า (${cart.length})` : `Cart (${cart.length})`}</h2><button disabled={!cart.length} onClick={() => setCart(() => [])}>{th ? "ล้างรายการ" : "Clear"}</button></header><div className="desktop-cart-list">{cart.length === 0 ? <div className="cart-empty"><img src="/icon.png" alt="CpIPOS"/></div> : cart.map((line) => <article key={line.id} className="desktop-cart-line"><div className="cart-product-mark">{productName(language, line).slice(0, 1)}</div><div className="cart-line-info"><strong>{productName(language, line)}</strong><small>{money(line.price)}</small><div className="cart-qty"><button onClick={() => setCart((current) => current.map((item) => item.id === line.id ? { ...item, quantity: Math.max(1, item.quantity - 1) } : item))}>−</button><span>{line.quantity}</span><button onClick={() => setCart((current) => current.map((item) => item.id === line.id ? { ...item, quantity: item.quantity + 1 } : item))}>+</button><button className="line-remove" onClick={() => setCart((current) => current.filter((item) => item.id !== line.id))}>×</button></div></div><strong>{money(line.price * line.quantity)}</strong></article>)}</div><footer>{selectedTable && activeTableBill ? <div className="bill-identity"><span>{th ? "เลขที่บิล" : "Bill"}</span><strong>{activeTableBill.billNo}</strong><span>{th ? "สถานะ" : "Status"}</span><strong>{th ? "นั่งโต๊ะ" : "Dine-in"}</strong></div> : null}<div className="cart-total"><span>{th ? "ยอดรวม" : "Total"}</span><strong>{money(total)}</strong></div><div className="cart-actions"><button disabled={!cart.length} className="muted-action">{th ? "สมาชิก" : "Member"}</button><button disabled={!cart.length} className="discount-action">{th ? "ส่วนลด" : "Discount"}</button></div><button className="checkout-button" disabled={!cart.length} onClick={() => setPaymentStep("review")}>{selectedTable || mode === "grocery" ? (th ? "ชำระเงิน" : "Pay") : (th ? "สร้างออเดอร์ POS" : "Create POS order")}</button><button className="cash-drawer-button" onClick={requestManualDrawer}><Icon name="drawer"/><span>{th ? "เปิดลิ้นชัก" : "Open cash drawer"}</span></button></footer></aside>;
 
   return <section className="desktop-sales-workspace">
     <div className="sales-main-column">
@@ -352,6 +407,8 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
     {cancelBillOpen ? <Modal className="cancel-bill-modal" onClose={() => !busy && setCancelBillOpen(false)}><header className="desktop-pos-modal__header"><div><h2>{th ? "ยกเลิกบิล" : "Cancel bill"}</h2><p>{th ? "ต้องยืนยันด้วย PIN ผู้จัดการหรือเจ้าของร้าน" : "Owner or manager PIN is required."}</p></div><button className="icon-close" onClick={() => setCancelBillOpen(false)}>×</button></header><label>PIN<input type="password" value={cancelPin} onChange={(event) => setCancelPin(event.target.value)}/></label><label>{th ? "เหตุผล" : "Reason"}<input value={cancelReason} onChange={(event) => setCancelReason(event.target.value)}/></label>{cancelError ? <p className="form-error">{cancelError}</p> : null}<div className="modal-actions"><button onClick={() => setCancelBillOpen(false)}>{th ? "กลับ" : "Back"}</button><button className="cancel-action" disabled={busy || !cancelPin || !cancelReason.trim()} onClick={() => void cancelCurrentBill()}>{th ? "ยืนยันยกเลิกบิล" : "Confirm cancellation"}</button></div></Modal> : null}
 
     {moveOpen && selectedTable ? <Modal className="move-table-modal" onClose={() => setMoveOpen(false)}><header className="desktop-pos-modal__header"><div><h2>{th ? `ย้ายโต๊ะ ${selectedTable}` : `Move ${selectedTable}`}</h2><p>{th ? "เลือกโต๊ะว่างปลายทางจากรายการโต๊ะที่เปิดใช้งาน" : "Choose an available active table."}</p></div><button className="icon-close" onClick={() => setMoveOpen(false)}>×</button></header><div className="move-table-grid">{salesTables.filter((table) => table.code !== selectedTable).map((table) => <button key={table.id} disabled={Boolean(tableBills[table.code])} onClick={() => moveTable(table.code)}><strong>{table.code}</strong><span>{tableBills[table.code] ? (th ? "มีบิล" : "Occupied") : table.name}</span></button>)}</div></Modal> : null}
+
+    {drawerOpen ? <Modal className="cash-drawer-modal" onClose={() => !busy && setDrawerOpen(false)}><header className="desktop-pos-modal__header"><div><h2>{th ? "เปิดลิ้นชักเงินสด" : "Open cash drawer"}</h2><p>{th ? "ยืนยันสิทธิ์ด้วย PIN ผู้จัดการหรือเจ้าของร้าน" : "Owner or manager PIN is required."}</p></div><button className="icon-close" onClick={() => !busy && setDrawerOpen(false)}>×</button></header><div className="cash-drawer-auth-panel"><span className="cash-drawer-auth-icon"><Icon name="drawer"/></span><label>{th ? "PIN ผู้จัดการ / เจ้าของร้าน" : "Owner / manager PIN"}<input type="password" inputMode="numeric" maxLength={4} autoFocus value={drawerPin} onChange={(event) => { setDrawerPin(event.target.value.replace(/\D/g, "").slice(0, 4)); setDrawerError(""); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void confirmManualDrawer(); } }}/></label>{drawerError ? <p className="form-error">{drawerError}</p> : null}</div><div className="modal-actions"><button disabled={busy} onClick={() => setDrawerOpen(false)}>{th ? "กลับ" : "Back"}</button><button className="cash-action" disabled={busy || drawerPin.length !== 4} onClick={() => void confirmManualDrawer()}>{busy ? (th ? "กำลังเปิด..." : "Opening...") : (th ? "ยืนยันเปิดลิ้นชัก" : "Open drawer")}</button></div></Modal> : null}
 
     {receipt ? <Modal className="receipt-success-modal" onClose={() => setReceipt(null)}><header className="desktop-pos-modal__header"><div><h2>{th ? "สรุปชำระเงินสำเร็จ" : "Payment complete"}</h2><p>{th ? "บันทึกการขายเรียบร้อย" : "Sale saved successfully."}</p></div><button className="close-text" onClick={() => setReceipt(null)}>{th ? "ปิดหน้าต่าง" : "Close"}</button></header><article className="receipt-preview"><img src="/icon.png" alt="CpIPOS"/><h3>{receipt.settings.storeName}</h3><p>{receipt.settings.branchName}</p><div className="receipt-meta"><span>{th ? "ผู้ขาย" : "Seller"}</span><strong>{staff.displayName}</strong>{receipt.tableCode ? <><span>{th ? "โต๊ะ" : "Table"}</span><strong>{receipt.tableCode}</strong></> : null}<span>{th ? "เลขที่บิล" : "Receipt"}</span><strong>{receipt.receiptNo}</strong><span>{th ? "วันที่" : "Date"}</span><strong>{new Date(receipt.createdAt).toLocaleString(th ? "th-TH" : "en-US")}</strong></div><div className="receipt-lines">{receipt.items.map((item) => <div key={item.id || item.name}><span>{item.name} × {item.quantity}</span><strong>{money(item.lineTotal)}</strong></div>)}</div><div className="receipt-grand"><span>{th ? "ยอดที่ต้องชำระ" : "Total"}</span><strong>{money(receipt.total)}</strong></div><div className="receipt-lines"><div><span>{th ? "ชำระเงิน" : "Payment"}</span><strong>{receipt.paymentMethod === "cash" ? (th ? "เงินสด" : "Cash") : (th ? "โอน / QR" : "Transfer / QR")}</strong></div>{receipt.paymentMethod === "cash" ? <><div><span>{th ? "รับเงินจากลูกค้า" : "Received"}</span><strong>{money(receipt.paid)}</strong></div><div><span>{th ? "เงินทอน" : "Change"}</span><strong>{money(receipt.changeAmount)}</strong></div></> : null}</div><p className="receipt-footer">{receipt.settings.receiptFooter}</p></article><div className="receipt-actions"><button disabled={!settings.printerName} onClick={() => void printReceiptNative(receipt).then(() => showNotice("ok", th ? "ส่งใบเสร็จไปเครื่องพิมพ์แล้ว" : "Receipt sent to printer")).catch(() => showNotice("error", th ? "พิมพ์ใบเสร็จไม่สำเร็จ" : "Receipt print failed"))}>{settings.printerName ? (th ? "พิมพ์ใบเสร็จ" : "Print receipt") : (th ? "ตั้งค่าเครื่องพิมพ์ก่อน" : "Configure printer")}</button><button className="checkout-button" onClick={() => setReceipt(null)}>{th ? "เริ่มบิลใหม่" : "New sale"}</button></div></Modal> : null}
   </section>;
