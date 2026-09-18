@@ -12,6 +12,9 @@ type UpdatePolicy = {
 
 type ControlState = {
   remote_management_enabled?: boolean;
+  connected?: boolean;
+  checked_at?: string;
+  last_error?: string;
   entitlements?: { sales_modes?: string[]; features?: string[] };
   update?: UpdatePolicy;
 };
@@ -104,8 +107,9 @@ function reconcileSettingsMenu() {
     const meta = card.querySelector<HTMLElement>("em");
     if (!meta) return;
     if (label.includes("Remote Management")) {
-      const enabled = runtimeWindow().__CPIPOS_CONTROL_STATE__?.remote_management_enabled !== false;
-      meta.textContent = navigator.onLine && enabled ? "ออนไลน์ · เชื่อมต่ออัตโนมัติ" : "ออฟไลน์";
+      const control = runtimeWindow().__CPIPOS_CONTROL_STATE__;
+      const enabled = control?.remote_management_enabled !== false;
+      meta.textContent = navigator.onLine && enabled && control?.connected ? "ออนไลน์ · เชื่อมต่อ IT แล้ว" : "ออฟไลน์";
     }
     if (label.includes("Backup") || label.includes("สำรอง")) {
       const cloud = runtimeWindow().__CPIPOS_CLOUD_BACKUP__;
@@ -123,8 +127,12 @@ function reconcileSettingsMenu() {
 
 function renderRemote(host: HTMLElement) {
   const online = navigator.onLine;
-  const enabled = runtimeWindow().__CPIPOS_CONTROL_STATE__?.remote_management_enabled !== false;
-  const connected = online && enabled && runtimeWindow().__CPIPOS_LICENSE_RUNTIME__?.mode === "licensed";
+  const control = runtimeWindow().__CPIPOS_CONTROL_STATE__;
+  const enabled = control?.remote_management_enabled !== false;
+  const licensed = runtimeWindow().__CPIPOS_LICENSE_RUNTIME__?.mode === "licensed";
+  const connected = Boolean(online && enabled && licensed && control?.connected);
+  const checkedAt = control?.checked_at ? formatDate(control.checked_at) : "—";
+  const error = control?.last_error && control.last_error !== "OFFLINE" ? control.last_error : "";
   host.innerHTML = `<div class="commercial-card connection-only-card">
     <span class="commercial-kicker">REMOTE MANAGEMENT / MDM</span>
     <div class="mdm-connection-visual ${connected ? "is-online" : "is-offline"}">
@@ -132,9 +140,10 @@ function renderRemote(host: HTMLElement) {
       <div class="mdm-link"><span></span><b>${connected ? "●" : "○"}</b><span></span></div>
       <div class="mdm-node mdm-server" aria-label="CpIPOS IT Server"><span class="mdm-server-icon">▤</span><strong>IT</strong></div>
     </div>
-    <h3>${connected ? "ออนไลน์ · เชื่อมต่อระบบ IT แล้ว" : "ออฟไลน์ · รอการเชื่อมต่อ"}</h3>
-    <p>MDM เชื่อมต่ออัตโนมัติเมื่อมีอินเทอร์เน็ต ไม่ต้องกรอก URL หรือ Token ในเครื่องลูกค้า และคำสั่งที่ฝ่าย IT ส่งจะถูกรับและทำงานอัตโนมัติเมื่อเครื่องออนไลน์</p>
+    <h3>${connected ? "ออนไลน์ · เชื่อมต่อระบบ IT แล้ว" : enabled ? "ออฟไลน์ · รอการเชื่อมต่อ IT" : "Remote Management ถูกปิดจาก IT"}</h3>
+    <p>MDM เชื่อมต่ออัตโนมัติเมื่อมีอินเทอร์เน็ต ส่งสถานะเครื่อง CPU / RAM / พื้นที่ / ฐานข้อมูล / เครื่องพิมพ์และยอดขายล่าสุดไปยังระบบหลังบ้าน พร้อมรับคำสั่งที่ได้รับอนุญาตจาก IT โดยไม่ต้องกรอก URL หรือ Token ที่เครื่องลูกค้า</p>
     <div class="connection-badge ${connected ? "online" : "offline"}">${connected ? "ONLINE" : "OFFLINE"}</div>
+    <p class="commercial-status">ตรวจสอบล่าสุด: ${cell(checkedAt)}${error ? ` · ${cell(error)}` : ""}</p>
   </div>`;
 }
 
@@ -296,6 +305,7 @@ function startRuntime() {
   window.addEventListener("cpipos:license-online-status", refresh);
   window.addEventListener("cpipos:license-entitlements", refresh);
   window.addEventListener("cpipos:update-policy", refresh);
+  window.addEventListener("cpipos:control-state", refresh);
   window.addEventListener("cpipos:cloud-state", refresh);
   window.addEventListener("cpipos:cloud-archive-updated", refresh);
   const observer = new MutationObserver(refresh);
