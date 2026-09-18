@@ -182,9 +182,8 @@ async function loadRuntime(): Promise<{ db: Database | null; row: RuntimeRow; de
 
 async function saveRuntime(db: Database | null, row: RuntimeRow, tokenInput: string, lastSeen: string) {
   const token = normalizeLicenseToken(tokenInput);
-  if (db) {
-    await db.execute("UPDATE cpipos_license_runtime SET token = $1, last_seen_at = $2, updated_at = CURRENT_TIMESTAMP WHERE id = 1", [token, lastSeen]);
-  } else {
+  if (db) await db.execute("UPDATE cpipos_license_runtime SET token = $1, last_seen_at = $2, updated_at = CURRENT_TIMESTAMP WHERE id = 1", [token, lastSeen]);
+  else {
     localStorage.setItem("cpipos.license.token.v1", token);
     localStorage.setItem("cpipos.license.last.seen.v1", lastSeen);
   }
@@ -248,6 +247,36 @@ function formatDate(value?: string | null) {
   return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString("th-TH");
 }
 
+function publishLicenseRuntime(state: GateState) {
+  window.__CPIPOS_LICENSE_RUNTIME__ = {
+    mode: state.mode,
+    token: state.token,
+    deviceCode: state.deviceCode,
+    trialEndsAt: state.trialEndsAt,
+    daysRemaining: state.daysRemaining,
+    payload: state.payload ? {
+      licenseId: state.payload.licenseId,
+      plan: state.payload.plan,
+      customer: state.payload.customer,
+      issuedAt: state.payload.issuedAt,
+      notBefore: state.payload.notBefore,
+      expiresAt: state.payload.expiresAt,
+      maxDevices: state.payload.maxDevices,
+      deviceCount: state.payload.devices?.length || 0,
+      features: state.payload.features || []
+    } : undefined
+  };
+}
+
+function featureModes(features?: string[]) {
+  const list = Array.isArray(features) ? features : [];
+  const modes: string[] = [];
+  if (list.includes("sales-grocery")) modes.push("ร้านชำ / ค้าปลีก");
+  if (list.includes("sales-takeaway")) modes.push("กลับบ้าน");
+  if (list.includes("sales-dine-in")) modes.push("นั่งโต๊ะ");
+  return modes;
+}
+
 export function LicenseGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<GateState>({ loading: true, mode: "trial", deviceCode: "", token: "" });
   const [open, setOpen] = useState(false);
@@ -257,25 +286,26 @@ export function LicenseGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let alive = true;
-    void evaluateGate().then(next => { if (alive) { setState(next); setTokenInput(next.token); if (next.mode === "locked") setOpen(true); } });
+    void evaluateGate().then(next => {
+      if (!alive) return;
+      setState(next);
+      setTokenInput(next.mode === "licensed" ? "" : next.token);
+      if (next.mode === "locked") setOpen(true);
+    });
     return () => { alive = false; };
   }, []);
 
   useEffect(() => {
-    window.__CPIPOS_LICENSE_RUNTIME__ = {
-      mode: state.mode,
-      token: state.token,
-      deviceCode: state.deviceCode,
-      payload: state.payload ? { licenseId: state.payload.licenseId, expiresAt: state.payload.expiresAt } : undefined
-    };
+    publishLicenseRuntime(state);
     window.dispatchEvent(new CustomEvent("cpipos:license-entitlements", {
       detail: {
         mode: state.mode,
         features: state.payload?.features || [],
-        licenseId: state.payload?.licenseId || null
+        licenseId: state.payload?.licenseId || null,
+        expiresAt: state.payload?.expiresAt || state.trialEndsAt || null
       }
     }));
-  }, [state.mode, state.token, state.deviceCode, state.payload]);
+  }, [state.mode, state.token, state.deviceCode, state.payload, state.trialEndsAt, state.daysRemaining]);
 
   useEffect(() => {
     const onOnlineStatus = (event: Event) => {
@@ -288,14 +318,18 @@ export function LicenseGate({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("cpipos:license-online-status", onOnlineStatus);
   }, []);
 
-  const statusLabel = useMemo(() => state.mode === "licensed" ? "License ใช้งานจริง" : state.mode === "trial" ? `ทดลอง ${state.daysRemaining || 0} วัน` : "ระบบถูกล็อก", [state]);
+  const statusLabel = useMemo(() => {
+    if (state.mode === "licensed") return "License ใช้งานจริง";
+    if (state.mode === "trial") return `ทดลองใช้งานฟรี ${state.daysRemaining || 0} วัน`;
+    return "ระบบถูกล็อก";
+  }, [state]);
 
   const activate = async () => {
     setBusy(true);
     const cleanToken = normalizeLicenseToken(tokenInput);
     const next = await evaluateGate(cleanToken);
     setState(next);
-    setTokenInput(next.token || cleanToken);
+    setTokenInput(next.mode === "licensed" ? "" : (next.token || cleanToken));
     setBusy(false);
     if (next.mode === "licensed") setOpen(false);
   };
@@ -308,35 +342,31 @@ export function LicenseGate({ children }: { children: ReactNode }) {
 
   if (state.loading) return <main className="license-loading"><section><img src="/icon.png" alt="CpIPOS" /><h1>กำลังตรวจสอบสิทธิ์การใช้งาน</h1><p>ตรวจสอบ License แบบออฟไลน์...</p></section></main>;
 
-  // Publish synchronously before rendering App so restricted modes never flash
-  // on screen while React effects are still being scheduled.
-  window.__CPIPOS_LICENSE_RUNTIME__ = {
-    mode: state.mode,
-    token: state.token,
-    deviceCode: state.deviceCode,
-    payload: state.payload ? { licenseId: state.payload.licenseId, expiresAt: state.payload.expiresAt } : undefined
-  };
-
+  publishLicenseRuntime(state);
   const locked = state.mode === "locked" || state.mode === "error";
+  const showActivationForm = locked || state.mode === "trial";
+  const modes = state.payload ? featureModes(state.payload.features) : [];
+
   return <>
     {!locked && children}
     {locked && <main className="license-lock-page"><section className="license-lock-card"><img src="/icon.png" alt="CpIPOS" /><span className="license-lock-pill">TRIAL ENDED · LICENSE REQUIRED</span><h1>ครบกำหนดทดลองใช้งาน CpIPOS Desktop</h1><p>{state.message || "กรุณาซื้อโปรแกรมและใส่ลายเส้น License ที่ออกโดยฝ่าย IT"}</p><div className="license-lock-contact"><img src="/line-contact-qr.svg" alt="LINE ซื้อโปรแกรม CpIPOS" /><div><strong>ติดต่อซื้อโปรแกรม</strong><span>โทร {SALES_PHONE}</span><span>LINE: สแกน QR Code</span></div></div><div className="license-device-box"><span>รหัสเครื่องสำหรับส่งให้ IT</span><strong>{state.deviceCode}</strong><button onClick={() => void copyDevice()}>{copyText}</button></div><button className="license-primary" onClick={() => setOpen(true)}>ซื้อ / ใส่ลายเส้น License</button></section></main>}
 
-    {!locked && <button className={`license-floating ${state.mode}`} onClick={() => setOpen(true)} title="สถานะ License"><span>{state.mode === "licensed" ? "✓" : "T"}</span><strong>{statusLabel}</strong></button>}
+    {state.mode === "trial" && <button className="license-floating trial" onClick={() => setOpen(true)} title="ทดลองใช้งานฟรี"><span>T</span><strong>{statusLabel}</strong></button>}
 
     {open && <div className="license-modal-backdrop"><section className="license-modal">
-      <header><div><span className="license-kicker">CUTTING POINT TECH CO., LTD.</span><h2>{locked ? "ซื้อโปรแกรม / เปิดใช้งาน CpIPOS Desktop" : "เปิดใช้งาน CpIPOS Desktop"}</h2></div>{!locked && <button className="license-close" onClick={() => setOpen(false)}>×</button>}</header>
+      <header><div><span className="license-kicker">CUTTING POINT TECH CO., LTD.</span><h2>{locked ? "ซื้อโปรแกรม / เปิดใช้งาน CpIPOS Desktop" : state.mode === "licensed" ? "สถานะ License" : "เปิดใช้งาน CpIPOS Desktop"}</h2></div>{!locked && <button className="license-close" onClick={() => setOpen(false)}>×</button>}</header>
       {locked && <div className="license-purchase-panel"><div className="license-purchase-brand"><img src="/icon.png" alt="CpIPOS" /><div><strong>หมดช่วงทดลองใช้งาน 7 วัน</strong><p>สแกน LINE เพื่อติดต่อซื้อโปรแกรม จากนั้นส่งรหัสเครื่องด้านล่างให้ฝ่าย IT เพื่อออกลายเส้น License สำหรับเครื่องนี้</p><div className="license-contact-chips"><span>โทร {SALES_PHONE}</span><span>LINE {LINE_CONTACT_URL.replace("https://", "")}</span></div></div></div><div className="license-line-qr"><img src="/line-contact-qr.svg" alt="LINE ซื้อโปรแกรม CpIPOS" /><b>สแกน LINE เพื่อซื้อโปรแกรม</b></div></div>}
       <div className="license-status-grid">
         <div><span>สถานะ</span><strong>{statusLabel}</strong></div>
         <div><span>รหัสเครื่อง</span><strong>{state.deviceCode}</strong></div>
-        {state.payload && <><div><span>License ID</span><strong>{state.payload.licenseId}</strong></div><div><span>แพ็กเกจ</span><strong>{state.payload.plan}</strong></div><div><span>จำนวนเครื่อง</span><strong>{state.payload.devices.length}/{state.payload.maxDevices}</strong></div><div><span>หมดอายุ</span><strong>{formatDate(state.payload.expiresAt)}</strong></div></>}
+        {state.payload && <><div><span>License ID</span><strong>{state.payload.licenseId}</strong></div><div><span>แพ็กเกจ</span><strong>{state.payload.plan}</strong></div><div><span>จำนวนเครื่อง</span><strong>{state.payload.devices.length}/{state.payload.maxDevices}</strong></div><div><span>หมดอายุ</span><strong>{formatDate(state.payload.expiresAt)}</strong></div><div><span>โหมดที่ใช้งาน</span><strong>{modes.length ? modes.join(" / ") : "-"}</strong></div></>}
         {state.mode === "trial" && <><div><span>ทดลองคงเหลือ</span><strong>{state.daysRemaining} วัน</strong></div><div><span>ทดลองถึง</span><strong>{formatDate(state.trialEndsAt)}</strong></div></>}
       </div>
       <div className="license-device-box compact"><span>ส่งรหัสนี้ให้ฝ่าย IT เพื่อออก License สำหรับเครื่องนี้</span><strong>{state.deviceCode}</strong><button onClick={() => void copyDevice()}>{copyText}</button></div>
-      <label className="license-token-field">{locked ? "ใส่ลายเส้น License ที่ได้รับจากฝ่าย IT" : "License Key ที่ออกโดย IT"}<textarea value={tokenInput} onChange={e => setTokenInput(e.target.value)} placeholder="CP1.xxxxx.xxxxx" spellCheck={false} /></label>
+      {showActivationForm && <label className="license-token-field">{locked ? "ใส่ลายเส้น License ที่ได้รับจากฝ่าย IT" : "ใส่ License Key ที่ออกโดย IT"}<textarea value={tokenInput} onChange={e => setTokenInput(e.target.value)} placeholder="CP1.xxxxx.xxxxx" spellCheck={false} /></label>}
+      {state.mode === "licensed" && <p className="license-secure-note">โปรแกรมตรวจสอบ License สำเร็จแล้ว จึงซ่อนลายเส้น License Key ทั้งหมดจากหน้าจอ เหลือเฉพาะสถานะและข้อมูลสัญญาที่จำเป็นเท่านั้น</p>}
       {state.message && <p className="license-error">{state.message}</p>}
-      <div className="license-actions"><button className="license-primary" disabled={busy || !normalizeLicenseToken(tokenInput)} onClick={() => void activate()}>{busy ? "กำลังตรวจสอบลายเส้น..." : (locked ? "ตรวจสอบลายเส้นและเปิดใช้งานทันที" : "ตรวจสอบและเปิดใช้งาน")}</button>{!locked && <button className="license-secondary" onClick={() => setOpen(false)}>กลับ</button>}</div>
+      <div className="license-actions">{showActivationForm && <button className="license-primary" disabled={busy || !normalizeLicenseToken(tokenInput)} onClick={() => void activate()}>{busy ? "กำลังตรวจสอบลายเส้น..." : (locked ? "ตรวจสอบลายเส้นและเปิดใช้งานทันที" : "ตรวจสอบและเปิดใช้งาน")}</button>}{!locked && <button className="license-secondary" onClick={() => setOpen(false)}>กลับ</button>}</div>
       <p className="license-help">License ถูกตรวจสอบด้วยลายเซ็นดิจิทัล ECDSA P-256 แบบออฟไลน์ และเมื่อมีอินเทอร์เน็ตจะตรวจสถานะกับระบบ IT เป็นระยะ โดยโปรแกรมไม่มี private key ของบริษัทอยู่ภายในเครื่องลูกค้า</p>
     </section></div>}
   </>;
