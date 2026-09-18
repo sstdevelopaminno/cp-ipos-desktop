@@ -116,7 +116,6 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
   const [takeawayCart, setTakeawayCart] = useState<CartLine[]>(() => readJson<CartLine[]>(TAKEAWAY_CART_KEY, []));
   const [tableBills, setTableBills] = useState<TableBills>(() => readJson<TableBills>(TABLE_BILLS_KEY, {}));
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
-  const [tableView, setTableView] = useState<"list" | "floor">("list");
   const [category, setCategory] = useState("all");
   const [query, setQuery] = useState("");
   const [barcode, setBarcode] = useState("");
@@ -307,8 +306,7 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
   }
 
   const renderTables = () => mode === "dine_in" && !selectedTable ? <section className="table-browser-panel">
-    <div className="table-browser-toolbar"><div className="table-tabs"><button className={tableView === "list" ? "active" : ""} onClick={() => setTableView("list")}>{th ? "รายการโต๊ะ" : "Table list"}</button><button className={tableView === "floor" ? "active" : ""} onClick={() => setTableView("floor")}>{th ? "แผนผังร้าน" : "Floor plan"}</button><span>{th ? "ทั้งหมด" : "All"}</span></div></div>
-    {tableView === "floor" ? <div className="floor-preview"><div><Icon name="table"/><strong>{th ? "แผนผังร้าน" : "Floor plan"}</strong><small>{th ? "รุ่น Desktop จะใช้ตำแหน่งโต๊ะจริงในขั้นถัดไป — เลือกโต๊ะจากรายการด้านล่างได้ทันที" : "Desktop floor coordinates are the next step. Use the live table list below."}</small></div></div> : null}
+    <div className="table-browser-toolbar"><div className="table-tabs"><button className="active">{th ? "รายการโต๊ะ" : "Table list"}</button><span>{th ? "ทั้งหมด" : "All"}</span></div></div>
     <div className="table-grid">{TABLE_CODES.map((tableCode) => {
       const bill = tableBills[tableCode];
       const amount = bill?.items.reduce((sum, line) => sum + line.quantity * line.price, 0) ?? 0;
@@ -316,9 +314,9 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
     })}</div>
   </section> : null;
 
-  const renderCatalog = () => mode === "grocery" || mode === "takeaway" || selectedTable ? <section className="product-browser">
-    <div className="catalog-tools"><button className="orange-chip">{th ? "เครื่องดื่ม" : "Products"}</button><label className="search-field"><Icon name="search"/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={th ? "ค้นหาสินค้า" : "Search products"}/></label><label className="scan-field"><input ref={scanRef} value={barcode} onChange={(event) => setBarcode(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void scanBarcode(); }} placeholder={th ? "สแกนบาร์โค้ด" : "Scan barcode"}/><button onClick={() => void scanBarcode()}>{th ? "เพิ่ม" : "Add"}</button></label></div>
-    <div className="category-row">{categories.map((item) => <button key={item.id} className={category === item.id ? "active" : ""} onClick={() => setCategory(item.id)}>{item.name}</button>)}</div>
+  const renderCatalog = () => mode === "grocery" || mode === "takeaway" || selectedTable ? <section className={`product-browser ${mode === "dine_in" ? "product-browser--dine-in" : ""}`}>
+    {mode !== "dine_in" ? <div className="catalog-tools"><button className="orange-chip">{th ? "เครื่องดื่ม" : "Products"}</button><label className="search-field"><Icon name="search"/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={th ? "ค้นหาสินค้า" : "Search products"}/></label><label className="scan-field"><input ref={scanRef} value={barcode} onChange={(event) => setBarcode(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void scanBarcode(); }} placeholder={th ? "สแกนบาร์โค้ด" : "Scan barcode"}/><button onClick={() => void scanBarcode()}>{th ? "เพิ่ม" : "Add"}</button></label></div> : null}
+    <div className={`category-row ${mode === "dine_in" ? "category-row--dine-in-top" : ""}`}>{categories.map((item) => <button key={item.id} className={category === item.id ? "active" : ""} onClick={() => setCategory(item.id)}>{item.name}</button>)}</div>
     <div className="desktop-product-grid">{visibleProducts.map((product) => <button key={product.id} className="desktop-product-card" disabled={product.stockQuantity <= 0} onClick={() => addProduct(product)}><span className="product-image">{product.imagePath ? <img src={product.imagePath} alt=""/> : productName(language, product).slice(0, 1)}</span><strong>{productName(language, product)}</strong><small>{product.barcode || product.productCode}</small><em>{th ? "คงเหลือ" : "Stock"}: {product.stockQuantity}</em><b>{money(product.price)}</b></button>)}</div>
   </section> : null;
 
