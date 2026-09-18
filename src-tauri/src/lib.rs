@@ -1,10 +1,10 @@
+mod schema_repair;
 mod system_health;
 
 use serde::Serialize;
 use serde_json::Value;
 use std::{ffi::{c_void, CString}, fs, path::Path, process::Command};
 use tauri::{Manager, Runtime};
-use tauri_plugin_sql::{Migration, MigrationKind};
 use windows_sys::Win32::Graphics::Printing::{ClosePrinter, EndDocPrinter, EndPagePrinter, OpenPrinterA, StartDocPrinterA, StartPagePrinter, WritePrinter, DOC_INFO_1A, PRINTER_HANDLE};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -310,21 +310,12 @@ fn complete_startup_splash<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), S
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let migrations = vec![
-        Migration { version: 1, description: "initial_offline_pos_schema", sql: include_str!("../migrations/0001_initial.sql"), kind: MigrationKind::Up },
-        Migration { version: 2, description: "retail_core_foundation", sql: include_str!("../migrations/0002_retail_core_foundation.sql"), kind: MigrationKind::Up },
-        Migration { version: 3, description: "retail_localization_voids", sql: include_str!("../migrations/0003_retail_localization_voids.sql"), kind: MigrationKind::Up },
-        Migration { version: 4, description: "grocery_stock_precision", sql: include_str!("../migrations/0004_grocery_stock_precision.sql"), kind: MigrationKind::Up },
-        Migration { version: 5, description: "sale_discount_metadata", sql: include_str!("../migrations/0005_sale_discounts.sql"), kind: MigrationKind::Up },
-        Migration { version: 6, description: "employee_role_code_policy", sql: include_str!("../migrations/0006_employee_role_code_policy.sql"), kind: MigrationKind::Up },
-        Migration { version: 7, description: "printer_automation_settings", sql: include_str!("../migrations/0007_printer_automation_settings.sql"), kind: MigrationKind::Up },
-        Migration { version: 8, description: "staff_pin_hashing", sql: include_str!("../migrations/0008_staff_pin_hashing.sql"), kind: MigrationKind::Up },
-    ];
-
     tauri::Builder::default()
-        .plugin(tauri_plugin_sql::Builder::default().add_migrations("sqlite:cpipos.db", migrations).build())
+        .plugin(tauri_plugin_sql::Builder::default().build())
         .setup(|app| {
             let handle = app.handle().clone();
+            schema_repair::ensure_database_schema(&handle)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_millis(5500));
                 let _ = complete_startup_splash(handle);
