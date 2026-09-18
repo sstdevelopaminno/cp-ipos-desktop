@@ -98,7 +98,7 @@ function Modal({ children, className = "", onClose }: { children: ReactNode; cla
   return <div className="desktop-pos-modal-backdrop" onMouseDown={onClose}><section className={`desktop-pos-modal ${className}`} onMouseDown={(event) => event.stopPropagation()}>{children}</section></div>;
 }
 
-export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, language, refreshProducts }: {
+export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, language, refreshProducts, fixedMode }: {
   repo: PosRepository;
   staff: Staff;
   shift: Shift;
@@ -106,10 +106,11 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
   products: Product[];
   language: Language;
   refreshProducts: () => Promise<void>;
+  fixedMode?: "takeaway" | "dine_in";
 }) {
   const license = useDesktopLicense();
   const th = language === "th";
-  const [mode, setMode] = useState<SalesMode | null>("grocery");
+  const [mode, setMode] = useState<SalesMode | null>(fixedMode ?? "takeaway");
   const [modePicker, setModePicker] = useState(false);
   const [groceryCart, setGroceryCart] = useState<CartLine[]>(() => readJson<CartLine[]>(GROCERY_CART_KEY, []));
   const [takeawayCart, setTakeawayCart] = useState<CartLine[]>(() => readJson<CartLine[]>(TAKEAWAY_CART_KEY, []));
@@ -134,14 +135,11 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
 
   useEffect(() => { const timer = window.setInterval(() => setClock(new Date()), 1000); return () => window.clearInterval(timer); }, []);
   useEffect(() => {
-    const openPicker = () => setModePicker(true);
-    window.addEventListener("cpipos:open-sales-mode-picker", openPicker);
-    return () => window.removeEventListener("cpipos:open-sales-mode-picker", openPicker);
-  }, []);
-  useEffect(() => {
-    const label = mode === "dine_in" ? (th ? "นั่งโต๊ะ" : "Dine-in") : mode === "takeaway" ? (th ? "กลับบ้าน" : "Takeaway") : (th ? "ร้านชำ / ค้าปลีก" : "Grocery / Retail");
-    window.dispatchEvent(new CustomEvent("cpipos:sales-mode-changed", { detail: { mode: mode || "grocery", label } }));
-  }, [mode, th]);
+    if (!fixedMode) return;
+    setMode(fixedMode);
+    setModePicker(false);
+    if (fixedMode !== "dine_in") setSelectedTable(null);
+  }, [fixedMode]);
   useEffect(() => writeJson(GROCERY_CART_KEY, groceryCart), [groceryCart]);
   useEffect(() => writeJson(TAKEAWAY_CART_KEY, takeawayCart), [takeawayCart]);
   useEffect(() => writeJson(TABLE_BILLS_KEY, tableBills), [tableBills]);
