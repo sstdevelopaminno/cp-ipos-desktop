@@ -249,12 +249,17 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
       setTableBills((current) => {
         const bill = current[selectedTable];
         if (!bill) return current;
-        return { ...current, [selectedTable]: { ...bill, items: updater(bill.items) } };
+        const nextItems = updater(bill.items);
+        return { ...current, [selectedTable]: { ...bill, items: nextItems, discount: nextItems.length ? (bill.discount ?? null) : null } };
       });
     } else if (mode === "grocery") {
       setGroceryCart(updater);
     } else {
-      setTakeawayCart(updater);
+      setTakeawayCart((current) => {
+        const nextItems = updater(current);
+        if (!nextItems.length) setTakeawayDiscount(null);
+        return nextItems;
+      });
     }
   };
 
