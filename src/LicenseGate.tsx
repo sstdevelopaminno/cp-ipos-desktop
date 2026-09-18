@@ -265,6 +265,15 @@ export function LicenseGate({ children }: { children: ReactNode }) {
 
   if (state.loading) return <main className="license-loading"><section><img src="/icon.png" alt="CpIPOS" /><h1>กำลังตรวจสอบสิทธิ์การใช้งาน</h1><p>ตรวจสอบ License แบบออฟไลน์...</p></section></main>;
 
+  // Publish synchronously before rendering App so restricted modes never flash
+  // on screen while React effects are still being scheduled.
+  window.__CPIPOS_LICENSE_RUNTIME__ = {
+    mode: state.mode,
+    token: state.token,
+    deviceCode: state.deviceCode,
+    payload: state.payload ? { licenseId: state.payload.licenseId, expiresAt: state.payload.expiresAt } : undefined
+  };
+
   const locked = state.mode === "locked" || state.mode === "error";
   return <>
     {!locked && children}
