@@ -11,12 +11,14 @@ import { ProductsScreenV2 } from "./ProductsScreen";
 import { ReportsDashboardScreen } from "./ReportsDashboardScreen";
 import { TableManagementScreen } from "./TableManagementScreen";
 import { maskPromptPayId, normalizePromptPayId, resolvePaymentQr } from "./payment-qr";
+import { licensedSalesModes, type CpiposSalesMode } from "./license-entitlements";
 import "./inventory-ui.css";
 
 type View = "sales" | "tables" | "products" | "salesHistory" | "reports" | "employees" | "settings";
 const STAFF_ALLOWED_VIEWS = new Set<View>(["sales", "salesHistory"]);
 const canUseAdminViews = (staff: Staff | null) => staff?.role === "owner" || staff?.role === "manager";
 const canAccessView = (staff: Staff | null, view: View) => canUseAdminViews(staff) || STAFF_ALLOWED_VIEWS.has(view);
+const licenseAllowsView = (view: View, salesModes: CpiposSalesMode[]) => view !== "tables" || salesModes.includes("dine-in");
 const cleanEmployeeCode = (value: string) => value.replace(/\s+/g, "").toUpperCase().slice(0, 4);
 const cleanPin = (value: string) => value.replace(/\D/g, "").slice(0, 4);
 const money = (n: number) => `฿${Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -117,6 +119,7 @@ export default function App() {
   const [closeShift, setCloseShift] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
   const [salesModeLabel, setSalesModeLabel] = useState("ร้านชำ / ค้าปลีก");
+  const [salesModes, setSalesModes] = useState<CpiposSalesMode[]>(() => licensedSalesModes());
   const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
     const saved = localStorage.getItem("cpipos.nav.collapsed");
     return saved === null ? detectScreenProfile().compactNav : saved === "1";
@@ -154,7 +157,20 @@ export default function App() {
     window.addEventListener("cpipos:sales-mode-changed", onModeChanged);
     return () => window.removeEventListener("cpipos:sales-mode-changed", onModeChanged);
   }, []);
-  useEffect(() => { if (staff && !canAccessView(staff, view)) setView("sales"); }, [staff, view]);
+  useEffect(() => {
+    const refreshLicenseViews = () => setSalesModes(licensedSalesModes());
+    const initial = window.setTimeout(refreshLicenseViews, 0);
+    window.addEventListener("cpipos:license-entitlements", refreshLicenseViews);
+    window.addEventListener("cpipos:license-online-status", refreshLicenseViews);
+    return () => {
+      window.clearTimeout(initial);
+      window.removeEventListener("cpipos:license-entitlements", refreshLicenseViews);
+      window.removeEventListener("cpipos:license-online-status", refreshLicenseViews);
+    };
+  }, []);
+  useEffect(() => {
+    if (staff && (!canAccessView(staff, view) || !licenseAllowsView(view, salesModes))) setView("sales");
+  }, [staff, view, salesModes]);
   useEffect(() => {
     let alive = true;
     let guardTimer = 0;
@@ -215,8 +231,9 @@ export default function App() {
   ];
 
   const hasFullAccess = canUseAdminViews(staff);
-  const visibleNav = hasFullAccess ? nav : nav.filter(item => STAFF_ALLOWED_VIEWS.has(item.id as View));
-  const activeView = canAccessView(staff, view) ? view : "sales";
+  const roleVisibleNav = hasFullAccess ? nav : nav.filter(item => STAFF_ALLOWED_VIEWS.has(item.id as View));
+  const visibleNav = roleVisibleNav.filter(item => licenseAllowsView(item.id as View, salesModes));
+  const activeView = canAccessView(staff, view) && licenseAllowsView(view, salesModes) ? view : "sales";
   const effectiveNavCollapsed = screenProfile.compactNav || navCollapsed;
   const shellClassName = "app-shell " + (effectiveNavCollapsed ? "nav-collapsed " : "") + (screenProfile.shortNav ? "nav-short " : "") + (screenProfile.compactNav ? "nav-auto-compact" : "");
 
@@ -225,7 +242,7 @@ export default function App() {
     <section className="workspace">
       <header className="topbar">
         <div className="topbar-brand"><strong>CpIPOS</strong><span>{settings.storeName} / {settings.branchName}</span></div>
-        {activeView === "sales" && <button className="topbar-mode-switch" onClick={() => window.dispatchEvent(new CustomEvent("cpipos:open-sales-mode-picker"))} title="เลือกหรือสลับโหมดการขาย">
+        {activeView === "sales" && salesModes.length > 1 && <button className="topbar-mode-switch" onClick={() => window.dispatchEvent(new CustomEvent("cpipos:open-sales-mode-picker"))} title="เลือกหรือสลับโหมดการขาย">
           <span className="topbar-mode-switch__icon">⌂</span>
           <span><small>เลือก / สลับโหมด</small><strong>{salesModeLabel}</strong></span>
           <b>⌄</b>
@@ -234,7 +251,7 @@ export default function App() {
       </header>
       <div className={`view-body ${activeView === "sales" ? "sales-view" : ""} ${activeView === "reports" ? "reports-view" : ""}`}>
         {activeView === "sales" && <RetailSalesScreen repo={repo} staff={staff} shift={shift} settings={settings} products={products} language={language} refreshProducts={() => refreshProducts(repo)} />}
-        {activeView === "tables" && <TableManagementScreen language={language} />}
+        {activeView === "tables" && salesModes.includes("dine-in") && <TableManagementScreen language={language} />}
         {activeView === "products" && <ProductsScreenV2 repo={repo} staff={staff} products={products} language={language} refreshProducts={() => refreshProducts(repo)} requestStockNotification={requestStockNotification} />}
         {activeView === "salesHistory" && <SalesHistoryScreenV2 repo={repo} staff={staff} shift={shift} settings={settings} language={language} />}
         {activeView === "reports" && <ReportsScreen repo={repo} language={language} />}
