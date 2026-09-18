@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { AppSettings, CartLine, Language, Product, Receipt, Shift, Staff } from "./domain/types";
 import type { PosRepository, ProductInput } from "./data/repository";
 import { productName } from "./i18n";
+import { resolvePaymentQr } from "./payment-qr";
 import { printReceiptNative } from "./receipt-print";
 import "./grocery-sales.css";
 
@@ -578,7 +579,7 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
     {toast && <div className={`grocery-toast ${toast.kind}`}>{toast.text}</div>}
     {paymentChoice && <PaymentChoice total={pricing.total} onClose={() => setPaymentChoice(false)} onCash={() => { setPaymentChoice(false); setCashOpen(true); }} onTransfer={() => { setPaymentChoice(false); setTransferOpen(true); }} />}
     {cashOpen && <CashPayment total={pricing.total} busy={busy} onClose={() => setCashOpen(false)} onConfirm={paid => completeSale("cash", paid)} />}
-    {transferOpen && <TransferPayment total={pricing.total} busy={busy} onClose={() => setTransferOpen(false)} onConfirm={() => completeSale("transfer", pricing.total)} />}
+    {transferOpen && <TransferPayment total={pricing.total} settings={settings} busy={busy} onClose={() => setTransferOpen(false)} onConfirm={() => completeSale("transfer", pricing.total)} />}
     {discountOpen && <DiscountModal subtotal={pricing.subtotal} current={discount} onClose={() => setDiscountOpen(false)} onApply={next => { setDiscount(next); setDiscountOpen(false); focusScanner(); }} />}
     {parkListOpen && <ParkedBillsModal bills={parkedBills} onClose={() => { setParkListOpen(false); focusScanner(); }} onRestore={restoreParkedBill} onRemove={removeParkedBill} />}
     {receipt && <ReceiptView receipt={receipt} onClose={() => { setReceipt(null); focusScanner(); }} />}
@@ -670,17 +671,58 @@ function CashPayment({ total, busy, onClose, onConfirm }: { total: number; busy:
     </div>
   </SimpleModal>;
 }
-function TransferPayment({ total, busy, onClose, onConfirm }: { total: number; busy: boolean; onClose: () => void; onConfirm: () => Promise<void> }) {
+function TransferPayment({ total, settings, busy, onClose, onConfirm }: { total: number; settings: AppSettings; busy: boolean; onClose: () => void; onConfirm: () => Promise<void> }) {
+  const [online, setOnline] = useState(() => navigator.onLine);
+  const resolved = resolvePaymentQr(settings, total, online);
+  const [qrSrc, setQrSrc] = useState(resolved.src);
+  const [qrLoaded, setQrLoaded] = useState(false);
+
+  useEffect(() => {
+    const refreshOnline = () => setOnline(navigator.onLine);
+    window.addEventListener("online", refreshOnline);
+    window.addEventListener("offline", refreshOnline);
+    return () => {
+      window.removeEventListener("online", refreshOnline);
+      window.removeEventListener("offline", refreshOnline);
+    };
+  }, []);
+
+  useEffect(() => {
+    setQrSrc(resolved.src);
+    setQrLoaded(false);
+  }, [resolved.src]);
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (busy) return;
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
-      if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); void onConfirm(); }
+      if (event.key === "Enter" && resolved.ready && qrSrc && qrLoaded) { event.preventDefault(); event.stopPropagation(); void onConfirm(); }
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [busy, onClose, onConfirm]);
-  return <SimpleModal title="ชำระด้วยเงินโอน" onClose={busy ? () => {} : onClose}><div className="grocery-payment-total">ยอดชำระ <strong>{money(total)}</strong></div><div className="grocery-transfer-warning"><strong>ตรวจสอบยอดเงินจริงก่อนยืนยัน</strong><p>ระบบ Offline บันทึกวิธีชำระเงินเท่านั้น และไม่ได้เชื่อมต่อธนาคารหรือ PromptPay เพื่อตรวจสอบยอดอัตโนมัติ</p></div><div className="grocery-modal-actions"><button className="secondary-action" disabled={busy} onClick={onClose}>ยกเลิก</button><button disabled={busy} onClick={() => void onConfirm()}>{busy ? "กำลังบันทึก..." : "ยืนยันรับชำระ"}</button></div></SimpleModal>;
+  }, [busy, onClose, onConfirm, qrLoaded, qrSrc, resolved.ready]);
+
+  const ready = resolved.ready && Boolean(qrSrc) && qrLoaded;
+
+  return <SimpleModal title="ชำระด้วยเงินโอน" onClose={busy ? () => {} : onClose}>
+    <div className="grocery-payment-total">ยอดชำระ <strong>{money(total)}</strong></div>
+    {resolved.ready && qrSrc ? <div className="grocery-transfer-qr">
+      <span className={resolved.mode === "promptpay_online" ? "online" : "offline"}>{resolved.mode === "promptpay_online" ? "PROMPTPAY ONLINE · ล็อกยอด" : "QR ธนาคารสำรอง"}</span>
+      <img src={qrSrc} alt="QR ชำระเงิน" onLoad={() => setQrLoaded(true)} onError={() => {
+        if (settings.paymentQrImage && qrSrc !== settings.paymentQrImage) {
+          setQrSrc(settings.paymentQrImage);
+          setQrLoaded(false);
+        } else {
+          setQrSrc("");
+          setQrLoaded(false);
+        }
+      }} />
+      <strong>{settings.paymentQrAccountName || "บัญชีรับชำระ"}</strong>
+      <p>{resolved.mode === "promptpay_online" ? `QR นี้กำหนดยอดไว้ที่ ${money(total)}` : "เครื่องออฟไลน์หรือใช้ QR สำรอง กรุณาตรวจสอบยอดที่โอนก่อนยืนยัน"}</p>
+      {settings.paymentQrNote ? <small>{settings.paymentQrNote}</small> : null}
+    </div> : <div className="grocery-transfer-warning"><strong>ยังไม่มี QR พร้อมใช้งาน</strong><p>{online ? "ไปที่ ตั้งค่า > ตั้งค่า QR ชำระเงิน แล้วกรอก PromptPay หรืออัปโหลดภาพ QR สำรอง" : "เครื่องออฟไลน์ กรุณาอัปโหลดภาพ QR ธนาคารสำรองไว้ในเมนูตั้งค่า"}</p></div>}
+    <div className="grocery-modal-actions"><button className="secondary-action" disabled={busy} onClick={onClose}>ยกเลิก</button><button disabled={busy || !ready} onClick={() => void onConfirm()}>{busy ? "กำลังบันทึก..." : "ยืนยันรับชำระ"}</button></div>
+  </SimpleModal>;
 }
 function DiscountModal({ subtotal, current, onClose, onApply }: { subtotal: number; current: Discount; onClose: () => void; onApply: (discount: Discount) => void }) {
   const [type, setType] = useState<"amount" | "percent">(current?.type || "percent");
