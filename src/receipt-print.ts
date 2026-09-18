@@ -1,11 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Receipt } from "./domain/types";
 
-type PrintableReceipt = Receipt & {
+export type PrintableReceipt = Receipt & {
   subtotal?: number;
   discountAmount?: number;
   discountType?: "amount" | "percent";
   discountValue?: number;
+  tableCode?: string | null;
 };
 
 const SYSTEM_LOGO = "/icon.png";
@@ -14,6 +15,14 @@ const money = (n: number) => `฿${moneyNumber(n).toLocaleString("th-TH", { mini
 const paperWidth = (receipt: PrintableReceipt) => receipt.settings.printerPaperWidthMm === "58" ? 384 : 576;
 const CUTTER_SAFE_FEED_PX = 180;
 const paymentLabel = (method: Receipt["paymentMethod"]) => method === "cash" ? "เงินสด" : method === "transfer" ? "เงินโอน" : method === "promptpay" ? "พร้อมเพย์" : "บัตร";
+
+let nativePrintQueue: Promise<void> = Promise.resolve();
+
+export function enqueueNativePrintJob(job: () => Promise<void>) {
+  const next = nativePrintQueue.then(job, job);
+  nativePrintQueue = next.catch(() => undefined);
+  return next;
+}
 
 const loadImage = (src: string) => new Promise<HTMLImageElement | null>(resolve => {
   const image = new Image();
@@ -168,6 +177,7 @@ async function printReceiptRasterNow(receipt: PrintableReceipt, printerName: str
   ctx.fillText(`เลขที่ ${receipt.receiptNo}`, 32, y); y += 24;
   ctx.fillText(new Date(receipt.createdAt).toLocaleString("th-TH"), 32, y); y += 24;
   ctx.fillText(`พนักงาน ${receipt.cashierName || receipt.employeeCode || "-"}`, 32, y); y += 24;
+  if (receipt.tableCode) { ctx.fillText(`โต๊ะ ${receipt.tableCode}`, 32, y); y += 24; }
   dashedLine(ctx, y, width); y += 36;
 
   for (const item of receipt.items) {
@@ -200,14 +210,13 @@ async function printReceiptRasterNow(receipt: PrintableReceipt, printerName: str
   await invoke("print_receipt_raster", { printerName, bytes: rasterBytes(canvas, y + CUTTER_SAFE_FEED_PX) });
 }
 
-export async function printReceiptNative(receipt: PrintableReceipt) {
+export function printReceiptNative(receipt: PrintableReceipt) {
   const printerName = receipt.settings.printerName?.trim();
-  if (!printerName) throw new Error("PRINTER_NOT_CONFIGURED");
+  if (!printerName) return Promise.reject(new Error("PRINTER_NOT_CONFIGURED"));
 
-  window.setTimeout(() => {
-    void printReceiptRasterNow(receipt, printerName).catch(error => {
-      console.warn("CpIPOS receipt print failed", error);
-      window.dispatchEvent(new CustomEvent("cpipos:receipt-print-error", { detail: error instanceof Error ? error.message : String(error) }));
-    });
-  }, 0);
+  return enqueueNativePrintJob(() => printReceiptRasterNow(receipt, printerName)).catch(error => {
+    console.warn("CpIPOS receipt print failed", error);
+    window.dispatchEvent(new CustomEvent("cpipos:receipt-print-error", { detail: error instanceof Error ? error.message : String(error) }));
+    throw error;
+  });
 }
