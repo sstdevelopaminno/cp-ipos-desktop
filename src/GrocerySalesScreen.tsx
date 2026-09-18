@@ -56,6 +56,12 @@ const money = (n: number) => `฿${moneyNumber(n).toLocaleString("th-TH", { mini
 const roundQty = (n: number) => Math.round((Number(n) || 0) * 1000) / 1000;
 const cleanCode = (value: string) => value.trim().replace(/\s+/g, "");
 const normalizeCode = (value: string) => cleanCode(value).toLowerCase();
+const physicalScannerDigit = (code: string) => {
+  const topRow = /^Digit([0-9])$/.exec(code);
+  if (topRow) return topRow[1];
+  const numpad = /^Numpad([0-9])$/.exec(code);
+  return numpad ? numpad[1] : "";
+};
 const safeScanQty = (value: number | string) => Math.max(0.001, roundQty(Number(value) || 1));
 const SYSTEM_LOGO = "/icon.png";
 const parkedBillKey = (deviceId: string, shiftId: string) => `cpipos.sales.parked.${deviceId || "device"}.${shiftId || "shift"}`;
@@ -103,6 +109,7 @@ function priceCart(cart: CartLine[], discount: Discount, language: Language) {
 
 export function RetailSalesScreen({ repo, staff, shift, settings, products, language, refreshProducts }: Props) {
   const scanRef = useRef<HTMLInputElement>(null);
+  const scanValueRef = useRef("");
   const qtyRef = useRef<HTMLInputElement>(null);
   const unknownTimerRef = useRef<number | null>(null);
   const cartRef = useRef<CartLine[]>([]);
@@ -157,6 +164,11 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
   };
 
   const focusScanner = () => window.setTimeout(() => scanRef.current?.focus(), 20);
+  const writeScannerValue = (value: string) => {
+    scanValueRef.current = value;
+    setScanValue(value);
+  };
+  const clearScannerValue = () => writeScannerValue("");
   const notify = (kind: NonNullable<ToastState>["kind"], text: string) => {
     setToast({ kind, text });
     window.setTimeout(() => setToast(null), 1500);
@@ -266,7 +278,7 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
 
     const memoryProduct = productIndex.get(key);
     if (memoryProduct) {
-      setScanValue("");
+      clearScannerValue();
       addScannedProduct(memoryProduct);
       return;
     }
@@ -274,7 +286,7 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
     try {
       const found = await repo.findProductByBarcode(rawCode) || await repo.findProductByCode(rawCode);
       if (found && found.active) {
-        setScanValue("");
+        clearScannerValue();
         addScannedProduct(found);
         return;
       }
@@ -285,19 +297,19 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
     }
 
     if (showUnknown) {
-      setScanValue("");
+      clearScannerValue();
       setUnknownBarcode(rawCode);
     }
     focusScanner();
   };
 
   const onScanChange = (value: string) => {
-    setScanValue(value);
+    writeScannerValue(value);
     const key = normalizeCode(value);
     if (!key) return;
     const found = productIndex.get(key);
     if (found) {
-      setScanValue("");
+      clearScannerValue();
       addScannedProduct(found);
     }
   };
@@ -313,6 +325,10 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
       if (unknownTimerRef.current !== null) window.clearTimeout(unknownTimerRef.current);
     };
   }, [scanValue, productIndex, scanQty]);
+
+  useEffect(() => {
+    scanValueRef.current = scanValue;
+  }, [scanValue]);
 
   useEffect(() => {
     focusScanner();
@@ -517,14 +533,29 @@ export function RetailSalesScreen({ repo, staff, shift, settings, products, lang
             value={scanValue}
             onChange={e => onScanChange(e.target.value)}
             onKeyDown={e => {
-              if (e.key === "Enter") {
-                e.preventDefault(); e.stopPropagation();
-                if (hasOpenPopup) return;
-                if (cleanCode(scanValue)) void resolveScan(scanValue, true);
+              if (hasOpenPopup) return;
+
+              const digit = physicalScannerDigit(e.code);
+              if (digit) {
+                // Keyboard-wedge scanners emit physical Digit/Numpad codes even when
+                // Windows is using a Thai keyboard layout. Prevent the localized
+                // character and append the real barcode digit ourselves.
+                e.preventDefault();
+                e.stopPropagation();
+                onScanChange(scanValueRef.current + digit);
+                return;
+              }
+
+              if (e.key === "Enter" || e.code === "NumpadEnter") {
+                e.preventDefault();
+                e.stopPropagation();
+                const raw = scanValueRef.current || scanValue;
+                if (cleanCode(raw)) void resolveScan(raw, true);
                 else if (cartRef.current.length && !busy) setPaymentChoice(true);
               }
             }}
             placeholder="ยิงบาร์โค้ด / กรอก SKU"
+            inputMode="numeric"
             autoComplete="off"
             disabled={hasOpenPopup}
             autoFocus
