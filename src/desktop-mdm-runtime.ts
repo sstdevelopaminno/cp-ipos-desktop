@@ -4,7 +4,7 @@ import { licensedSalesModes } from "./license-entitlements";
 
 const CONTROL_PLANE = String(import.meta.env.VITE_CPIPOS_IT_BASE_URL || "https://cp-ipos-it-web.vercel.app").replace(/\/$/, "");
 const HEARTBEAT_URL = `${CONTROL_PLANE}/api/desktop-license/heartbeat`;
-const APP_VERSION = "0.3.0";
+const APP_VERSION = "0.3.1";
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 const MIN_INTERVAL_MS = 60 * 1000;
 const MAX_INTERVAL_MS = 15 * 60 * 1000;
