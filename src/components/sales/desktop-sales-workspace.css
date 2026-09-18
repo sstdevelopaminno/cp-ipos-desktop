@@ -290,3 +290,11 @@
     flex:1 1 140px;
   }
 }
+
+.cash-drawer-button{min-height:42px;display:flex;align-items:center;justify-content:center;gap:8px;padding:10px 12px;border:1px solid #cbd9e8;border-radius:9px;background:linear-gradient(180deg,#fff 0%,#f5f9fd 100%);color:#24466c;font-weight:900}
+.cash-drawer-button:hover{border-color:#7eaddf;background:#eef6ff}.cash-drawer-button svg{width:20px;height:20px}
+.cash-drawer-modal{width:min(520px,92vw)}.cash-drawer-auth-panel{display:grid;grid-template-columns:68px minmax(0,1fr);gap:14px;align-items:center;margin-top:16px;padding:16px;border:1px solid #d8e4f0;border-radius:14px;background:#f8fbff}
+.cash-drawer-auth-icon{display:grid;place-items:center;width:64px;height:64px;border-radius:16px;background:#e7f1ff;color:#1769c2}.cash-drawer-auth-icon svg{width:34px;height:34px}
+.cash-drawer-auth-panel label{display:grid;gap:7px;color:#344054;font-size:12px;font-weight:900}.cash-drawer-auth-panel input{height:46px;border:1px solid #cbd9e8;border-radius:10px;padding:0 12px;font-size:22px;letter-spacing:.35em;text-align:center}
+.cash-drawer-auth-panel .form-error{grid-column:1/-1;margin:0}
+@media(max-width:620px){.cash-drawer-auth-panel{grid-template-columns:1fr}.cash-drawer-auth-icon{justify-self:center}}
