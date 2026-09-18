@@ -10,6 +10,7 @@ import App from "./App";
 import { LicenseGate } from "./LicenseGate";
 import "./desktop-cloud-sync";
 import "./desktop-paid-cloud-backup";
+import "./desktop-version-network-patch";
 import "./desktop-mdm-late-start";
 import "./license-machine-binding-guard";
 import "./v030-license-authority-runtime";
