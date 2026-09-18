@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release tag, for example v0.3.0"
+        description: "Release tag, for example v0.3.1"
         required: true
-        default: "v0.3.0"
+        default: "v0.3.1"
       channel:
         description: "Release channel"
         required: true
@@ -24,7 +24,7 @@ on:
 
 jobs:
   build:
-    if: "${{ github.event_name != 'push' || startsWith(github.ref, 'refs/tags/v') || github.event.head_commit.message == 'release: build CpIPOS Desktop v0.3.0' }}"
+    if: "${{ github.event_name != 'push' || startsWith(github.ref, 'refs/tags/v') || startsWith(github.event.head_commit.message, 'release: build CpIPOS Desktop v') }}"
     permissions:
       contents: write
     strategy:
@@ -84,7 +84,8 @@ jobs:
             Offline-first POS release for Windows.
             Includes signed offline License enforcement, 7-day trial lock, licensed sales-mode entitlements,
             MDM heartbeat/telemetry, Cloud Backup integration, receipt printing, cash drawer support,
-            PromptPay/QR payment, grocery barcode workflow, takeaway mode and dine-in/table mode.
+            PromptPay/QR payment, grocery barcode workflow, takeaway mode, dine-in/table mode,
+            whole-bill amount/percent discounts with persisted receipt metadata.
 
             Production activation requires a CUTTING POINT TECH IT-signed License bound to approved device fingerprints.
           releaseDraft: false
