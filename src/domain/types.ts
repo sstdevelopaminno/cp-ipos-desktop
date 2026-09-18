@@ -88,6 +88,10 @@ export type AppSettings = {
   printerConnectionStatus: string;
   printerLastCheckedAt: string;
   cashDrawerEnabled: boolean;
+  paymentQrEnabled?: boolean;
+  paymentQrImage?: string;
+  paymentQrAccountName?: string;
+  paymentQrNote?: string;
   scannerMode: string;
   remoteManagementEnabled: boolean;
   programLicenseKey: string;
