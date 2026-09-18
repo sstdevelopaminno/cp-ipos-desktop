@@ -12,7 +12,8 @@ import { useDesktopLicense } from "../license/LicenseGate";
 import "./desktop-sales-workspace.css";
 
 type SalesMode = "grocery" | "takeaway" | "dine_in";
-type TableBill = { tableCode: string; billNo: string; openedAt: string; items: CartLine[] };
+type Discount = { type: "amount" | "percent"; value: number } | null;
+type TableBill = { tableCode: string; billNo: string; openedAt: string; items: CartLine[]; discount?: Discount };
 type TableBills = Record<string, TableBill>;
 type PaymentStep = "review" | "cash" | "transfer" | null;
 type NoticeKind = "ok" | "warn" | "error";
@@ -20,9 +21,33 @@ type NoticeKind = "ok" | "warn" | "error";
 const TABLE_BILLS_KEY = "cpipos.desktop.table-bills.v1";
 const GROCERY_CART_KEY = "cpipos.desktop.grocery-cart.v1";
 const TAKEAWAY_CART_KEY = "cpipos.desktop.takeaway-cart.v1";
+const TAKEAWAY_DISCOUNT_KEY = "cpipos.desktop.takeaway-discount.v1";
 
 function money(value: number) {
   return `฿${Number(value || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+const moneyNumber = (value: number) => Math.round((Number(value) || 0) * 100) / 100;
+
+function priceCart(cart: CartLine[], discount: Discount, language: Language) {
+  const subtotal = moneyNumber(cart.reduce((sum, line) => sum + Number(line.price) * Number(line.quantity), 0));
+  const requestedDiscount = discount
+    ? discount.type === "percent"
+      ? moneyNumber(subtotal * Math.min(100, Math.max(0, discount.value)) / 100)
+      : moneyNumber(Math.min(subtotal, Math.max(0, discount.value)))
+    : 0;
+  const rate = subtotal > 0 ? requestedDiscount / subtotal : 0;
+  const checkoutItems = cart.map(line => ({
+    productId: line.id,
+    name: productName(language, line),
+    quantity: Number(line.quantity),
+    unitPrice: moneyNumber(Number(line.price) * (1 - rate)),
+    originalUnitPrice: moneyNumber(Number(line.price)),
+    discountType: discount?.type || "none" as const,
+    discountValue: moneyNumber(discount?.value || 0),
+  }));
+  const total = moneyNumber(checkoutItems.reduce((sum, line) => sum + Number(line.quantity) * Number(line.unitPrice), 0));
+  return { subtotal, total, discountAmount: moneyNumber(Math.max(0, subtotal - total)), checkoutItems };
 }
 
 function readJson<T>(key: string, fallback: T): T {
@@ -58,6 +83,48 @@ function Modal({ children, className = "", onClose }: { children: ReactNode; cla
   return <div className="desktop-pos-modal-backdrop" onMouseDown={onClose}><section className={`desktop-pos-modal ${className}`} onMouseDown={(event) => event.stopPropagation()}>{children}</section></div>;
 }
 
+function DiscountModal({ language, subtotal, current, onClose, onApply }: {
+  language: Language;
+  subtotal: number;
+  current: Discount;
+  onClose: () => void;
+  onApply: (discount: Discount) => void;
+}) {
+  const th = language === "th";
+  const [type, setType] = useState<"amount" | "percent">(current?.type || "percent");
+  const [value, setValue] = useState(current ? String(current.value) : "");
+  const raw = Number(value || 0);
+  const capped = type === "percent" ? Math.min(100, Math.max(0, raw)) : Math.min(subtotal, Math.max(0, raw));
+  const preview = type === "percent" ? moneyNumber(subtotal * capped / 100) : moneyNumber(capped);
+  const net = moneyNumber(Math.max(0, subtotal - preview));
+
+  return <Modal className="discount-modal" onClose={onClose}>
+    <header className="desktop-pos-modal__header">
+      <div><h2>{th ? "ส่วนลดทั้งบิล" : "Bill discount"}</h2><p>{th ? "เลือกเปอร์เซ็นต์หรือจำนวนเงิน ส่วนลดจะใช้กับยอดบิลปัจจุบัน" : "Apply a percentage or fixed discount to this bill."}</p></div>
+      <button className="icon-close" onClick={onClose}>×</button>
+    </header>
+    <div className="discount-mode-switch">
+      <button className={type === "percent" ? "active" : ""} onClick={() => setType("percent")}>{th ? "เปอร์เซ็นต์ (%)" : "Percent (%)"}</button>
+      <button className={type === "amount" ? "active" : ""} onClick={() => setType("amount")}>{th ? "จำนวนเงิน (บาท)" : "Amount (THB)"}</button>
+    </div>
+    <label className="discount-value-field">
+      <span>{type === "percent" ? (th ? "ส่วนลดเปอร์เซ็นต์" : "Discount percent") : (th ? "ส่วนลดเป็นบาท" : "Discount amount")}</span>
+      <div><input type="number" inputMode="decimal" min="0" max={type === "percent" ? 100 : subtotal} value={value} onChange={(event) => setValue(event.target.value)} autoFocus/><b>{type === "percent" ? "%" : "บาท"}</b></div>
+    </label>
+    {type === "percent" ? <div className="discount-quick-buttons">{[5,10,15,20].map(amount => <button key={amount} onClick={() => setValue(String(amount))}>{amount}%</button>)}</div> : null}
+    <div className="discount-preview">
+      <span>{th ? "ยอดสินค้า" : "Subtotal"}</span><strong>{money(subtotal)}</strong>
+      <span>{th ? "ส่วนลด" : "Discount"}</span><strong className="discount-negative">−{money(preview)}</strong>
+      <span>{th ? "ยอดสุทธิ" : "Net total"}</span><strong className="discount-net">{money(net)}</strong>
+    </div>
+    <div className="modal-actions discount-modal-actions">
+      <button onClick={() => onApply(null)}>{th ? "ล้างส่วนลด" : "Clear discount"}</button>
+      <button onClick={onClose}>{th ? "ยกเลิก" : "Cancel"}</button>
+      <button className="cash-action" disabled={capped <= 0 || subtotal <= 0} onClick={() => onApply({ type, value: moneyNumber(capped) })}>{th ? "ใช้ส่วนลด" : "Apply discount"}</button>
+    </div>
+  </Modal>;
+}
+
 export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, language, refreshProducts, fixedMode }: {
   repo: PosRepository;
   staff: Staff;
@@ -74,6 +141,7 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
   const [modePicker, setModePicker] = useState(false);
   const [groceryCart, setGroceryCart] = useState<CartLine[]>(() => readJson<CartLine[]>(GROCERY_CART_KEY, []));
   const [takeawayCart, setTakeawayCart] = useState<CartLine[]>(() => readJson<CartLine[]>(TAKEAWAY_CART_KEY, []));
+  const [takeawayDiscount, setTakeawayDiscount] = useState<Discount>(() => readJson<Discount>(TAKEAWAY_DISCOUNT_KEY, null));
   const [tableBills, setTableBills] = useState<TableBills>(() => readJson<TableBills>(TABLE_BILLS_KEY, {}));
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
   const [salesTables, setSalesTables] = useState<SalesTable[]>(() => listSalesTables().filter((table) => table.active));
@@ -82,6 +150,7 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
   const [barcode, setBarcode] = useState("");
   const scanRef = useRef<HTMLInputElement>(null);
   const [paymentStep, setPaymentStep] = useState<PaymentStep>(null);
+  const [discountOpen, setDiscountOpen] = useState(false);
   const [cashInput, setCashInput] = useState("");
   const [receipt, setReceipt] = useState<PrintableReceipt | null>(null);
   const [cancelBillOpen, setCancelBillOpen] = useState(false);
@@ -122,6 +191,7 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
   }, [fixedMode]);
   useEffect(() => writeJson(GROCERY_CART_KEY, groceryCart), [groceryCart]);
   useEffect(() => writeJson(TAKEAWAY_CART_KEY, takeawayCart), [takeawayCart]);
+  useEffect(() => writeJson(TAKEAWAY_DISCOUNT_KEY, takeawayDiscount), [takeawayDiscount]);
   useEffect(() => writeJson(TABLE_BILLS_KEY, tableBills), [tableBills]);
 
   useEffect(() => {
@@ -135,10 +205,14 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
     : mode === "grocery"
       ? groceryCart
       : takeawayCart;
-  const total = cart.reduce((sum, line) => sum + Number(line.price) * Number(line.quantity), 0);
+  const activeTableBill = selectedTable ? tableBills[selectedTable] : undefined;
+  const discount: Discount = mode === "dine_in" && selectedTable ? (activeTableBill?.discount ?? null) : takeawayDiscount;
+  const pricing = useMemo(() => priceCart(cart, discount, language), [cart, discount, language]);
+  const subtotal = pricing.subtotal;
+  const total = pricing.total;
+  const discountAmount = pricing.discountAmount;
   const cashReceived = Number(cashInput || 0);
   const cashDifference = cashReceived - total;
-  const activeTableBill = selectedTable ? tableBills[selectedTable] : undefined;
   const billNo = activeTableBill?.billNo ?? `DIN-${String(Date.now()).slice(-9)}`;
   const paymentQr = resolvePaymentQr(settings, total, online);
   const qrReady = paymentQr.ready && Boolean(qrRenderSrc) && qrLoaded;
@@ -184,6 +258,19 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
     }
   };
 
+  const setCurrentDiscount = (next: Discount) => {
+    if (mode === "dine_in" && selectedTable) {
+      setTableBills((current) => {
+        const bill = current[selectedTable];
+        if (!bill) return current;
+        return { ...current, [selectedTable]: { ...bill, discount: next } };
+      });
+    } else {
+      setTakeawayDiscount(next);
+    }
+    setDiscountOpen(false);
+  };
+
   const addProduct = (product: Product) => {
     if (product.stockQuantity <= 0) { showNotice("warn", th ? "สินค้าหมด" : "Out of stock"); return; }
     setCart((current) => current.some((line) => line.id === product.id)
@@ -216,7 +303,7 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
     if (!license.modes.dineIn) return;
     setTableBills((current) => current[tableCode] ? current : {
       ...current,
-      [tableCode]: { tableCode, billNo: `TB-${tableCode}-${Date.now().toString().slice(-10)}`, openedAt: new Date().toISOString(), items: [] }
+      [tableCode]: { tableCode, billNo: `TB-${tableCode}-${Date.now().toString().slice(-10)}`, openedAt: new Date().toISOString(), items: [], discount: null }
     });
     setSelectedTable(tableCode);
   };
@@ -230,6 +317,7 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
       setGroceryCart([]);
     } else {
       setTakeawayCart([]);
+      setTakeawayDiscount(null);
     }
   };
 
@@ -279,16 +367,34 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
     setBusy(true);
     try {
       const sale = await repo.checkout({
-        items: cart.map((line) => ({ productId: line.id, name: productName(language, line), quantity: line.quantity, unitPrice: line.price })),
+        items: pricing.checkoutItems,
         paymentMethod: method,
         paid,
         staff,
         shift,
-        deviceId: settings.deviceId
+        deviceId: settings.deviceId,
+        subtotal,
+        discountAmount,
+        discountType: discount?.type,
+        discountValue: discount?.value
       });
       const nextReceipt = await repo.getReceipt(sale.id);
       const printableReceipt: PrintableReceipt | null = nextReceipt
-        ? { ...nextReceipt, tableCode: tableCodeAtPayment }
+        ? {
+            ...nextReceipt,
+            tableCode: tableCodeAtPayment,
+            subtotal,
+            discountAmount,
+            discountType: discount?.type,
+            discountValue: discount?.value,
+            items: cart.map(line => ({
+              productId: line.id,
+              name: productName(language, line),
+              quantity: line.quantity,
+              unitPrice: line.price,
+              lineTotal: moneyNumber(line.quantity * line.price)
+            }))
+          }
         : null;
 
       clearCurrentBill();
@@ -386,7 +492,7 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
     <div className="desktop-product-grid">{visibleProducts.map((product) => <button key={product.id} className="desktop-product-card" disabled={product.stockQuantity <= 0} onClick={() => addProduct(product)}><span className="product-image">{product.imagePath ? <img src={productImageSrc(product.imagePath)} alt=""/> : productName(language, product).slice(0, 1)}</span><strong>{productName(language, product)}</strong><small>{product.barcode || product.productCode}</small><em>{th ? "คงเหลือ" : "Stock"}: {product.stockQuantity}</em><b>{money(product.price)}</b></button>)}</div>
   </section> : null;
 
-  const renderCart = () => <aside className="desktop-cart-panel"><header><h2>{th ? `รายการสินค้า (${cart.length})` : `Cart (${cart.length})`}</h2><button disabled={!cart.length} onClick={() => setCart(() => [])}>{th ? "ล้างรายการ" : "Clear"}</button></header><div className="desktop-cart-list">{cart.length === 0 ? <div className="cart-empty"><img src="/icon.png" alt="CpIPOS"/></div> : cart.map((line) => <article key={line.id} className="desktop-cart-line"><div className="cart-product-mark">{productName(language, line).slice(0, 1)}</div><div className="cart-line-info"><strong>{productName(language, line)}</strong><small>{money(line.price)}</small><div className="cart-qty"><button onClick={() => setCart((current) => current.map((item) => item.id === line.id ? { ...item, quantity: Math.max(1, item.quantity - 1) } : item))}>−</button><span>{line.quantity}</span><button onClick={() => setCart((current) => current.map((item) => item.id === line.id ? { ...item, quantity: item.quantity + 1 } : item))}>+</button><button className="line-remove" onClick={() => setCart((current) => current.filter((item) => item.id !== line.id))}>×</button></div></div><strong>{money(line.price * line.quantity)}</strong></article>)}</div><footer>{selectedTable && activeTableBill ? <div className="bill-identity"><span>{th ? "เลขที่บิล" : "Bill"}</span><strong>{activeTableBill.billNo}</strong><span>{th ? "สถานะ" : "Status"}</span><strong>{th ? "นั่งโต๊ะ" : "Dine-in"}</strong></div> : null}<div className="cart-total"><span>{th ? "ยอดรวม" : "Total"}</span><strong>{money(total)}</strong></div><div className="cart-actions"><button disabled={!cart.length} className="muted-action">{th ? "สมาชิก" : "Member"}</button><button disabled={!cart.length} className="discount-action">{th ? "ส่วนลด" : "Discount"}</button></div><button className="checkout-button" disabled={!cart.length} onClick={() => setPaymentStep("review")}>{selectedTable || mode === "grocery" ? (th ? "ชำระเงิน" : "Pay") : (th ? "สร้างออเดอร์ POS" : "Create POS order")}</button><button className="cash-drawer-button" onClick={requestManualDrawer}><Icon name="drawer"/><span>{th ? "เปิดลิ้นชัก" : "Open cash drawer"}</span></button></footer></aside>;
+  const renderCart = () => <aside className="desktop-cart-panel"><header><h2>{th ? `รายการสินค้า (${cart.length})` : `Cart (${cart.length})`}</h2><button disabled={!cart.length} onClick={() => setCart(() => [])}>{th ? "ล้างรายการ" : "Clear"}</button></header><div className="desktop-cart-list">{cart.length === 0 ? <div className="cart-empty"><img src="/icon.png" alt="CpIPOS"/></div> : cart.map((line) => <article key={line.id} className="desktop-cart-line"><div className="cart-product-mark">{productName(language, line).slice(0, 1)}</div><div className="cart-line-info"><strong>{productName(language, line)}</strong><small>{money(line.price)}</small><div className="cart-qty"><button onClick={() => setCart((current) => current.map((item) => item.id === line.id ? { ...item, quantity: Math.max(1, item.quantity - 1) } : item))}>−</button><span>{line.quantity}</span><button onClick={() => setCart((current) => current.map((item) => item.id === line.id ? { ...item, quantity: item.quantity + 1 } : item))}>+</button><button className="line-remove" onClick={() => setCart((current) => current.filter((item) => item.id !== line.id))}>×</button></div></div><strong>{money(line.price * line.quantity)}</strong></article>)}</div><footer>{selectedTable && activeTableBill ? <div className="bill-identity"><span>{th ? "เลขที่บิล" : "Bill"}</span><strong>{activeTableBill.billNo}</strong><span>{th ? "สถานะ" : "Status"}</span><strong>{th ? "นั่งโต๊ะ" : "Dine-in"}</strong></div> : null}<div className="cart-total"><span>{th ? "ยอดรวม" : "Total"}</span><strong>{money(total)}</strong></div>{discountAmount > 0 ? <div className="cart-discount-summary"><span>{th ? "ยอดสินค้า" : "Subtotal"} {money(subtotal)}</span><strong>{th ? "ส่วนลด" : "Discount"} −{money(discountAmount)}{discount?.type === "percent" ? ` (${discount.value}%)` : ""}</strong></div> : null}<div className="cart-actions"><button disabled={!cart.length} className="muted-action">{th ? "สมาชิก" : "Member"}</button><button disabled={!cart.length} className={`discount-action ${discountAmount > 0 ? "is-active" : ""}`} onClick={() => setDiscountOpen(true)}>{discountAmount > 0 ? (th ? "แก้ส่วนลด" : "Edit discount") : (th ? "ส่วนลด" : "Discount")}</button></div><button className="checkout-button" disabled={!cart.length} onClick={() => setPaymentStep("review")}>{selectedTable || mode === "grocery" ? (th ? "ชำระเงิน" : "Pay") : (th ? "สร้างออเดอร์ POS" : "Create POS order")}</button><button className="cash-drawer-button" onClick={requestManualDrawer}><Icon name="drawer"/><span>{th ? "เปิดลิ้นชัก" : "Open cash drawer"}</span></button></footer></aside>;
 
   return <section className="desktop-sales-workspace">
     <div className="sales-main-column">
@@ -396,9 +502,10 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
     </div>
     {renderCart()}
     {renderModePicker()}
+    {discountOpen ? <DiscountModal language={language} subtotal={subtotal} current={discount} onClose={() => setDiscountOpen(false)} onApply={setCurrentDiscount}/> : null}
     {notice ? <div className={`desktop-pos-toast ${notice.kind}`}>{notice.text}</div> : null}
 
-    {paymentStep === "review" ? <Modal className="payment-review-modal" onClose={() => setPaymentStep(null)}><header className="desktop-pos-modal__header"><div><h2>{th ? "รายการก่อนชำระเงิน" : "Review before payment"}</h2><p>{th ? "ตรวจสอบรายการสินค้าและยอดรวมก่อนเลือกวิธีชำระเงิน" : "Review items and total before choosing payment method."}</p></div><button className="close-text" onClick={() => setPaymentStep(null)}>{th ? "ปิด" : "Close"}</button></header><div className="review-table"><div className="review-head"><span>{th ? "รายการสินค้า" : "Item"}</span><span>{th ? "จำนวน" : "Qty"}</span><span>{th ? "รวมต่อรายการ" : "Total"}</span></div>{cart.map((line) => <div className="review-row" key={line.id}><span><strong>{productName(language, line)}</strong><small>{line.quantity} x {money(line.price)}</small></span><b>{line.quantity}</b><strong>{money(line.quantity * line.price)}</strong></div>)}</div><div className="review-total"><span>{th ? "รวมยอด" : "Grand total"}</span><strong>{money(total)}</strong></div><div className="modal-actions"><button className="cancel-action" onClick={() => setCancelBillOpen(true)}>{th ? "ยกเลิกบิล" : "Cancel bill"}</button><button className="cash-action" onClick={() => { setCashInput(""); setPaymentStep("cash"); }}>{th ? "ชำระเงินสด" : "Cash"}</button><button className="transfer-action" onClick={() => setPaymentStep("transfer")}>{th ? "ชำระเงินโอน" : "Transfer / QR"}</button></div></Modal> : null}
+    {paymentStep === "review" ? <Modal className="payment-review-modal" onClose={() => setPaymentStep(null)}><header className="desktop-pos-modal__header"><div><h2>{th ? "รายการก่อนชำระเงิน" : "Review before payment"}</h2><p>{th ? "ตรวจสอบรายการสินค้าและยอดรวมก่อนเลือกวิธีชำระเงิน" : "Review items and total before choosing payment method."}</p></div><button className="close-text" onClick={() => setPaymentStep(null)}>{th ? "ปิด" : "Close"}</button></header><div className="review-table"><div className="review-head"><span>{th ? "รายการสินค้า" : "Item"}</span><span>{th ? "จำนวน" : "Qty"}</span><span>{th ? "รวมต่อรายการ" : "Total"}</span></div>{cart.map((line) => <div className="review-row" key={line.id}><span><strong>{productName(language, line)}</strong><small>{line.quantity} x {money(line.price)}</small></span><b>{line.quantity}</b><strong>{money(line.quantity * line.price)}</strong></div>)}</div>{discountAmount > 0 ? <div className="review-discount"><span>{th ? "ยอดสินค้า" : "Subtotal"}</span><strong>{money(subtotal)}</strong><span>{th ? "ส่วนลด" : "Discount"}</span><strong>−{money(discountAmount)}</strong></div> : null}<div className="review-total"><span>{th ? "รวมยอด" : "Grand total"}</span><strong>{money(total)}</strong></div><div className="modal-actions"><button className="cancel-action" onClick={() => setCancelBillOpen(true)}>{th ? "ยกเลิกบิล" : "Cancel bill"}</button><button className="cash-action" onClick={() => { setCashInput(""); setPaymentStep("cash"); }}>{th ? "ชำระเงินสด" : "Cash"}</button><button className="transfer-action" onClick={() => setPaymentStep("transfer")}>{th ? "ชำระเงินโอน" : "Transfer / QR"}</button></div></Modal> : null}
 
     {paymentStep === "cash" ? <Modal className="desktop-cash-payment-modal" onClose={() => !busy && setPaymentStep("review")}><header className="desktop-pos-modal__header"><div><h2>{th ? "รับชำระเงินสด" : "Cash payment"}</h2><p>{th ? "กรอกจำนวนเงินที่รับจากลูกค้า" : "Enter cash received."}</p></div><button className="close-text" onClick={() => setPaymentStep("review")}>{th ? "ปิด" : "Close"}</button></header><div className="desktop-cash-layout"><section className="desktop-cash-panel"><div className="desktop-cash-summary-row desktop-cash-summary-row--due"><span>{th ? "ยอดที่ต้องชำระ" : "Amount due"}</span><strong>{money(total)}</strong></div><div className="desktop-cash-summary-row desktop-cash-summary-row--received"><span>{th ? "รับเงินจากลูกค้า" : "Received"}</span><strong className={!cashInput ? "is-placeholder" : ""}>{money(cashReceived)}</strong></div><div className="desktop-cash-quick"><span>{th ? "บล็อกรับเงินด่วน" : "Quick cash"}</span><div>{[500, 1000, 1500].map((amount) => <button key={amount} onClick={() => setCashInput(String(amount))}>{money(amount)}</button>)}</div></div><div className={`desktop-cash-summary-row desktop-cash-summary-row--difference ${cashDifference >= 0 ? "is-change" : "is-remaining"}`}><span>{cashDifference >= 0 ? (th ? "เงินทอน" : "Change") : (th ? "ยังขาด" : "Remaining")}</span><strong>{money(Math.abs(cashDifference))}</strong></div></section><section className="desktop-cash-keypad"><span className="desktop-cash-keypad__label">{th ? "แป้นตัวเลข" : "Keypad"}</span><div className="desktop-cash-keypad__grid">{["1","2","3","4","5","6","7","8","9","0","00","."].map((key) => <button key={key} onClick={() => appendCashKey(key)}>{key}</button>)}</div><div className="desktop-cash-keypad__foot"><button onClick={() => setCashInput("")}>{th ? "ล้าง" : "Clear"}</button><button onClick={() => setCashInput((current) => current.slice(0, -1))}>{th ? "ลบ" : "Back"}</button></div></section></div><div className="modal-actions modal-actions--spread desktop-cash-actions"><button className="cancel-action" onClick={() => setCancelBillOpen(true)}>{th ? "ยกเลิกบิล" : "Cancel bill"}</button><button className="cash-action" disabled={busy || cashReceived < total} onClick={() => void completePayment("cash", cashReceived)}>{busy ? (th ? "กำลังบันทึก..." : "Saving...") : (th ? "ยืนยันชำระ" : "Confirm payment")}</button></div></Modal> : null}
 
