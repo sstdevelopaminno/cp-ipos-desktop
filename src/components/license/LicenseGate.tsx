@@ -12,17 +12,53 @@ import {
 } from "../../license/offlineLicense";
 import "./license-gate.css";
 
+type DesktopAccessStatus = DesktopLicenseStatus | "trial" | "development";
+
 type LicenseContextValue = {
-  status: DesktopLicenseStatus | "development";
+  status: DesktopAccessStatus;
   payload: DesktopLicensePayload | null;
   deviceCode: string;
   modes: LicensedSalesModes;
+  trialDaysRemaining: number;
+  trialExpiresAt: string | null;
   refresh: () => Promise<void>;
 };
 
 const LicenseContext = createContext<LicenseContextValue | null>(null);
 const DEV_DEVICE_CODE = "CP-DE000-DE000-DE000-DE000";
+const TRIAL_DAYS = 7;
+const TRIAL_STARTED_KEY = "cpipos.desktop.trial.started_at.v1";
+const LICENSE_ACTIVATED_KEY = "cpipos.desktop.license.ever_activated.v1";
 const canUseDevPreview = () => typeof window !== "undefined" && ["localhost", "127.0.0.1"].includes(window.location.hostname);
+
+function readTrialWindow() {
+  const now = Date.now();
+  try {
+    let startedAt = Number(localStorage.getItem(TRIAL_STARTED_KEY) ?? 0);
+    if (!Number.isFinite(startedAt) || startedAt <= 0 || startedAt > now + 5 * 60 * 1000) {
+      startedAt = now;
+      localStorage.setItem(TRIAL_STARTED_KEY, String(startedAt));
+    }
+    const expiresAt = startedAt + TRIAL_DAYS * 24 * 60 * 60 * 1000;
+    return {
+      active: now < expiresAt,
+      startedAt,
+      expiresAt,
+      daysRemaining: Math.max(0, Math.ceil((expiresAt - now) / (24 * 60 * 60 * 1000)))
+    };
+  } catch {
+    const expiresAt = now + TRIAL_DAYS * 24 * 60 * 60 * 1000;
+    return { active: true, startedAt: now, expiresAt, daysRemaining: TRIAL_DAYS };
+  }
+}
+
+function hasActivatedRealLicense() {
+  try { return localStorage.getItem(LICENSE_ACTIVATED_KEY) === "1"; } catch { return false; }
+}
+
+function rememberRealLicenseActivation() {
+  try { localStorage.setItem(LICENSE_ACTIVATED_KEY, "1"); } catch { /* best effort */ }
+}
 
 export function useDesktopLicense() {
   const value = useContext(LicenseContext);
@@ -32,6 +68,8 @@ export function useDesktopLicense() {
       payload: null,
       deviceCode: DEV_DEVICE_CODE,
       modes: { takeaway: true, dineIn: true, grocery: true },
+      trialDaysRemaining: TRIAL_DAYS,
+      trialExpiresAt: null,
       refresh: async () => undefined
     };
   }
@@ -88,6 +126,7 @@ export function LicenseGate({ children, language = "th" }: { children: ReactNode
     const currentToken = loadDesktopLicenseToken();
     setToken(currentToken);
     const result = await verifyDesktopLicenseToken(currentToken, code);
+    if (result.status === "valid") rememberRealLicenseActivation();
     setStatus(result.status);
     setPayload(result.payload);
     setBusy(false);
@@ -102,6 +141,7 @@ export function LicenseGate({ children, language = "th" }: { children: ReactNode
       const currentToken = loadDesktopLicenseToken();
       const result = await verifyDesktopLicenseToken(currentToken, code);
       if (!alive) return;
+      if (result.status === "valid") rememberRealLicenseActivation();
       setToken(currentToken);
       setStatus(result.status);
       setPayload(result.payload);
@@ -123,20 +163,25 @@ export function LicenseGate({ children, language = "th" }: { children: ReactNode
     };
   }, [deviceCode, devBypass]);
 
-  const modes = useMemo(() => licensedSalesModes(payload?.features), [payload]);
+  const trial = readTrialWindow();
+  const trialActive = status !== "valid" && !hasActivatedRealLicense() && trial.active;
+  const licensedModes = useMemo(() => licensedSalesModes(payload?.features), [payload]);
+  const allTrialModes: LicensedSalesModes = { takeaway: true, dineIn: true, grocery: true };
   const contextValue = useMemo<LicenseContextValue>(() => ({
-    status: devBypass ? "development" : status,
-    payload: devBypass ? null : payload,
+    status: devBypass ? "development" : trialActive ? "trial" : status,
+    payload: devBypass || trialActive ? null : payload,
     deviceCode,
-    modes: devBypass ? { takeaway: true, dineIn: true, grocery: true } : modes,
+    modes: devBypass || trialActive ? allTrialModes : licensedModes,
+    trialDaysRemaining: trialActive ? trial.daysRemaining : 0,
+    trialExpiresAt: trialActive ? new Date(trial.expiresAt).toISOString() : null,
     refresh
-  }), [devBypass, status, payload, deviceCode, modes]);
+  }), [devBypass, trialActive, trial.daysRemaining, trial.expiresAt, status, payload, deviceCode, licensedModes]);
 
   if (busy) {
     return <main className="license-screen"><section className="license-card license-card--loading"><img src="/icon.png" alt="CpIPOS"/><h1>CpIPOS Desktop</h1><p>{language === "th" ? "กำลังตรวจสอบ License..." : "Checking license..."}</p></section></main>;
   }
 
-  if (devBypass || status === "valid") {
+  if (devBypass || status === "valid" || trialActive) {
     return <LicenseContext.Provider value={contextValue}>{children}</LicenseContext.Provider>;
   }
 
@@ -158,7 +203,7 @@ export function LicenseGate({ children, language = "th" }: { children: ReactNode
   return <main className="license-screen">
     <section className="license-card">
       <div className="license-brand"><img src="/icon.png" alt="CpIPOS"/><div><strong>CpIPOS Desktop</strong><span>OFFLINE LICENSE</span></div></div>
-      <div className={`license-status license-status--${status}`}><span className="license-status__dot"/><div><strong>{statusText(status, language)}</strong>{payload?.expiresAt ? <small>{language === "th" ? "หมดอายุ" : "Expires"}: {new Date(payload.expiresAt).toLocaleString(language === "th" ? "th-TH" : "en-US")}</small> : null}</div></div>
+      <div className={`license-status license-status--${status}`}><span className="license-status__dot"/><div><strong>{statusText(status, language)}</strong>{payload?.expiresAt ? <small>{language === "th" ? "หมดอายุ" : "Expires"}: {new Date(payload.expiresAt).toLocaleString(language === "th" ? "th-TH" : "en-US")}</small> : null}{status === "missing" && !hasActivatedRealLicense() && !trial.active ? <small>{language === "th" ? "ทดลองใช้งาน 7 วันสิ้นสุดแล้ว กรุณาใส่ License Key ที่ออกโดยฝ่าย IT" : "The 7-day trial has ended. Enter a License Key issued by IT."}</small> : null}</div></div>
       <div className="license-device-box"><span>{language === "th" ? "รหัสเครื่องสำหรับออก License" : "Device code for license issuing"}</span><strong>{deviceCode}</strong><button type="button" onClick={() => void copyDevice()}>{copied ? (language === "th" ? "คัดลอกแล้ว" : "Copied") : (language === "th" ? "คัดลอกรหัสเครื่อง" : "Copy device code")}</button></div>
       <div className="license-guide"><b>1</b><span>{language === "th" ? "นำรหัสเครื่องด้านบนไปใส่ในระบบ IT > ออก License POS Desktop" : "Use the device code in IT > Issue POS Desktop License."}</span><b>2</b><span>{language === "th" ? "เลือกโหมดขายที่อนุญาตและอายุ License แล้วสร้าง License Key" : "Choose licensed sales modes and term, then issue the License Key."}</span><b>3</b><span>{language === "th" ? "นำ License Key ที่ได้มาวางด้านล่างและกดเปิดใช้งาน" : "Paste the issued License Key below and activate it."}</span></div>
       <label className="license-token-label">License Key<textarea value={token} onChange={(event) => setToken(event.target.value)} placeholder="CP1...." spellCheck={false}/></label>
