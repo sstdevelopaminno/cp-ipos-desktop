@@ -9,12 +9,11 @@ type PatchableDatabaseCtor = typeof Database & {
   __cpiposStartupPatched?: boolean;
 };
 
-const STARTUP_GUARD_MS = 9500;
-const DB_LOAD_TIMEOUT_MS = 7000;
-const DB_QUERY_TIMEOUT_MS = 8000;
+const STARTUP_GUARD_MS = 12_000;
+const DB_LOAD_TIMEOUT_MS = 20_000;
+const DB_QUERY_TIMEOUT_MS = 30_000;
 const STARTUP_RECOVERY_KEY = "cpipos.startup.recoveryShown.v1";
 const FAST_PRINTER_MODE_KEY = "cpipos.printer.fastFirstSetup.v1";
-const FREE_MODE_KEY = "cpipos.license.freeForever.enabled";
 
 const textOf = (element: Element | null) => (element?.textContent || "").trim();
 
@@ -64,7 +63,7 @@ const patchDatabaseLoad = () => {
 };
 
 const isStartupSplashStillVisible = () => {
-  if (document.querySelector(".workspace, .login-card, .shift-card, .printer-required-card, .settings-page, .sales-screen")) return false;
+  if (document.querySelector(".workspace, .login-card, .shift-card, .printer-required-card, .settings-page, .sales-screen, .desktop-shell")) return false;
   const splash = document.querySelector(".splash-card, .splash .splash-card");
   const text = textOf(splash);
   return Boolean(splash && text.includes("CpIPOS Desktop") && (text.includes("กำลัง") || text.includes("Loading") || text.includes("Preparing")));
@@ -78,7 +77,6 @@ const setRecoveryStatus = (message: string) => {
 const repairStartupState = async () => {
   setRecoveryStatus("กำลังซ่อมสถานะเริ่มต้น...");
   localStorage.setItem(FAST_PRINTER_MODE_KEY, "1");
-  localStorage.setItem(FREE_MODE_KEY, "1");
   localStorage.setItem("cpipos.printer.firstSetupNote.v1", "เปิดโหมดติดตั้งเร็วเพื่อป้องกันค้างตอนค้นหาเครื่องพิมพ์");
 
   try {
@@ -89,10 +87,6 @@ const repairStartupState = async () => {
         ["printerSetupConfirmed", "true"],
         ["printerConnectionStatus", "skipped_first_setup"],
         ["printerConnectionNote", "ข้ามการค้นหาเครื่องพิมพ์ตอนติดตั้งรอบแรก สามารถตั้งค่าภายหลังได้"],
-        ["programLicenseKey", "CPIPOS-FREE-FOREVER"],
-        ["programLicenseStatus", "active"],
-        ["programLicensePlan", "Free Forever"],
-        ["programLicenseToken", "LOCAL-FREE-MODE"],
         ["remoteManagementEnabled", "false"],
       ];
       for (const [key, value] of rows) {
@@ -117,7 +111,7 @@ const showRecoveryPanel = () => {
 
   const panel = document.createElement("div");
   panel.className = "startup-recovery-panel";
-  panel.innerHTML = `<strong>โปรแกรมใช้เวลาตรวจสอบกะนานผิดปกติ</strong><small>ระบบจะไม่ปล่อยให้ค้างเงียบ ๆ ให้ลองเปิดใหม่ หรือซ่อม session/ตั้งค่าเครื่องพิมพ์รอบแรกโดยไม่ลบข้อมูลขาย</small><p data-startup-recovery-status>พร้อมกู้คืนการเริ่มต้น</p><div><button type="button" data-reload>ลองเปิดใหม่</button><button type="button" data-repair>ซ่อมแล้วเปิดใหม่</button></div>`;
+  panel.innerHTML = `<strong>โปรแกรมใช้เวลาเปิดฐานข้อมูลนานกว่าปกติ</strong><small>ระบบจะไม่ปล่อยให้ค้างเงียบ ๆ ให้ลองเปิดใหม่ หรือซ่อม session/ตั้งค่าเครื่องพิมพ์รอบแรกโดยไม่ลบข้อมูลขายและไม่ข้าม License</small><p data-startup-recovery-status>พร้อมกู้คืนการเริ่มต้น</p><div><button type="button" data-reload>ลองเปิดใหม่</button><button type="button" data-repair>ซ่อมแล้วเปิดใหม่</button></div>`;
   panel.querySelector("[data-reload]")?.addEventListener("click", () => window.location.reload());
   panel.querySelector("[data-repair]")?.addEventListener("click", () => void repairStartupState());
   card.appendChild(panel);
