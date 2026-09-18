@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import "./retail-ui.css";
 
-type NavItem = { id: string; label: string; icon: "sale" | "stock" | "history" | "report" | "staff" | "settings" | "close" | "logout" };
+type NavItem = { id: string; label: string; icon: "sale" | "tables" | "stock" | "history" | "report" | "staff" | "settings" | "close" | "logout" };
 
 type Props = {
   collapsed: boolean;
@@ -16,6 +16,7 @@ type Props = {
 
 const paths: Record<NavItem["icon"], ReactNode> = {
   sale: <><path d="M4 6h16v12H4z"/><path d="M8 10h8M8 14h5"/></>,
+  tables: <><path d="M4 8h16M7 8V5h10v3M6 8v11M18 8v11M4 19h16"/><path d="M9 12h6"/></>,
   stock: <><path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5z"/><path d="M12 12 4 7.5M12 12l8-4.5M12 12v9"/></>,
   history: <><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5M12 7v5l3 2"/></>,
   report: <><path d="M5 20V10M12 20V4M19 20v-7"/><path d="M3 20h18"/></>,
