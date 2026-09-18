@@ -2,6 +2,7 @@ import type { AuditEvent, AppSettings, Product, Receipt, Sale, SalesSummary, Shi
 import type { CancelBillInput, CheckoutInput, EmployeeInput, PosRepository, ProductInput, SaleFilters, StockInput, VoidSaleInput } from "./repository";
 import { createPinCredential, verifyPinCredential, type PinCredential } from "./pinCredential";
 import { DEMO_PRODUCTS } from "./seed";
+import { browserImageDataUrl } from "../product-image";
 
 const K = { shift:"cpipos.desktop.demo.shift", sales:"cpipos.desktop.demo.sales", items:"cpipos.desktop.demo.items", products:"cpipos.desktop.demo.products", staff:"cpipos.desktop.demo.staff", settings:"cpipos.desktop.demo.settings", audit:"cpipos.desktop.demo.audit", stock:"cpipos.desktop.demo.stock", session:"cpipos.desktop.demo.session" };
 type StoredStaff = Staff & { demoPin?: string; pinHash?: string; pinSalt?: string; pinHashAlgorithm?: PinCredential["pinHashAlgorithm"]; pinHashIterations?: number };
@@ -77,7 +78,7 @@ export class BrowserRepository implements PosRepository {
   async findProductByCode(productCode:string) { const code=productCode.trim(); return (await this.listProducts()).find(p=>p.productCode===code || p.sku===code) || null; }
   async createProduct(input:ProductInput, staff:Staff) { const products=await this.listProducts(); const productCode=input.productCode.trim(); const barcode=cleanBarcode(input.barcode); if(products.some(x=>x.productCode===productCode)) throw new Error("PRODUCT_CODE_EXISTS"); if(barcode && products.some(x=>x.barcode===barcode)) throw new Error("BARCODE_EXISTS"); const p={...input,id:input.id || crypto.randomUUID(),productCode,sku:productCode,barcode:barcode || undefined,nameTh:input.nameTh.trim(),name:input.nameTh.trim(),nameEn:input.nameEn?.trim() || undefined,quantityScale:input.quantityScale || 1,active:input.active ?? true} as Product; write(K.products,[p,...products]); await this.audit("PRODUCT_CREATED", staff, {entityType:"product", entityId:p.id}); return p; }
   async updateProduct(input:Product, staff:Staff) { const products=await this.listProducts(); if(products.some(x=>x.id!==input.id && x.productCode===input.productCode)) throw new Error("PRODUCT_CODE_EXISTS"); if(input.barcode && products.some(x=>x.id!==input.id && x.barcode===input.barcode)) throw new Error("BARCODE_EXISTS"); const clean={...input,sku:input.productCode,name:input.nameTh}; write(K.products,products.map(p=>p.id===input.id?clean:p)); await this.audit("PRODUCT_UPDATED", staff, {entityType:"product", entityId:input.id}); return clean; }
-  async saveProductImage(file:File) { return `media/products/${Date.now()}-${file.name}`; }
+  async saveProductImage(file:File) { return await browserImageDataUrl(file); }
   async getActiveShift() { return read<Shift|null>(K.shift, null); }
   async openShift(openingCash:number, staff?:Staff) { const existing=await this.getActiveShift(); if(existing) return existing; const s:Shift={id:crypto.randomUUID(),openedAt:new Date().toISOString(),openingCash:money(openingCash),status:"open"}; write(K.shift,s); await this.audit("SHIFT_OPEN", staff, {entityType:"shift",entityId:s.id,shiftId:s.id}); return s; }
   async closeShift(staff?:Staff) { const s=await this.getActiveShift(); if(s) write(K.shift,{...s,status:"closed"}); await this.audit("SHIFT_CLOSE", staff, {entityType:"shift",entityId:s?.id,shiftId:s?.id}); }
