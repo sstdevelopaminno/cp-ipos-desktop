@@ -91,11 +91,40 @@ async function callCloud(body: Record<string, unknown>) {
   return payload.data;
 }
 
+async function fetchPublicPlans() {
+  const response = await fetch(CLOUD_URL, { method: "GET", cache: "no-store" });
+  const payload = await response.json() as { data?: { plans?: CloudPlan[] } | null; error?: { code?: string; message?: string } | null };
+  if (!response.ok || payload.data == null) throw new Error(payload.error?.code || payload.error?.message || "CLOUD_PLANS_FAILED");
+  return Array.isArray(payload.data.plans) ? payload.data.plans : [];
+}
+
 async function refreshCloudState() {
-  if (!navigator.onLine || !licenseReady()) {
+  if (!navigator.onLine) {
     publish({ connected: false, checkedAt: new Date().toISOString() });
     return null;
   }
+
+  const license = licenseReady();
+  if (!license) {
+    try {
+      const plans = await fetchPublicPlans();
+      publish({
+        plans,
+        connected: false,
+        checkedAt: new Date().toISOString(),
+        lastError: ""
+      });
+      return null;
+    } catch (error) {
+      publish({
+        connected: false,
+        checkedAt: new Date().toISOString(),
+        lastError: error instanceof Error ? error.message : "CLOUD_PLANS_FAILED"
+      });
+      return null;
+    }
+  }
+
   try {
     const data = await callCloud({ action: "status" });
     const local = readLocalBackupState();
@@ -270,7 +299,7 @@ async function cycle() {
 function start() {
   const local = readLocalBackupState();
   publish({ plans: [], request: null, entitlement: null, snapshots: [], connected: false, automatic_backup: true, syncing: false, lastOffloadedRows: local.lastOffloadedRows, lastOffloadedAt: local.lastOffloadedAt });
-  window.setTimeout(() => { void cycle(); }, 20_000);
+  window.setTimeout(() => { void cycle(); }, 1200);
   window.addEventListener("online", () => { void cycle(); });
   window.addEventListener("offline", () => publish({ connected: false }));
   window.addEventListener("cpipos:cloud-refresh", () => { void refreshCloudState(); });
