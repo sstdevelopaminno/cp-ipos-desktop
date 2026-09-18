@@ -5,7 +5,7 @@ import { productName } from "../../i18n";
 import { useDesktopLicense } from "../license/LicenseGate";
 import "./desktop-sales-workspace.css";
 
-type SalesMode = "takeaway" | "dine_in";
+type SalesMode = "grocery" | "takeaway" | "dine_in";
 type TableBill = { tableCode: string; billNo: string; openedAt: string; items: CartLine[] };
 type TableBills = Record<string, TableBill>;
 type PaymentStep = "review" | "cash" | "transfer" | null;
@@ -13,6 +13,7 @@ type NoticeKind = "ok" | "warn" | "error";
 
 const TABLE_CODES = Array.from({ length: 20 }, (_, index) => `T${String(index + 1).padStart(2, "0")}`);
 const TABLE_BILLS_KEY = "cpipos.desktop.table-bills.v1";
+const GROCERY_CART_KEY = "cpipos.desktop.grocery-cart.v1";
 const TAKEAWAY_CART_KEY = "cpipos.desktop.takeaway-cart.v1";
 
 function money(value: number) {
@@ -110,6 +111,7 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
   const th = language === "th";
   const [mode, setMode] = useState<SalesMode | null>(null);
   const [modePicker, setModePicker] = useState(true);
+  const [groceryCart, setGroceryCart] = useState<CartLine[]>(() => readJson<CartLine[]>(GROCERY_CART_KEY, []));
   const [takeawayCart, setTakeawayCart] = useState<CartLine[]>(() => readJson<CartLine[]>(TAKEAWAY_CART_KEY, []));
   const [tableBills, setTableBills] = useState<TableBills>(() => readJson<TableBills>(TABLE_BILLS_KEY, {}));
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
@@ -131,15 +133,21 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
   const [clock, setClock] = useState(() => new Date());
 
   useEffect(() => { const timer = window.setInterval(() => setClock(new Date()), 1000); return () => window.clearInterval(timer); }, []);
+  useEffect(() => writeJson(GROCERY_CART_KEY, groceryCart), [groceryCart]);
   useEffect(() => writeJson(TAKEAWAY_CART_KEY, takeawayCart), [takeawayCart]);
   useEffect(() => writeJson(TABLE_BILLS_KEY, tableBills), [tableBills]);
 
   useEffect(() => {
+    if (mode === "grocery" && !license.modes.grocery) { setMode(null); setModePicker(true); }
     if (mode === "takeaway" && !license.modes.takeaway) { setMode(null); setModePicker(true); }
     if (mode === "dine_in" && !license.modes.dineIn) { setMode(null); setSelectedTable(null); setModePicker(true); }
-  }, [license.modes.takeaway, license.modes.dineIn, mode]);
+  }, [license.modes.grocery, license.modes.takeaway, license.modes.dineIn, mode]);
 
-  const cart = mode === "dine_in" && selectedTable ? (tableBills[selectedTable]?.items ?? []) : takeawayCart;
+  const cart = mode === "dine_in" && selectedTable
+    ? (tableBills[selectedTable]?.items ?? [])
+    : mode === "grocery"
+      ? groceryCart
+      : takeawayCart;
   const total = cart.reduce((sum, line) => sum + Number(line.price) * Number(line.quantity), 0);
   const activeTableBill = selectedTable ? tableBills[selectedTable] : undefined;
   const billNo = activeTableBill?.billNo ?? `DIN-${String(Date.now()).slice(-9)}`;
@@ -161,6 +169,8 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
         if (!bill) return current;
         return { ...current, [selectedTable]: { ...bill, items: updater(bill.items) } };
       });
+    } else if (mode === "grocery") {
+      setGroceryCart(updater);
     } else {
       setTakeawayCart(updater);
     }
@@ -185,12 +195,13 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
   };
 
   const selectMode = (next: SalesMode) => {
+    if (next === "grocery" && !license.modes.grocery) return;
     if (next === "takeaway" && !license.modes.takeaway) return;
     if (next === "dine_in" && !license.modes.dineIn) return;
     if (!canSwitchMode && mode && mode !== next) { showNotice("warn", th ? "กรุณาจบบิลปัจจุบันก่อนเปลี่ยนโหมด" : "Finish the current bill before switching modes."); return; }
     setMode(next);
     setModePicker(false);
-    if (next === "takeaway") setSelectedTable(null);
+    if (next !== "dine_in") setSelectedTable(null);
   };
 
   const openTable = (tableCode: string) => {
@@ -207,6 +218,8 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
       const code = selectedTable;
       setTableBills((current) => { const next = { ...current }; delete next[code]; return next; });
       setSelectedTable(null);
+    } else if (mode === "grocery") {
+      setGroceryCart([]);
     } else {
       setTakeawayCart([]);
     }
@@ -276,10 +289,9 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
   const renderModePicker = () => modePicker ? <Modal className="mode-picker-modal" onClose={() => mode ? setModePicker(false) : undefined}>
     <header className="desktop-pos-modal__header"><div><small className="eyebrow">{th ? "เลือกโหมด" : "SELECT MODE"}</small><h2>{th ? "เลือกโหมดการขาย" : "Select sales mode"}</h2><p>{th ? "เลือกวิธีรับออเดอร์ที่ต้องการใช้งาน" : "Choose the order workflow for this bill."}</p></div>{mode ? <button className="icon-close" onClick={() => setModePicker(false)}>×</button> : null}</header>
     <div className="mode-card-grid">
+      <button className={`mode-card ${mode === "grocery" ? "is-selected" : ""} ${!license.modes.grocery ? "is-locked" : ""}`} disabled={!license.modes.grocery} onClick={() => selectMode("grocery")}><span className="mode-icon"><Icon name="menu"/></span><strong>{th ? "ร้านชำ / ค้าปลีก" : "Grocery / Retail"}</strong><small>{th ? "ขายเร็วด้วยบาร์โค้ดและ SKU" : "Fast barcode and SKU checkout"}</small>{mode === "grocery" ? <b className="mode-check">✓</b> : null}{!license.modes.grocery ? <em>{th ? "ปิดโดย IT" : "Locked by IT"}</em> : null}</button>
       <button className={`mode-card ${mode === "takeaway" ? "is-selected" : ""} ${!license.modes.takeaway ? "is-locked" : ""}`} disabled={!license.modes.takeaway} onClick={() => selectMode("takeaway")}><span className="mode-icon"><Icon name="bag"/></span><strong>{th ? "กลับบ้าน" : "Takeaway"}</strong><small>{th ? "รับกลับ ไม่ใช้โต๊ะ" : "Quick sale without table"}</small>{mode === "takeaway" ? <b className="mode-check">✓</b> : null}{!license.modes.takeaway ? <em>{th ? "ปิดโดย IT" : "Locked by IT"}</em> : null}</button>
       <button className={`mode-card ${mode === "dine_in" ? "is-selected" : ""} ${!license.modes.dineIn ? "is-locked" : ""}`} disabled={!license.modes.dineIn} onClick={() => selectMode("dine_in")}><span className="mode-icon"><Icon name="table"/></span><strong>{th ? "นั่งโต๊ะ" : "Dine-in"}</strong><small>{th ? "เลือกโต๊ะและเปิดบิล" : "Open and manage table bills"}</small>{mode === "dine_in" ? <b className="mode-check">✓</b> : null}{!license.modes.dineIn ? <em>{th ? "ปิดโดย IT" : "Locked by IT"}</em> : null}</button>
-      <button className="mode-card is-locked" disabled><span className="mode-icon"><Icon name="buffet"/></span><strong>{th ? "โต๊ะบุฟเฟ่ต์" : "Buffet table"}</strong><small>{th ? "เปิดโต๊ะและเลือกรูปแบบบุฟเฟ่ต์" : "Buffet workflow"}</small><em>{th ? "ปิดโดย IT" : "Locked by IT"}</em></button>
-      <button className="mode-card is-locked" disabled><span className="mode-icon"><Icon name="delivery"/></span><strong>{th ? "เดลิเวอรี่" : "Delivery"}</strong><small>{th ? "รับออเดอร์จากแอป" : "Delivery orders"}</small><em>{th ? "ปิดโดย IT" : "Locked by IT"}</em></button>
     </div>
   </Modal> : null;
 
@@ -297,17 +309,17 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
     })}</div>
   </section> : null;
 
-  const renderCatalog = () => mode === "takeaway" || selectedTable ? <section className="product-browser">
+  const renderCatalog = () => mode === "grocery" || mode === "takeaway" || selectedTable ? <section className="product-browser">
     <div className="catalog-tools"><button className="orange-chip">{th ? "เครื่องดื่ม" : "Products"}</button><label className="search-field"><Icon name="search"/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={th ? "ค้นหาสินค้า" : "Search products"}/></label><label className="scan-field"><input ref={scanRef} value={barcode} onChange={(event) => setBarcode(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void scanBarcode(); }} placeholder={th ? "สแกนบาร์โค้ด" : "Scan barcode"}/><button onClick={() => void scanBarcode()}>{th ? "เพิ่ม" : "Add"}</button></label></div>
     <div className="category-row">{categories.map((item) => <button key={item.id} className={category === item.id ? "active" : ""} onClick={() => setCategory(item.id)}>{item.name}</button>)}</div>
     <div className="desktop-product-grid">{visibleProducts.map((product) => <button key={product.id} className="desktop-product-card" disabled={product.stockQuantity <= 0} onClick={() => addProduct(product)}><span className="product-image">{product.imagePath ? <img src={product.imagePath} alt=""/> : productName(language, product).slice(0, 1)}</span><strong>{productName(language, product)}</strong><small>{product.barcode || product.productCode}</small><em>{th ? "คงเหลือ" : "Stock"}: {product.stockQuantity}</em><b>{money(product.price)}</b></button>)}</div>
   </section> : null;
 
-  const renderCart = () => <aside className="desktop-cart-panel"><header><h2>{th ? `รายการสินค้า (${cart.length})` : `Cart (${cart.length})`}</h2><button disabled={!cart.length} onClick={() => setCart(() => [])}>{th ? "ล้างรายการ" : "Clear"}</button></header><div className="desktop-cart-list">{cart.length === 0 ? <div className="cart-empty"><img src="/icon.png" alt="CpIPOS"/></div> : cart.map((line) => <article key={line.id} className="desktop-cart-line"><div className="cart-product-mark">{productName(language, line).slice(0, 1)}</div><div className="cart-line-info"><strong>{productName(language, line)}</strong><small>{money(line.price)}</small><div className="cart-qty"><button onClick={() => setCart((current) => current.map((item) => item.id === line.id ? { ...item, quantity: Math.max(1, item.quantity - 1) } : item))}>−</button><span>{line.quantity}</span><button onClick={() => setCart((current) => current.map((item) => item.id === line.id ? { ...item, quantity: item.quantity + 1 } : item))}>+</button><button className="line-remove" onClick={() => setCart((current) => current.filter((item) => item.id !== line.id))}>×</button></div></div><strong>{money(line.price * line.quantity)}</strong></article>)}</div><footer>{selectedTable && activeTableBill ? <div className="bill-identity"><span>{th ? "เลขที่บิล" : "Bill"}</span><strong>{activeTableBill.billNo}</strong><span>{th ? "สถานะ" : "Status"}</span><strong>{th ? "นั่งโต๊ะ" : "Dine-in"}</strong></div> : null}<div className="cart-total"><span>{th ? "ยอดรวม" : "Total"}</span><strong>{money(total)}</strong></div><div className="cart-actions"><button disabled={!cart.length} className="muted-action">{th ? "สมาชิก" : "Member"}</button><button disabled={!cart.length} className="discount-action">{th ? "ส่วนลด" : "Discount"}</button></div><button className="checkout-button" disabled={!cart.length} onClick={() => setPaymentStep("review")}>{selectedTable ? (th ? "ชำระเงิน" : "Pay") : (th ? "สร้างออเดอร์ POS" : "Create POS order")}</button></footer></aside>;
+  const renderCart = () => <aside className="desktop-cart-panel"><header><h2>{th ? `รายการสินค้า (${cart.length})` : `Cart (${cart.length})`}</h2><button disabled={!cart.length} onClick={() => setCart(() => [])}>{th ? "ล้างรายการ" : "Clear"}</button></header><div className="desktop-cart-list">{cart.length === 0 ? <div className="cart-empty"><img src="/icon.png" alt="CpIPOS"/></div> : cart.map((line) => <article key={line.id} className="desktop-cart-line"><div className="cart-product-mark">{productName(language, line).slice(0, 1)}</div><div className="cart-line-info"><strong>{productName(language, line)}</strong><small>{money(line.price)}</small><div className="cart-qty"><button onClick={() => setCart((current) => current.map((item) => item.id === line.id ? { ...item, quantity: Math.max(1, item.quantity - 1) } : item))}>−</button><span>{line.quantity}</span><button onClick={() => setCart((current) => current.map((item) => item.id === line.id ? { ...item, quantity: item.quantity + 1 } : item))}>+</button><button className="line-remove" onClick={() => setCart((current) => current.filter((item) => item.id !== line.id))}>×</button></div></div><strong>{money(line.price * line.quantity)}</strong></article>)}</div><footer>{selectedTable && activeTableBill ? <div className="bill-identity"><span>{th ? "เลขที่บิล" : "Bill"}</span><strong>{activeTableBill.billNo}</strong><span>{th ? "สถานะ" : "Status"}</span><strong>{th ? "นั่งโต๊ะ" : "Dine-in"}</strong></div> : null}<div className="cart-total"><span>{th ? "ยอดรวม" : "Total"}</span><strong>{money(total)}</strong></div><div className="cart-actions"><button disabled={!cart.length} className="muted-action">{th ? "สมาชิก" : "Member"}</button><button disabled={!cart.length} className="discount-action">{th ? "ส่วนลด" : "Discount"}</button></div><button className="checkout-button" disabled={!cart.length} onClick={() => setPaymentStep("review")}>{selectedTable || mode === "grocery" ? (th ? "ชำระเงิน" : "Pay") : (th ? "สร้างออเดอร์ POS" : "Create POS order")}</button></footer></aside>;
 
   return <section className="desktop-sales-workspace">
     <div className="sales-main-column">
-      <header className="sales-status-bar"><button className="back-circle" aria-label="back">‹</button><button className="mode-switch" onClick={() => setModePicker(true)} disabled={!canSwitchMode}><span className="mode-switch__icon"><Icon name={mode === "dine_in" ? "table" : "bag"}/></span><span><small>{th ? "เลือกโหมด" : "Mode"}</small><strong>{mode === "dine_in" ? (th ? "นั่งโต๊ะ" : "Dine-in") : (th ? "กลับบ้าน" : "Takeaway")}</strong></span></button><div className="status-block"><span>{th ? "ชื่อผู้ขาย" : "Seller"}</span><strong>{staff.displayName}</strong><span>{th ? "กะ" : "Shift"}</span><strong>{shift.status}</strong><span>{th ? "สาขา" : "Branch"}</span><strong>{settings.branchName}</strong></div><div className="status-block status-block--right"><span>{th ? "วันที่" : "Date"}</span><strong>{clock.toLocaleDateString(th ? "th-TH" : "en-US")}</strong><span>{th ? "เวลา" : "Time"}</span><strong>{clock.toLocaleTimeString(th ? "th-TH" : "en-US")}</strong><span>{th ? "รหัสเครื่องแอป" : "Device"}</span><strong>{license.deviceCode}</strong></div></header>
+      <header className="sales-mode-toolbar"><button className="mode-switch mode-switch--primary" onClick={() => setModePicker(true)} disabled={!canSwitchMode}><span className="mode-switch__icon"><Icon name={mode === "dine_in" ? "table" : mode === "grocery" ? "menu" : "bag"}/></span><span><small>{th ? "สลับโหมดการขาย" : "Switch sales mode"}</small><strong>{mode === "dine_in" ? (th ? "นั่งโต๊ะ" : "Dine-in") : mode === "grocery" ? (th ? "ร้านชำ / ค้าปลีก" : "Grocery / Retail") : (th ? "กลับบ้าน" : "Takeaway")}</strong></span></button>{license.status === "trial" ? <span className="trial-mode-chip">{th ? `ทดลองใช้งาน · เปิดทุกโหมด · เหลือ ${license.trialDaysRemaining} วัน` : `Trial · all modes · ${license.trialDaysRemaining} days left`}</span> : null}</header>
       {selectedTable ? <div className="table-session-toolbar"><span>{th ? "โต๊ะ" : "Table"}: <strong>{selectedTable}</strong></span><button onClick={() => setMoveOpen(true)}>{th ? "ย้ายโต๊ะ" : "Move table"}</button><button onClick={() => setSelectedTable(null)}>{th ? "เลือกโต๊ะ" : "Choose table"}</button><button className="menu-button"><Icon name="menu"/>{th ? "จัดการเมนู" : "Menu"}</button></div> : null}
       {renderTables()}
       {renderCatalog()}
