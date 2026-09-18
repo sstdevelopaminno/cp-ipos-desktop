@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { PosRepository } from "../../data/repository";
-import type { AppSettings, CartLine, Language, Product, Receipt, Shift, Staff } from "../../domain/types";
+import type { AppSettings, CartLine, Language, Product, Shift, Staff } from "../../domain/types";
 import { productName } from "../../i18n";
 import { listSalesTables, SALES_TABLES_EVENT, type SalesTable } from "../../sales-tables";
 import { resolvePaymentQr } from "../../payment-qr";
+import { printPaymentNoticeNative } from "../../payment-notice-print";
+import { printReceiptNative, type PrintableReceipt } from "../../receipt-print";
 import { useDesktopLicense } from "../license/LicenseGate";
 import "./desktop-sales-workspace.css";
 
@@ -32,52 +34,6 @@ function readJson<T>(key: string, fallback: T): T {
 
 function writeJson(key: string, value: unknown) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* persistence is best-effort */ }
-}
-
-function safeText(value: unknown) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function printDocument(html: string) {
-  const frame = document.createElement("iframe");
-  frame.style.position = "fixed";
-  frame.style.right = "0";
-  frame.style.bottom = "0";
-  frame.style.width = "0";
-  frame.style.height = "0";
-  frame.style.border = "0";
-  frame.setAttribute("aria-hidden", "true");
-  document.body.appendChild(frame);
-  const doc = frame.contentDocument;
-  if (!doc) { frame.remove(); return; }
-  doc.open();
-  doc.write(html);
-  doc.close();
-  window.setTimeout(() => {
-    frame.contentWindow?.focus();
-    frame.contentWindow?.print();
-    window.setTimeout(() => frame.remove(), 1000);
-  }, 180);
-}
-
-function thermalBaseCss() {
-  return `@page{size:80mm auto;margin:0}html,body{margin:0;padding:0;width:80mm;background:#fff;color:#000;font-family:"Noto Sans Thai",Tahoma,"Segoe UI",sans-serif}*{box-sizing:border-box}.paper{width:70mm;margin:0 auto;padding:2mm 0 3mm;font-size:12px;line-height:1.35}.center{text-align:center}.logo{width:20mm;height:20mm;object-fit:contain}.store{font-size:17px;font-weight:900}.muted{font-size:11px}.hr{border-top:1px dashed #111;margin:2mm 0}.row{display:flex;justify-content:space-between;gap:2mm;margin:.7mm 0}.row strong{text-align:right}.items{width:100%;border-collapse:collapse}.items td{padding:.7mm 0;vertical-align:top}.items td:last-child{text-align:right;white-space:nowrap}.grand{font-size:18px;font-weight:900;border-top:1px solid #000;border-bottom:1px solid #000;padding:1.5mm 0;margin:1.5mm 0}.qr{width:42mm;height:42mm;object-fit:contain;image-rendering:pixelated}`;
-}
-
-function paymentNoticeHtml(args: { settings: AppSettings; staff: Staff; tableCode?: string | null; billNo: string; items: CartLine[]; total: number; qrSrc: string }) {
-  const qr = args.qrSrc;
-  const itemRows = args.items.map((item) => `<tr><td><strong>${safeText(item.nameTh || item.name)}</strong><div class="muted">${item.quantity} x ${money(item.price)}</div></td><td>${money(item.price * item.quantity)}</td></tr>`).join("");
-  return `<!doctype html><html lang="th"><head><meta charset="utf-8"><title>PAYMENT NOTICE ${safeText(args.billNo)}</title><style>${thermalBaseCss()}</style></head><body><main class="paper"><div class="center"><img class="logo" src="${safeText("/icon.png")}" alt="CpIPOS"><div class="store">${safeText(args.settings.storeName)}</div><div>${safeText(args.settings.branchName)}</div></div><div class="hr"></div><div class="center store">ใบแจ้งชำระเงิน</div><div class="center muted">PAYMENT NOTICE / รอชำระ</div><div class="row"><span>ผู้ขาย</span><strong>${safeText(args.staff.displayName)}</strong></div>${args.tableCode ? `<div class="row"><span>โต๊ะ</span><strong>${safeText(args.tableCode)}</strong></div>` : ""}<div class="row"><span>เลขที่บิล</span><strong>${safeText(args.billNo)}</strong></div><div class="row"><span>วันที่</span><strong>${safeText(new Date().toLocaleString("th-TH"))}</strong></div><div class="hr"></div><table class="items"><tbody>${itemRows}</tbody></table><div class="row grand"><span>ยอดที่ต้องชำระ</span><strong>${money(args.total)}</strong></div>${args.settings.paymentQrAccountName ? `<div class="center muted">${safeText(args.settings.paymentQrAccountName)}</div>` : ""}<div class="center"><img class="qr" src="${safeText(qr)}" alt="Payment QR"><div><strong>สแกน QR เพื่อชำระเงิน</strong></div><div class="store">${money(args.total)}</div></div>${args.settings.paymentQrNote ? `<div class="center muted">${safeText(args.settings.paymentQrNote)}</div>` : ""}<div class="hr"></div><div class="center muted">ใบแจ้งนี้ใช้สำหรับชำระเงินเท่านั้น</div><div class="center muted">ยังไม่ใช่ใบเสร็จรับเงิน</div></main></body></html>`;
-}
-
-function receiptHtml(receipt: Receipt) {
-  const itemRows = receipt.items.map((item) => `<tr><td><strong>${safeText(item.name)}</strong><div class="muted">${item.quantity} x ${money(item.unitPrice)}</div></td><td>${money(item.lineTotal)}</td></tr>`).join("");
-  return `<!doctype html><html lang="th"><head><meta charset="utf-8"><title>${safeText(receipt.receiptNo)}</title><style>${thermalBaseCss()}</style></head><body><main class="paper"><div class="center"><img class="logo" src="/icon.png" alt="CpIPOS"><div class="store">${safeText(receipt.settings.storeName)}</div><div>${safeText(receipt.settings.branchName)}</div>${receipt.settings.address ? `<div class="muted">${safeText(receipt.settings.address)}</div>` : ""}</div><div class="hr"></div><div class="row"><span>เลขที่บิล</span><strong>${safeText(receipt.receiptNo)}</strong></div><div class="row"><span>วันที่</span><strong>${safeText(new Date(receipt.createdAt).toLocaleString("th-TH"))}</strong></div><div class="hr"></div><table class="items"><tbody>${itemRows}</tbody></table><div class="row grand"><span>ยอดรวม</span><strong>${money(receipt.total)}</strong></div><div class="row"><span>ชำระเงิน</span><strong>${receipt.paymentMethod === "cash" ? "เงินสด" : "โอน/QR"}</strong></div>${receipt.paymentMethod === "cash" ? `<div class="row"><span>รับเงิน</span><strong>${money(receipt.paid)}</strong></div><div class="row"><span>เงินทอน</span><strong>${money(receipt.changeAmount)}</strong></div>` : ""}<div class="hr"></div><div class="center">${safeText(receipt.settings.receiptFooter)}</div><div class="center muted">CpIPOS</div></main></body></html>`;
 }
 
 function Icon({ name }: { name: "bag" | "table" | "buffet" | "delivery" | "search" | "menu" }) {
@@ -124,7 +80,7 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
   const scanRef = useRef<HTMLInputElement>(null);
   const [paymentStep, setPaymentStep] = useState<PaymentStep>(null);
   const [cashInput, setCashInput] = useState("");
-  const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [receipt, setReceipt] = useState<PrintableReceipt | null>(null);
   const [cancelBillOpen, setCancelBillOpen] = useState(false);
   const [cancelPin, setCancelPin] = useState("");
   const [cancelReason, setCancelReason] = useState("");
@@ -258,6 +214,7 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
 
   const completePayment = async (method: "cash" | "transfer", paid: number) => {
     if (!cart.length || busy) return;
+    const tableCodeAtPayment = mode === "dine_in" ? selectedTable : null;
     setBusy(true);
     try {
       const sale = await repo.checkout({
@@ -269,11 +226,24 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
         deviceId: settings.deviceId
       });
       const nextReceipt = await repo.getReceipt(sale.id);
+      const printableReceipt: PrintableReceipt | null = nextReceipt
+        ? { ...nextReceipt, tableCode: tableCodeAtPayment }
+        : null;
+
       clearCurrentBill();
       setPaymentStep(null);
       setCashInput("");
+
+      if (printableReceipt) {
+        setReceipt(printableReceipt);
+        if (settings.printerAutoPrintReceipt !== false) {
+          void printReceiptNative(printableReceipt).catch(() => {
+            showNotice("warn", th ? "บันทึกบิลแล้ว แต่พิมพ์ใบเสร็จอัตโนมัติไม่สำเร็จ" : "Sale saved, but automatic receipt printing failed");
+          });
+        }
+      }
+
       await refreshProducts();
-      if (nextReceipt) setReceipt(nextReceipt);
       showNotice("ok", th ? "บันทึกการขายเรียบร้อย" : "Sale completed");
     } catch (error) {
       showNotice("error", error instanceof Error ? error.message : String(error));
@@ -361,12 +331,12 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
 
     {paymentStep === "cash" ? <Modal className="cash-payment-modal" onClose={() => !busy && setPaymentStep("review")}><header className="desktop-pos-modal__header"><div><h2>{th ? "รับชำระเงินสด" : "Cash payment"}</h2><p>{th ? "กรอกจำนวนเงินที่รับจากลูกค้า" : "Enter cash received."}</p></div><button className="close-text" onClick={() => setPaymentStep("review")}>{th ? "ปิด" : "Close"}</button></header><div className="cash-layout"><section className="cash-summary"><div className="cash-summary-row"><span>{th ? "ยอดที่ต้องชำระ" : "Amount due"}</span><strong className="green">{money(total)}</strong></div><div className="cash-summary-row"><span>{th ? "รับเงินจากลูกค้า" : "Received"}</span><strong className="blue">{money(Number(cashInput || 0))}</strong></div><div className="quick-cash"><span>{th ? "บล็อกรับเงินด่วน" : "Quick cash"}</span><div>{[500, 1000, 1500].map((amount) => <button key={amount} onClick={() => setCashInput(String(amount))}>{money(amount)}</button>)}</div></div><div className="cash-summary-row"><span>{th ? "เงินทอน" : "Change"}</span><strong className="blue">{money(Math.max(0, Number(cashInput || 0) - total))}</strong></div></section><section className="cash-keypad"><span>{th ? "แป้นตัวเลข" : "Keypad"}</span><div>{["1","2","3","4","5","6","7","8","9","0","00","."].map((key) => <button key={key} onClick={() => setCashInput((current) => `${current}${key}`)}>{key}</button>)}</div><div className="keypad-foot"><button onClick={() => setCashInput("")}>{th ? "ล้าง" : "Clear"}</button><button onClick={() => setCashInput((current) => current.slice(0, -1))}>{th ? "ลบ" : "Back"}</button></div></section></div><div className="modal-actions modal-actions--spread"><button className="cancel-action" onClick={() => setCancelBillOpen(true)}>{th ? "ยกเลิกบิล" : "Cancel bill"}</button><button className="cash-action" disabled={busy || Number(cashInput || 0) < total} onClick={() => void completePayment("cash", Number(cashInput || 0))}>{busy ? (th ? "กำลังบันทึก..." : "Saving...") : (th ? "ยืนยันชำระ" : "Confirm payment")}</button></div></Modal> : null}
 
-    {paymentStep === "transfer" ? <Modal className="transfer-payment-modal" onClose={() => !busy && setPaymentStep("review")}><header className="desktop-pos-modal__header"><div><h2>{th ? "รับชำระเงินโอน" : "Transfer / QR payment"}</h2><p>{paymentQr.mode === "promptpay_online" ? (th ? "PromptPay Online · QR ล็อกยอดตามบิล" : "PromptPay Online · amount-locked QR") : paymentQr.mode === "bank_image_offline" ? (th ? "QR ธนาคารสำรอง" : "Bank QR fallback") : (th ? "ยังไม่มี QR พร้อมใช้งาน" : "QR not configured")}</p></div><button className="icon-close" onClick={() => setPaymentStep("review")}>×</button></header><div className="transfer-amount"><span>{th ? "ยอดชำระ" : "Amount due"}</span><strong>{money(total)}</strong></div><h3>{th ? "สแกน QR เพื่อชำระเงิน" : "Scan QR to pay"}</h3>{paymentQr.ready && qrRenderSrc ? <div className="qr-payment-box"><img src={qrRenderSrc} alt="QR Payment" onLoad={() => setQrLoaded(true)} onError={() => { if (settings.paymentQrImage && qrRenderSrc !== settings.paymentQrImage) { setQrRenderSrc(settings.paymentQrImage); setQrLoaded(false); } else { setQrRenderSrc(""); setQrLoaded(false); } }}/><strong>{paymentQr.label || (th ? "บัญชีรับชำระ" : "Payment account")}</strong><small>{paymentQr.mode === "promptpay_online" ? (th ? `ยอดถูกกำหนดไว้ที่ ${money(total)}` : `Amount locked to ${money(total)}`) : (th ? "QR คงที่จากธนาคาร · ตรวจสอบยอดก่อนยืนยัน" : "Static bank QR · verify amount before confirming")}</small>{settings.paymentQrNote ? <small>{settings.paymentQrNote}</small> : null}</div> : <div className="qr-required-box"><b>!</b><strong>{th ? "ยังไม่มี QR พร้อมใช้งาน" : "Payment QR is not available"}</strong><p>{online ? (th ? "ไปที่ ตั้งค่า > ตั้งค่า QR ชำระเงิน แล้วกรอกหมายเลข PromptPay หรืออัปโหลดภาพ QR สำรอง" : "Configure PromptPay or a fallback bank QR in Settings.") : (th ? "เครื่องออฟไลน์ กรุณาอัปโหลดภาพ QR ธนาคารสำรองในเมนูตั้งค่า" : "Offline: configure a fallback bank QR image.")}</p></div>}<div className="transfer-actions"><button disabled={!qrReady} onClick={() => printDocument(paymentNoticeHtml({ settings, staff, tableCode: selectedTable, billNo, items: cart, total, qrSrc: qrRenderSrc }))}>{th ? "พิมพ์ใบแจ้งชำระเงิน" : "Print payment notice"}</button><button className="transfer-confirm" disabled={!qrReady || busy} onClick={() => void completePayment("transfer", total)}>{busy ? (th ? "กำลังบันทึก..." : "Saving...") : (th ? "ยืนยันรับชำระแล้ว" : "Confirm paid")}</button></div></Modal> : null}
+    {paymentStep === "transfer" ? <Modal className="transfer-payment-modal" onClose={() => !busy && setPaymentStep("review")}><header className="desktop-pos-modal__header"><div><h2>{th ? "รับชำระเงินโอน" : "Transfer / QR payment"}</h2><p>{paymentQr.mode === "promptpay_online" ? (th ? "PromptPay Online · QR ล็อกยอดตามบิล" : "PromptPay Online · amount-locked QR") : paymentQr.mode === "bank_image_offline" ? (th ? "QR ธนาคารสำรอง" : "Bank QR fallback") : (th ? "ยังไม่มี QR พร้อมใช้งาน" : "QR not configured")}</p></div><button className="icon-close" onClick={() => setPaymentStep("review")}>×</button></header><div className="transfer-amount"><span>{th ? "ยอดชำระ" : "Amount due"}</span><strong>{money(total)}</strong></div><h3>{th ? "สแกน QR เพื่อชำระเงิน" : "Scan QR to pay"}</h3>{paymentQr.ready && qrRenderSrc ? <div className="qr-payment-box"><img src={qrRenderSrc} alt="QR Payment" onLoad={() => setQrLoaded(true)} onError={() => { if (settings.paymentQrImage && qrRenderSrc !== settings.paymentQrImage) { setQrRenderSrc(settings.paymentQrImage); setQrLoaded(false); } else { setQrRenderSrc(""); setQrLoaded(false); } }}/><strong>{paymentQr.label || (th ? "บัญชีรับชำระ" : "Payment account")}</strong><small>{paymentQr.mode === "promptpay_online" ? (th ? `ยอดถูกกำหนดไว้ที่ ${money(total)}` : `Amount locked to ${money(total)}`) : (th ? "QR คงที่จากธนาคาร · ตรวจสอบยอดก่อนยืนยัน" : "Static bank QR · verify amount before confirming")}</small>{settings.paymentQrNote ? <small>{settings.paymentQrNote}</small> : null}</div> : <div className="qr-required-box"><b>!</b><strong>{th ? "ยังไม่มี QR พร้อมใช้งาน" : "Payment QR is not available"}</strong><p>{online ? (th ? "ไปที่ ตั้งค่า > ตั้งค่า QR ชำระเงิน แล้วกรอกหมายเลข PromptPay หรืออัปโหลดภาพ QR สำรอง" : "Configure PromptPay or a fallback bank QR in Settings.") : (th ? "เครื่องออฟไลน์ กรุณาอัปโหลดภาพ QR ธนาคารสำรองในเมนูตั้งค่า" : "Offline: configure a fallback bank QR image.")}</p></div>}<div className="transfer-actions"><button disabled={!qrReady || !settings.printerName} onClick={() => void printPaymentNoticeNative({ settings, staff, tableCode: selectedTable, billNo, items: cart, total, qrSrc: qrRenderSrc, fallbackQrSrc: settings.paymentQrImage, qrMode: paymentQr.mode }).then(() => showNotice("ok", th ? "ส่งใบแจ้งชำระเงินไปเครื่องพิมพ์แล้ว" : "Payment notice sent to printer")).catch(() => showNotice("error", th ? "พิมพ์ใบแจ้งชำระเงินไม่สำเร็จ ตรวจสอบเครื่องพิมพ์และ QR" : "Payment notice print failed"))}>{settings.printerName ? (th ? "พิมพ์ใบแจ้งชำระเงิน" : "Print payment notice") : (th ? "ตั้งค่าเครื่องพิมพ์ก่อน" : "Configure printer")}</button><button className="transfer-confirm" disabled={!qrReady || busy} onClick={() => void completePayment("transfer", total)}>{busy ? (th ? "กำลังบันทึก..." : "Saving...") : (th ? "ยืนยันรับชำระแล้ว" : "Confirm paid")}</button></div></Modal> : null}
 
     {cancelBillOpen ? <Modal className="cancel-bill-modal" onClose={() => !busy && setCancelBillOpen(false)}><header className="desktop-pos-modal__header"><div><h2>{th ? "ยกเลิกบิล" : "Cancel bill"}</h2><p>{th ? "ต้องยืนยันด้วย PIN ผู้จัดการหรือเจ้าของร้าน" : "Owner or manager PIN is required."}</p></div><button className="icon-close" onClick={() => setCancelBillOpen(false)}>×</button></header><label>PIN<input type="password" value={cancelPin} onChange={(event) => setCancelPin(event.target.value)}/></label><label>{th ? "เหตุผล" : "Reason"}<input value={cancelReason} onChange={(event) => setCancelReason(event.target.value)}/></label>{cancelError ? <p className="form-error">{cancelError}</p> : null}<div className="modal-actions"><button onClick={() => setCancelBillOpen(false)}>{th ? "กลับ" : "Back"}</button><button className="cancel-action" disabled={busy || !cancelPin || !cancelReason.trim()} onClick={() => void cancelCurrentBill()}>{th ? "ยืนยันยกเลิกบิล" : "Confirm cancellation"}</button></div></Modal> : null}
 
     {moveOpen && selectedTable ? <Modal className="move-table-modal" onClose={() => setMoveOpen(false)}><header className="desktop-pos-modal__header"><div><h2>{th ? `ย้ายโต๊ะ ${selectedTable}` : `Move ${selectedTable}`}</h2><p>{th ? "เลือกโต๊ะว่างปลายทางจากรายการโต๊ะที่เปิดใช้งาน" : "Choose an available active table."}</p></div><button className="icon-close" onClick={() => setMoveOpen(false)}>×</button></header><div className="move-table-grid">{salesTables.filter((table) => table.code !== selectedTable).map((table) => <button key={table.id} disabled={Boolean(tableBills[table.code])} onClick={() => moveTable(table.code)}><strong>{table.code}</strong><span>{tableBills[table.code] ? (th ? "มีบิล" : "Occupied") : table.name}</span></button>)}</div></Modal> : null}
 
-    {receipt ? <Modal className="receipt-success-modal" onClose={() => setReceipt(null)}><header className="desktop-pos-modal__header"><div><h2>{th ? "สรุปชำระเงินสำเร็จ" : "Payment complete"}</h2><p>{th ? "บันทึกการขายเรียบร้อย" : "Sale saved successfully."}</p></div><button className="close-text" onClick={() => setReceipt(null)}>{th ? "ปิดหน้าต่าง" : "Close"}</button></header><article className="receipt-preview"><img src="/icon.png" alt="CpIPOS"/><h3>{receipt.settings.storeName}</h3><p>{receipt.settings.branchName}</p><div className="receipt-meta"><span>{th ? "ผู้ขาย" : "Seller"}</span><strong>{staff.displayName}</strong><span>{th ? "เลขที่บิล" : "Receipt"}</span><strong>{receipt.receiptNo}</strong><span>{th ? "วันที่" : "Date"}</span><strong>{new Date(receipt.createdAt).toLocaleString(th ? "th-TH" : "en-US")}</strong></div><div className="receipt-lines">{receipt.items.map((item) => <div key={item.id || item.name}><span>{item.name} × {item.quantity}</span><strong>{money(item.lineTotal)}</strong></div>)}</div><div className="receipt-grand"><span>{th ? "ยอดที่ต้องชำระ" : "Total"}</span><strong>{money(receipt.total)}</strong></div><div className="receipt-lines"><div><span>{th ? "ชำระเงิน" : "Payment"}</span><strong>{receipt.paymentMethod === "cash" ? (th ? "เงินสด" : "Cash") : (th ? "โอน / QR" : "Transfer / QR")}</strong></div>{receipt.paymentMethod === "cash" ? <><div><span>{th ? "รับเงินจากลูกค้า" : "Received"}</span><strong>{money(receipt.paid)}</strong></div><div><span>{th ? "เงินทอน" : "Change"}</span><strong>{money(receipt.changeAmount)}</strong></div></> : null}</div><p className="receipt-footer">{receipt.settings.receiptFooter}</p></article><div className="receipt-actions"><button onClick={() => printDocument(receiptHtml(receipt))}>{th ? "พิมพ์ใบเสร็จ" : "Print receipt"}</button><button className="checkout-button" onClick={() => setReceipt(null)}>{th ? "เริ่มบิลใหม่" : "New sale"}</button></div></Modal> : null}
+    {receipt ? <Modal className="receipt-success-modal" onClose={() => setReceipt(null)}><header className="desktop-pos-modal__header"><div><h2>{th ? "สรุปชำระเงินสำเร็จ" : "Payment complete"}</h2><p>{th ? "บันทึกการขายเรียบร้อย" : "Sale saved successfully."}</p></div><button className="close-text" onClick={() => setReceipt(null)}>{th ? "ปิดหน้าต่าง" : "Close"}</button></header><article className="receipt-preview"><img src="/icon.png" alt="CpIPOS"/><h3>{receipt.settings.storeName}</h3><p>{receipt.settings.branchName}</p><div className="receipt-meta"><span>{th ? "ผู้ขาย" : "Seller"}</span><strong>{staff.displayName}</strong>{receipt.tableCode ? <><span>{th ? "โต๊ะ" : "Table"}</span><strong>{receipt.tableCode}</strong></> : null}<span>{th ? "เลขที่บิล" : "Receipt"}</span><strong>{receipt.receiptNo}</strong><span>{th ? "วันที่" : "Date"}</span><strong>{new Date(receipt.createdAt).toLocaleString(th ? "th-TH" : "en-US")}</strong></div><div className="receipt-lines">{receipt.items.map((item) => <div key={item.id || item.name}><span>{item.name} × {item.quantity}</span><strong>{money(item.lineTotal)}</strong></div>)}</div><div className="receipt-grand"><span>{th ? "ยอดที่ต้องชำระ" : "Total"}</span><strong>{money(receipt.total)}</strong></div><div className="receipt-lines"><div><span>{th ? "ชำระเงิน" : "Payment"}</span><strong>{receipt.paymentMethod === "cash" ? (th ? "เงินสด" : "Cash") : (th ? "โอน / QR" : "Transfer / QR")}</strong></div>{receipt.paymentMethod === "cash" ? <><div><span>{th ? "รับเงินจากลูกค้า" : "Received"}</span><strong>{money(receipt.paid)}</strong></div><div><span>{th ? "เงินทอน" : "Change"}</span><strong>{money(receipt.changeAmount)}</strong></div></> : null}</div><p className="receipt-footer">{receipt.settings.receiptFooter}</p></article><div className="receipt-actions"><button disabled={!settings.printerName} onClick={() => void printReceiptNative(receipt).then(() => showNotice("ok", th ? "ส่งใบเสร็จไปเครื่องพิมพ์แล้ว" : "Receipt sent to printer")).catch(() => showNotice("error", th ? "พิมพ์ใบเสร็จไม่สำเร็จ" : "Receipt print failed"))}>{settings.printerName ? (th ? "พิมพ์ใบเสร็จ" : "Print receipt") : (th ? "ตั้งค่าเครื่องพิมพ์ก่อน" : "Configure printer")}</button><button className="checkout-button" onClick={() => setReceipt(null)}>{th ? "เริ่มบิลใหม่" : "New sale"}</button></div></Modal> : null}
   </section>;
 }
