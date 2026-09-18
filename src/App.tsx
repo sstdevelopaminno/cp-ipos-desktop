@@ -10,6 +10,7 @@ import { SalesHistoryScreenV2 } from "./SalesHistoryScreen";
 import { ProductsScreenV2 } from "./ProductsScreen";
 import { ReportsDashboardScreen } from "./ReportsDashboardScreen";
 import { TableManagementScreen } from "./TableManagementScreen";
+import { maskPromptPayId, normalizePromptPayId, resolvePaymentQr } from "./payment-qr";
 import "./inventory-ui.css";
 
 type View = "sales" | "tables" | "products" | "salesHistory" | "reports" | "employees" | "settings";
@@ -360,7 +361,7 @@ function DeleteEmployeeModal({ repo, staff, employee, onClose, onDeleted }: { re
   </Modal>;
 }
 
-type SettingsSection = "store" | "branch" | "license" | "language" | "owner" | "receipt" | "printer" | "scanner" | "storage" | "backup" | "remote" | "about";
+type SettingsSection = "store" | "branch" | "license" | "language" | "owner" | "receipt" | "paymentQr" | "printer" | "scanner" | "storage" | "backup" | "remote" | "about";
 type SettingsNavItem = { id: SettingsSection; label: string; description: string; meta: string; tone: string };
 
 function SettingsScreen({ repo, staff, settings, language, refreshSettings }: { repo: PosRepository; staff: Staff; settings: AppSettings; language: Language; refreshSettings: () => Promise<void> }) {
@@ -379,6 +380,7 @@ function SettingsScreen({ repo, staff, settings, language, refreshSettings }: { 
     { id: "language", label: t(language, "language"), description: "ภาษาแสดงผลของหน้าจอ POS", meta: form.language === "th" ? t(language, "thai") : t(language, "english"), tone: "green" },
     { id: "owner", label: t(language, "owner"), description: "ข้อมูลเจ้าของร้านและบันทึก PIN เดโม", meta: form.ownerName || "Owner", tone: "violet" },
     { id: "receipt", label: t(language, "receiptSettings"), description: "ข้อความหัวท้ายใบเสร็จและข้อมูลร้านบนใบเสร็จ", meta: form.receiptHeader || "CpIPOS", tone: "amber" },
+    { id: "paymentQr", label: "ตั้งค่า QR ชำระเงิน", description: "PromptPay ล็อกยอดเมื่อออนไลน์ และ QR ธนาคารสำรองเมื่อออฟไลน์", meta: form.paymentQrEnabled === false ? "ปิดใช้งาน" : form.paymentQrPromptPayId ? `PromptPay ${maskPromptPayId(form.paymentQrPromptPayId)}` : form.paymentQrImage ? "ใช้ QR ธนาคารสำรอง" : "ยังไม่ได้ตั้งค่า", tone: "blue" },
     { id: "printer", label: t(language, "printer"), description: "เครื่องพิมพ์ใบเสร็จและขนาดกระดาษ", meta: form.printerName || "ยังไม่ได้เลือกเครื่องพิมพ์", tone: "slate" },
     { id: "scanner", label: t(language, "scanner"), description: "โหมดรับค่าจากเครื่องอ่านบาร์โค้ด", meta: form.scannerMode, tone: "teal" },
     { id: "storage", label: t(language, "storage"), description: "พื้นที่จัดเก็บ ฐานข้อมูล ยอดขาย และ audit", meta: health ? health.salesCount.toLocaleString("th-TH") + " sales" : "กำลังตรวจสอบ", tone: "indigo" },
@@ -424,6 +426,7 @@ function SettingsModal({ item, section, form, health, language, logoError, saveE
       {section === "license" && <LicenseSettingsPanel form={form} set={set} />}
       {section === "owner" && <div className="settings-form-grid"><label>ชื่อเจ้าของร้าน<input value={form.ownerName} onChange={e => set("ownerName", e.target.value)} /></label><label>บันทึกนโยบาย PIN<input value={form.ownerPinNote} onChange={e => set("ownerPinNote", e.target.value)} /></label><p className="warning settings-wide">{t(language, "demoPin")}</p></div>}
       {section === "receipt" && <div className="settings-form-grid"><label>ชื่อหัวใบเสร็จ<input value={form.receiptHeader} onChange={e => set("receiptHeader", e.target.value)} /></label><label>ข้อความท้ายใบเสร็จ<input value={form.receiptFooter} onChange={e => set("receiptFooter", e.target.value)} /></label><label>ที่อยู่บนใบเสร็จ<textarea value={form.address} onChange={e => set("address", e.target.value)} /></label><label>เบอร์โทรบนใบเสร็จ<input value={form.phone} onChange={e => set("phone", e.target.value)} /></label><label>เลขผู้เสียภาษี<input value={form.taxId} onChange={e => set("taxId", e.target.value)} /></label></div>}
+      {section === "paymentQr" && <PaymentQrSettingsPanel form={form} set={set} />}
       {section === "printer" && <PrinterSettingsPanel form={form} set={set} />}
       {section === "scanner" && <div className="settings-form-grid"><label>โหมดเครื่องอ่านบาร์โค้ด<select value={form.scannerMode} onChange={e => set("scannerMode", e.target.value)}><option value="keyboard-wedge">Keyboard wedge / กด Enter หลังสแกน</option><option value="manual">Manual input / พิมพ์เอง</option></select></label><p className="warning settings-wide">เครื่องอ่านบาร์โค้ดทั่วไปควรใช้โหมด keyboard-wedge เพื่อส่งค่าเข้าช่องค้นหาเหมือนแป้นพิมพ์</p></div>}
       {section === "storage" && <StoragePanel health={health} />}
@@ -438,6 +441,78 @@ function SettingsModal({ item, section, form, health, language, logoError, saveE
 }
 
 
+
+function PaymentQrSettingsPanel({ form, set }: { form: AppSettings; set: (key: keyof AppSettings, value: string | boolean) => void }) {
+  const [online, setOnline] = useState(() => navigator.onLine);
+  const [imageError, setImageError] = useState("");
+  const preview = resolvePaymentQr(form, 50, online);
+  const promptPayId = normalizePromptPayId(form.paymentQrPromptPayId);
+
+  useEffect(() => {
+    const refresh = () => setOnline(navigator.onLine);
+    window.addEventListener("online", refresh);
+    window.addEventListener("offline", refresh);
+    return () => {
+      window.removeEventListener("online", refresh);
+      window.removeEventListener("offline", refresh);
+    };
+  }, []);
+
+  return <div className="payment-qr-settings">
+    <div className="payment-qr-status-row">
+      <span className={online ? "payment-qr-status online" : "payment-qr-status offline"}>{online ? "● ONLINE" : "○ OFFLINE"}</span>
+      <span>{online ? "เมื่อชำระเงิน ระบบจะสร้าง PromptPay QR ตามยอดบิลอัตโนมัติ" : "ออฟไลน์: ระบบจะใช้ภาพ QR ธนาคารที่บันทึกไว้ในเครื่องแทน"}</span>
+    </div>
+
+    <label className="inline-check settings-wide"><input type="checkbox" checked={form.paymentQrEnabled !== false} onChange={e => set("paymentQrEnabled", e.target.checked)} /> เปิดใช้งาน QR ชำระเงิน</label>
+
+    <div className="payment-qr-mode-grid">
+      <section className="payment-qr-mode-card">
+        <span className="payment-qr-mode-badge">ONLINE PROMPTPAY</span>
+        <h3>PromptPay QR ล็อกยอดอัตโนมัติ</h3>
+        <p>กรอกเฉพาะตัวเลขที่ผูก PromptPay ระบบจะนำยอดชำระจากบิลไปสร้าง QR โดยอัตโนมัติเมื่อเครื่องมีอินเทอร์เน็ต</p>
+        <label>หมายเลข PromptPay
+          <input inputMode="numeric" value={promptPayId} onChange={e => set("paymentQrPromptPayId", normalizePromptPayId(e.target.value))} placeholder="กรอกตัวเลข 9–15 หลัก" />
+        </label>
+        <small>ระบบไม่แสดง URL สำหรับสร้าง QR ให้ผู้ใช้งานเห็น</small>
+      </section>
+
+      <section className="payment-qr-mode-card">
+        <span className="payment-qr-mode-badge offline">OFFLINE FALLBACK</span>
+        <h3>ภาพ QR ธนาคารสำรอง</h3>
+        <p>ใช้เมื่อเครื่องไม่มีอินเทอร์เน็ต หรือไม่สามารถเรียก PromptPay QR แบบล็อกยอดได้ ภาพนี้เป็น QR คงที่จากแอปธนาคาร</p>
+        <label>เลือกรูป QR จากธนาคาร
+          <input type="file" accept="image/png,image/jpeg,image/webp" onChange={async e => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            try {
+              setImageError("");
+              set("paymentQrImage", await readFileAsDataUrl(file));
+            } catch {
+              setImageError("อ่านไฟล์ QR ไม่สำเร็จ");
+            }
+          }} />
+        </label>
+        {form.paymentQrImage ? <button type="button" className="secondary" onClick={() => set("paymentQrImage", "")}>ลบภาพ QR สำรอง</button> : null}
+        {imageError ? <ErrorMessage text={imageError} /> : null}
+      </section>
+    </div>
+
+    <div className="settings-form-grid">
+      <label>ชื่อบัญชี / ชื่อผู้รับ<input value={form.paymentQrAccountName || ""} onChange={e => set("paymentQrAccountName", e.target.value)} placeholder="ชื่อบัญชีรับเงิน" /></label>
+      <label>ข้อความกำกับ<input value={form.paymentQrNote || ""} onChange={e => set("paymentQrNote", e.target.value)} placeholder="เช่น กรุณาตรวจสอบชื่อบัญชีก่อนโอน" /></label>
+    </div>
+
+    <div className="payment-qr-preview">
+      <div>
+        <span>ตัวอย่างการทำงาน</span>
+        <strong>{preview.mode === "promptpay_online" ? "PromptPay Online · ล็อกยอด ฿50.00" : preview.mode === "bank_image_offline" ? "QR ธนาคารสำรอง" : "ยังไม่มี QR พร้อมใช้งาน"}</strong>
+        <small>{preview.mode === "promptpay_online" ? `PromptPay: ${maskPromptPayId(preview.promptPayId)}` : online ? "กรอก PromptPay หรืออัปโหลด QR สำรอง" : "อัปโหลด QR ธนาคารเพื่อใช้ขณะออฟไลน์"}</small>
+      </div>
+      {preview.ready ? <img src={preview.src} alt="ตัวอย่าง QR ชำระเงิน" onError={event => { if (form.paymentQrImage && event.currentTarget.src !== form.paymentQrImage) event.currentTarget.src = form.paymentQrImage; }} /> : <div className="payment-qr-placeholder">QR</div>}
+    </div>
+  </div>;
+}
 
 function PrinterSetupRequiredScreen({ repo, staff, settings, language, refreshSettings, onLogout }: { repo: PosRepository; staff: Staff; settings: AppSettings; language: Language; refreshSettings: () => Promise<void>; onLogout: () => Promise<void> }) {
   const [form, setForm] = useState(settings);
@@ -532,6 +607,7 @@ function SettingsIcon({ section }: { section: SettingsSection }) {
     case "language": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h10"/><path d="M9 5v14"/><path d="M5 19c3-3 5-7 6-14"/><path d="M12 12c-1.5-1-3-3-4-5"/><path d="m15 19 3-8 3 8"/><path d="M16 16h4"/></svg>;
     case "owner": return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M5 20c1.5-4 12.5-4 14 0"/></svg>;
     case "receipt": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10v16l-2-1.2-2 1.2-2-1.2-2 1.2-2-1.2z"/><path d="M9 9h6"/><path d="M9 13h6"/></svg>;
+    case "paymentQr": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z"/><path d="M15 14h2v2h-2zM19 14h1v3h-3v3h-3v-2M19 19h1v1h-1z"/></svg>;
     case "printer": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8V4h10v4"/><rect x="5" y="8" width="14" height="8" rx="2"/><path d="M8 14h8v6H8z"/></svg>;
     case "scanner": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7V5h4"/><path d="M15 5h4v2"/><path d="M19 17v2h-4"/><path d="M9 19H5v-2"/><path d="M7 12h10"/><path d="M9 9v6"/><path d="M12 9v6"/><path d="M15 9v6"/></svg>;
     case "storage": return <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>;
