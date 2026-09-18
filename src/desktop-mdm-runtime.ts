@@ -9,7 +9,9 @@ const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 const MIN_INTERVAL_MS = 60 * 1000;
 const MAX_INTERVAL_MS = 15 * 60 * 1000;
 const COMMAND_RESULTS_KEY = "cpipos.mdm.command-results.v1";
+const SALES_CURSOR_KEY = "cpipos.mdm.sales-cursor.v1";
 const UPDATE_POLICY_KEY = "cpipos.update.policy.v1";
+const SALES_BATCH_SIZE = 25;
 
 type LicenseRuntime = {
   mode?: "trial" | "licensed" | "locked" | "error";
@@ -117,6 +119,14 @@ type SaleRow = {
   shift_id?: string | null;
   items_json?: string | null;
   created_at: string;
+  cancelled_at?: string | null;
+  sync_at: string;
+};
+
+type SalesBatch = {
+  rows: Array<Record<string, unknown>>;
+  maxCursor: string | null;
+  hasMore: boolean;
 };
 
 let stopped = false;
@@ -188,16 +198,28 @@ async function readSettings(db: Database) {
   }
 }
 
-async function readRecentSales(db: Database) {
+async function readSalesBatch(db: Database): Promise<SalesBatch> {
+  const cursor = (() => {
+    try { return localStorage.getItem(SALES_CURSOR_KEY) || "1970-01-01T00:00:00.000Z"; }
+    catch { return "1970-01-01T00:00:00.000Z"; }
+  })();
+
   try {
     const rows = await db.select<SaleRow[]>(
-      "SELECT id,receipt_no,total,paid,change_amount,payment_method,status,cashier_name,employee_code,shift_id,items_json,created_at FROM sales ORDER BY created_at DESC LIMIT 50"
+      `SELECT id,receipt_no,total,paid,change_amount,payment_method,status,cashier_name,employee_code,shift_id,items_json,created_at,cancelled_at,
+        CASE WHEN cancelled_at IS NOT NULL AND cancelled_at <> '' THEN cancelled_at ELSE created_at END AS sync_at
+       FROM sales
+       WHERE created_at > $1 OR (cancelled_at IS NOT NULL AND cancelled_at > $1)
+       ORDER BY sync_at ASC
+       LIMIT ${SALES_BATCH_SIZE}`,
+      [cursor]
     );
-    return rows.map(row => {
+
+    const payload = rows.map(row => {
       let items: any[] = [];
       try {
         const parsed = JSON.parse(row.items_json || "[]");
-        items = Array.isArray(parsed) ? parsed.slice(0, 250) : [];
+        items = Array.isArray(parsed) ? parsed.slice(0, 120) : [];
       } catch {
         items = [];
       }
@@ -223,13 +245,22 @@ async function readRecentSales(db: Database) {
         })),
         payload: {
           salesMode: itemModeFromPayload(items),
-          itemCount: items.length
+          itemCount: items.length,
+          cancelledAt: row.cancelled_at || null
         }
       };
     });
+
+    const maxCursor = rows.length ? rows[rows.length - 1].sync_at : null;
+    return { rows: payload, maxCursor, hasMore: rows.length >= SALES_BATCH_SIZE };
   } catch {
-    return [];
+    return { rows: [], maxCursor: null, hasMore: false };
   }
+}
+
+function saveSalesCursor(value: string | null) {
+  if (!value) return;
+  try { localStorage.setItem(SALES_CURSOR_KEY, value); } catch { /* best effort */ }
 }
 
 function itemModeFromPayload(items: any[]) {
@@ -344,11 +375,12 @@ async function heartbeat() {
   running = true;
   try {
     const db = await openDb();
-    const [settings, health, sales] = await Promise.all([
+    const [settings, health, salesBatch] = await Promise.all([
       readSettings(db),
       collectHealth(),
-      readRecentSales(db)
+      readSalesBatch(db)
     ]);
+    const sales = salesBatch.rows;
     const printer = await printerHealth(settings);
     const pendingResults = readCommandResults();
 
@@ -408,6 +440,9 @@ async function heartbeat() {
     }
 
     if (pendingResults.length) saveCommandResults([]);
+    if (sales.length && Number(payload.sales_accepted || 0) >= sales.length) {
+      saveSalesCursor(salesBatch.maxCursor);
+    }
 
     const control = payload.control || {};
     publishControl(control, {
@@ -439,6 +474,9 @@ async function heartbeat() {
       fastAckTimer = window.setTimeout(() => schedule(0), 1500);
     }
 
+    if (salesBatch.hasMore && Number(payload.sales_accepted || 0) >= sales.length) {
+      return MIN_INTERVAL_MS;
+    }
     const seconds = Number(payload.next_check_seconds || 300);
     return Math.min(MAX_INTERVAL_MS, Math.max(MIN_INTERVAL_MS, seconds * 1000));
   } catch (error) {
