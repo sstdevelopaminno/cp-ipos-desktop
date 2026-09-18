@@ -3,6 +3,8 @@ import { getCloudArchivedReceipt, listCloudArchivedSales, mergeLocalAndCloudSale
 import type { PosRepository, SaleFilters } from "./repository";
 import { BrowserRepository } from "./browserRepository";
 
+const STARTUP_SOFT_INITIALIZE_MS = 6500;
+
 function matchesFilters(sale: Sale, filters: SaleFilters = {}) {
   const date = sale.createdAt.slice(0, 10);
   if (filters.todayOnly && date !== new Date().toISOString().slice(0, 10)) return false;
@@ -11,6 +13,33 @@ function matchesFilters(sale: Sale, filters: SaleFilters = {}) {
   if (filters.status && filters.status !== "all" && sale.status !== filters.status) return false;
   if (filters.receipt && !sale.receiptNo.toLowerCase().includes(filters.receipt.toLowerCase())) return false;
   return true;
+}
+
+function softTimeout(ms: number) {
+  return new Promise<"timeout">((resolve) => window.setTimeout(() => resolve("timeout"), ms));
+}
+
+function withStartupStabilizer(base: PosRepository): PosRepository {
+  let initializeTask: Promise<void> | null = null;
+  return new Proxy(base, {
+    get(target, property, receiver) {
+      if (property === "initialize") {
+        return async () => {
+          initializeTask ??= target.initialize().catch((error) => {
+            initializeTask = null;
+            throw error;
+          });
+          const result = await Promise.race([initializeTask.then(() => "ready" as const), softTimeout(STARTUP_SOFT_INITIALIZE_MS)]);
+          if (result === "timeout") {
+            console.warn("CpIPOS database initialization is still running in the background");
+            window.dispatchEvent(new CustomEvent("cpipos:database-initialize-background"));
+          }
+        };
+      }
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    }
+  }) as PosRepository;
 }
 
 function withCloudArchive(base: PosRepository): PosRepository {
@@ -51,7 +80,7 @@ export async function createRepository(): Promise<PosRepository> {
   const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   if (isTauri) {
     const { TauriRepository } = await import("./tauriRepository");
-    return withCloudArchive(new TauriRepository());
+    return withCloudArchive(withStartupStabilizer(new TauriRepository()));
   }
   return new BrowserRepository();
 }
