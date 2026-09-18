@@ -3,6 +3,7 @@ import type { PosRepository, ProductInput } from "./data/repository";
 import type { Language, Product, Staff } from "./domain/types";
 import { productName, t } from "./i18n";
 import { BarcodeLabelPreview, BarcodePrintModal } from "./BarcodeLabels";
+import { productImageSrc } from "./product-image";
 import "./inventory-bulk-ui.css";
 
 type StockStatus = "all" | "normal" | "low" | "out";
@@ -150,7 +151,7 @@ export function ProductsScreenV2({ repo, staff, products, language, refreshProdu
         <table className="inventory-table barcode-inventory-table">
           <thead><tr><th>สินค้า</th><th>รหัสสินค้า</th><th>บาร์โค้ด</th><th>หมวดหมู่</th><th className="inventory-number">ราคาขาย</th><th className="inventory-number">ต้นทุน</th><th className="inventory-number">คงเหลือ</th><th className="inventory-number">แจ้งเตือน</th><th>สถานะ</th><th>จัดการ</th></tr></thead>
           <tbody>{pageRows.map(p => <tr key={p.id}>
-            <td><div className="inventory-product-cell"><div className="inventory-product-thumb">{p.imagePath ? <img src={p.imagePath} alt="" /> : productName(language, p).slice(0, 1)}</div><div className="inventory-product-name"><strong>{productName(language, p)}</strong><small>{p.nameEn || "-"}</small></div></div></td>
+            <td><div className="inventory-product-cell"><div className="inventory-product-thumb">{p.imagePath ? <img src={productImageSrc(p.imagePath)} alt="" /> : productName(language, p).slice(0, 1)}</div><div className="inventory-product-name"><strong>{productName(language, p)}</strong><small>{p.nameEn || "-"}</small></div></div></td>
             <td><strong>{p.productCode}</strong><small className="inventory-muted">SKU: {p.sku || p.productCode}</small></td>
             <td><BarcodeLabelPreview product={p} /></td>
             <td>{p.categoryName}</td>
@@ -296,10 +297,10 @@ function BulkProductImportModal({ repo, staff, products, language, onClose, onDo
             <td><input value={row.barcode || ""} onChange={event => updateRow(row.rowId, { barcode: event.target.value })} /></td>
             <td><input value={row.nameTh} onChange={event => updateRow(row.rowId, { nameTh: event.target.value })} /></td>
             <td><input value={row.categoryName} onChange={event => updateRow(row.rowId, { categoryName: event.target.value, categoryId: event.target.value.toLowerCase().replace(/\s+/g, "-") || "retail" })} /></td>
-            <td><input type="number" value={row.price} onChange={event => updateRow(row.rowId, { price: Number(event.target.value) })} /></td>
-            <td><input type="number" value={row.cost} onChange={event => updateRow(row.rowId, { cost: Number(event.target.value) })} /></td>
-            <td><input type="number" step="0.001" value={row.stockQuantity} onChange={event => updateRow(row.rowId, { stockQuantity: Number(event.target.value) })} /></td>
-            <td><input type="number" step="0.001" value={row.minimumStock} onChange={event => updateRow(row.rowId, { minimumStock: Number(event.target.value) })} /></td>
+            <td><input type="number" value={row.price || ""} onChange={event => updateRow(row.rowId, { price: event.target.value === "" ? 0 : Number(event.target.value) })} /></td>
+            <td><input type="number" value={row.cost || ""} onChange={event => updateRow(row.rowId, { cost: event.target.value === "" ? 0 : Number(event.target.value) })} /></td>
+            <td><input type="number" step="0.001" value={row.stockQuantity || ""} onChange={event => updateRow(row.rowId, { stockQuantity: event.target.value === "" ? 0 : Number(event.target.value) })} /></td>
+            <td><input type="number" step="0.001" value={row.minimumStock || ""} onChange={event => updateRow(row.rowId, { minimumStock: event.target.value === "" ? 0 : Number(event.target.value) })} /></td>
             <td><select value={row.unit} onChange={event => updateRow(row.rowId, { unit: event.target.value })}>{units.map(unit => <option key={unit}>{unit}</option>)}</select></td>
             <td>{row.error ? <span className="bulk-error-text">{row.error}</span> : <span className="bulk-ok-text">พร้อม</span>}</td>
           </tr>)}</tbody>
@@ -328,7 +329,7 @@ function DeleteProductModal({ repo, staff, product, language, onClose, onDone }:
   return <Modal title="ยืนยันลบสินค้า" onClose={busy ? () => {} : onClose}>
     <div className="inventory-delete-box">
       <div className="inventory-delete-warning"><strong>ต้องการลบสินค้านี้ใช่หรือไม่?</strong><p>ระบบจะซ่อนสินค้าออกจากหน้าขายและตารางสินค้า แต่ประวัติการขายเดิมจะยังคงอยู่เพื่อความถูกต้องของรายงานย้อนหลัง</p></div>
-      <div className="inventory-delete-product"><div className="inventory-product-thumb">{product.imagePath ? <img src={product.imagePath} alt="" /> : productName(language, product).slice(0, 1)}</div><div><strong>{productName(language, product)}</strong><small>{product.productCode} · {product.barcode || "-"}</small><small>{money(product.price)} · คงเหลือ {product.stockQuantity} {product.unit}</small></div></div>
+      <div className="inventory-delete-product"><div className="inventory-product-thumb">{product.imagePath ? <img src={productImageSrc(product.imagePath)} alt="" /> : productName(language, product).slice(0, 1)}</div><div><strong>{productName(language, product)}</strong><small>{product.productCode} · {product.barcode || "-"}</small><small>{money(product.price)} · คงเหลือ {product.stockQuantity} {product.unit}</small></div></div>
       {error && <ErrorMessage text={error} />}
       <div className="actions modal-footer"><button className="secondary" disabled={busy} onClick={onClose}>{t(language, "back")}</button><button className="danger" disabled={busy} onClick={() => void submit()}>{busy ? t(language, "submitBusy") : "ยืนยันลบ"}</button></div>
     </div>
@@ -337,15 +338,159 @@ function DeleteProductModal({ repo, staff, product, language, onClose, onDone }:
 
 function ProductModal({ repo, staff, language, product, onClose, onSaved }: { repo: PosRepository; staff: Staff; language: Language; product: Product | ProductInput; onClose: () => void; onSaved: () => void }) {
   const [form, setForm] = useState<Product | ProductInput>({ ...product });
+  const [numeric, setNumeric] = useState({
+    price: Number(product.price) === 0 ? "" : String(product.price),
+    cost: Number(product.cost) === 0 ? "" : String(product.cost),
+    stockQuantity: Number(product.stockQuantity) === 0 ? "" : String(product.stockQuantity),
+    minimumStock: Number(product.minimumStock) === 0 ? "" : String(product.minimumStock),
+  });
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState(() => productImageSrc(product.imagePath));
+  const [imageError, setImageError] = useState("");
   const [error, setError] = useState("");
   const [duplicate, setDuplicate] = useState<Product | null>(null);
   const [busy, setBusy] = useState(false);
-  const set = (key: keyof ProductInput, value: string | number | boolean) => setForm(f => ({ ...f, [key]: value }));
-  const checkBarcode = async () => { const code = (form.barcode || "").trim(); if (!code) return; const found = await repo.findProductByBarcode(code); if (found && found.id !== ('id' in form ? form.id : undefined)) setDuplicate(found); else setDuplicate(null); };
-  const save = async () => { try { setBusy(true); setError(""); if (duplicate) throw new Error(t(language, "duplicateBarcode")); if (!form.productCode) { setError(t(language, "duplicateCode")); setBusy(false); return; } if (!form.nameTh) { setError(t(language, "nameTh")); setBusy(false); return; } if ('id' in form && form.id) await repo.updateProduct(form as Product, staff); else await repo.createProduct(form as ProductInput, staff); onSaved(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); setBusy(false); } };
-  return <Modal title={'id' in form && form.id ? t(language, "edit") : t(language, "addProduct")} onClose={busy ? () => {} : onClose}><fieldset><legend>{t(language, "productInfo")}</legend><div className="form-grid"><label>{t(language, "productCode")}<input value={form.productCode} onChange={e => set("productCode", e.target.value)} /></label><label>{t(language, "barcode")}<input value={form.barcode || ""} onBlur={() => void checkBarcode()} onKeyDown={e => { if (e.key === "Enter") void checkBarcode(); }} onChange={e => { set("barcode", e.target.value); setDuplicate(null); }} /></label><label>{t(language, "nameTh")}<input value={form.nameTh} onChange={e => set("nameTh", e.target.value)} /></label><label>{t(language, "nameEn")}<input value={form.nameEn || ""} onChange={e => set("nameEn", e.target.value)} /></label><label>{t(language, "category")}<input value={form.categoryName} onChange={e => { set("categoryName", e.target.value); set("categoryId", e.target.value.toLowerCase().replace(/\s+/g, "-") || "retail"); }} /></label><label>{t(language, "active")}<select value={form.active === false ? "0" : "1"} onChange={e => set("active", e.target.value === "1")}><option value="1">{t(language, "active")}</option><option value="0">{t(language, "inactive")}</option></select></label></div></fieldset><fieldset><legend>{t(language, "pricing")}</legend><div className="form-grid"><label>{t(language, "price")}<input type="number" value={form.price} onChange={e => set("price", Number(e.target.value))} /></label><label>{t(language, "cost")}<input type="number" value={form.cost} onChange={e => set("cost", Number(e.target.value))} /></label></div></fieldset><fieldset><legend>{t(language, "stockSection")}</legend><div className="form-grid"><label>{t(language, "stock")}<input type="number" step="0.001" value={form.stockQuantity} onChange={e => set("stockQuantity", Number(e.target.value))} /></label><label>{t(language, "unit")}<select value={form.unit} onChange={e => set("unit", e.target.value)}>{units.map(u => <option key={u}>{u}</option>)}</select></label><label>{t(language, "minStock")}<input type="number" step="0.001" value={form.minimumStock} onChange={e => set("minimumStock", Number(e.target.value))} /></label></div></fieldset>{duplicate && <p className="warning">{t(language, "duplicateBarcode")}: {duplicate.productCode} {productName(language, duplicate)} <button onClick={() => { setForm(duplicate); setDuplicate(null); }}>{t(language, "openExisting")}</button></p>}{error && <ErrorMessage text={error} />}<div className="actions modal-footer"><button className="secondary" disabled={busy} onClick={onClose}>{t(language, "back")}</button><button disabled={busy || !!duplicate} onClick={() => void save()}>{busy ? t(language, "submitBusy") : t(language, "save")}</button></div></Modal>;
-}
 
+  const set = (key: keyof ProductInput, value: string | number | boolean) => setForm(f => ({ ...f, [key]: value }));
+  const setNumber = (key: keyof typeof numeric, value: string) => {
+    if (value && !/^\d*(?:\.\d{0,3})?$/.test(value)) return;
+    setNumeric(current => ({ ...current, [key]: value }));
+  };
+  const loadProduct = (next: Product) => {
+    if (imagePreview.startsWith("blob:")) URL.revokeObjectURL(imagePreview);
+    setForm({ ...next });
+    setNumeric({
+      price: next.price === 0 ? "" : String(next.price),
+      cost: next.cost === 0 ? "" : String(next.cost),
+      stockQuantity: next.stockQuantity === 0 ? "" : String(next.stockQuantity),
+      minimumStock: next.minimumStock === 0 ? "" : String(next.minimumStock),
+    });
+    setImageFile(null);
+    setImagePreview(productImageSrc(next.imagePath));
+    setImageError("");
+    setDuplicate(null);
+  };
+
+  useEffect(() => () => {
+    if (imagePreview.startsWith("blob:")) URL.revokeObjectURL(imagePreview);
+  }, [imagePreview]);
+
+  const chooseImage = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    if (!/^image\/(?:png|jpeg|webp|gif)$/i.test(file.type)) {
+      setImageError("รองรับรูป PNG, JPG, JPEG, WEBP หรือ GIF เท่านั้น");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setImageError("รูปสินค้าต้องมีขนาดไม่เกิน 5 MB");
+      return;
+    }
+    if (imagePreview.startsWith("blob:")) URL.revokeObjectURL(imagePreview);
+    setImageFile(file);
+    setImagePreview(URL.createObjectURL(file));
+    setImageError("");
+  };
+
+  const removeImage = () => {
+    if (imagePreview.startsWith("blob:")) URL.revokeObjectURL(imagePreview);
+    setImageFile(null);
+    setImagePreview("");
+    set("imagePath", "");
+    setImageError("");
+  };
+
+  const checkBarcode = async () => {
+    const code = (form.barcode || "").trim();
+    if (!code) { setDuplicate(null); return; }
+    const found = await repo.findProductByBarcode(code);
+    if (found && found.id !== ("id" in form ? form.id : undefined)) setDuplicate(found);
+    else setDuplicate(null);
+  };
+
+  const save = async () => {
+    try {
+      setBusy(true);
+      setError("");
+      if (duplicate) throw new Error(t(language, "duplicateBarcode"));
+      if (!form.productCode.trim()) { setError("กรุณากรอกรหัสสินค้า"); setBusy(false); return; }
+      if (!form.nameTh.trim()) { setError("กรุณากรอกชื่อสินค้า"); setBusy(false); return; }
+
+      const price = Number(numeric.price || 0);
+      const cost = Number(numeric.cost || 0);
+      const stockQuantity = Number(numeric.stockQuantity || 0);
+      const minimumStock = Number(numeric.minimumStock || 0);
+      if (![price, cost, stockQuantity, minimumStock].every(Number.isFinite) || price < 0 || cost < 0 || stockQuantity < 0 || minimumStock < 0) {
+        setError("ราคาขาย ต้นทุน และจำนวนสต็อกต้องเป็นตัวเลขตั้งแต่ 0 ขึ้นไป");
+        setBusy(false);
+        return;
+      }
+
+      let imagePath = form.imagePath || "";
+      if (imageFile) imagePath = await repo.saveProductImage(imageFile);
+
+      const prepared = {
+        ...form,
+        price,
+        cost,
+        stockQuantity,
+        minimumStock,
+        imagePath,
+      };
+
+      if ("id" in prepared && prepared.id) await repo.updateProduct(prepared as Product, staff);
+      else await repo.createProduct(prepared as ProductInput, staff);
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  };
+
+  return <Modal title={"id" in form && form.id ? t(language, "edit") : t(language, "addProduct")} onClose={busy ? () => {} : onClose}>
+    <div className="product-editor">
+      <section className="product-image-editor">
+        <div className="product-image-preview">
+          {imagePreview ? <img src={imagePreview} alt={form.nameTh || "รูปสินค้า"} /> : <span>{(form.nameTh || "สินค้า").slice(0, 1)}</span>}
+        </div>
+        <div className="product-image-copy">
+          <strong>รูปสินค้า</strong>
+          <p>ใช้แสดงในรายการสินค้าและหน้าขาย โปรแกรมจะเก็บรูปไว้ในเครื่องแบบออฟไลน์</p>
+          <div className="product-image-actions">
+            <label className="product-image-pick">เลือกรูป<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={chooseImage} /></label>
+            {imagePreview ? <button type="button" className="secondary product-image-remove" onClick={removeImage}>ลบรูป</button> : null}
+          </div>
+          {imageError ? <small className="product-image-error">{imageError}</small> : <small>PNG / JPG / WEBP / GIF · ไม่เกิน 5 MB</small>}
+        </div>
+      </section>
+
+      <fieldset><legend>{t(language, "productInfo")}</legend><div className="form-grid">
+        <label>{t(language, "productCode")}<input value={form.productCode} onChange={e => set("productCode", e.target.value)} /></label>
+        <label>{t(language, "barcode")}<input value={form.barcode || ""} onBlur={() => void checkBarcode()} onKeyDown={e => { if (e.key === "Enter") void checkBarcode(); }} onChange={e => { set("barcode", e.target.value); setDuplicate(null); }} /></label>
+        <label>{t(language, "nameTh")}<input value={form.nameTh} onChange={e => set("nameTh", e.target.value)} /></label>
+        <label>{t(language, "nameEn")}<input value={form.nameEn || ""} onChange={e => set("nameEn", e.target.value)} /></label>
+        <label>{t(language, "category")}<input value={form.categoryName} onChange={e => { set("categoryName", e.target.value); set("categoryId", e.target.value.toLowerCase().replace(/\s+/g, "-") || "retail"); }} /></label>
+        <label>{t(language, "active")}<select value={form.active === false ? "0" : "1"} onChange={e => set("active", e.target.value === "1")}><option value="1">{t(language, "active")}</option><option value="0">{t(language, "inactive")}</option></select></label>
+      </div></fieldset>
+
+      <fieldset><legend>{t(language, "pricing")}</legend><div className="form-grid">
+        <label>{t(language, "price")}<input type="text" inputMode="decimal" value={numeric.price} placeholder="กรอกราคาขาย" onChange={e => setNumber("price", e.target.value)} /></label>
+        <label>{t(language, "cost")}<input type="text" inputMode="decimal" value={numeric.cost} placeholder="กรอกต้นทุน" onChange={e => setNumber("cost", e.target.value)} /></label>
+      </div></fieldset>
+
+      <fieldset><legend>{t(language, "stockSection")}</legend><div className="form-grid">
+        <label>{t(language, "stock")}<input type="text" inputMode="decimal" value={numeric.stockQuantity} placeholder="กรอกจำนวนคงเหลือ" onChange={e => setNumber("stockQuantity", e.target.value)} /></label>
+        <label>{t(language, "unit")}<select value={form.unit} onChange={e => set("unit", e.target.value)}>{units.map(u => <option key={u}>{u}</option>)}</select></label>
+        <label>{t(language, "minStock")}<input type="text" inputMode="decimal" value={numeric.minimumStock} placeholder="กรอกจำนวนแจ้งเตือน" onChange={e => setNumber("minimumStock", e.target.value)} /></label>
+      </div></fieldset>
+
+      {duplicate && <p className="warning">{t(language, "duplicateBarcode")}: {duplicate.productCode} {productName(language, duplicate)} <button type="button" onClick={() => loadProduct(duplicate)}>{t(language, "openExisting")}</button></p>}
+      {error && <ErrorMessage text={error} />}
+      <div className="actions modal-footer"><button className="secondary" disabled={busy} onClick={onClose}>{t(language, "back")}</button><button disabled={busy || !!duplicate} onClick={() => void save()}>{busy ? t(language, "submitBusy") : t(language, "save")}</button></div>
+    </div>
+  </Modal>;
+}
 function StockModal({ repo, staff, product, language, onClose, onDone }: { repo: PosRepository; staff: Staff; product: Product; language: Language; onClose: () => void; onDone: () => void }) {
   const [type, setType] = useState<"STOCK_IN" | "STOCK_OUT" | "ADJUSTMENT">("STOCK_IN");
   const [amount, setAmount] = useState("1");
