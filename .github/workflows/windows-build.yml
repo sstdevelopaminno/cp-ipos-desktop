@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Release tag, for example v0.3.1"
+        description: "Release tag, for example v0.3.2"
         required: true
-        default: "v0.3.1"
+        default: "v0.3.2"
       channel:
         description: "Release channel"
         required: true
-        default: "customer-test"
+        default: "stable"
         type: choice
         options:
           - stable
