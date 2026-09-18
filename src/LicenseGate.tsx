@@ -8,6 +8,8 @@ const CLOCK_ROLLBACK_TOLERANCE_MS = 6 * 60 * 60 * 1000;
 const PRODUCT_ID = "CPIPOS-DESKTOP";
 const ISSUER = "CUTTING-POINT-TECH-IT";
 const PUBLIC_KEY_SPKI_BASE64 = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEIagxxGZeSGgXhE0/CBZcjTOGoROhwdIrtu+PjG24XkAZ98WpxF2quymaZbzGrzyO7+bvBnN5n3Lpg2AUK3EjQA==";
+const LEGACY_PUBLIC_KEY_SPKI_BASE64 = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEs9PUGIOQlWxNNFA23/Rfcqk1yRCZN2Jq09f3qL8633xktajPKMpOY580I1MwxW5ocb826zeuthot/7FcXJASVQ==";
+const PUBLIC_KEY_RING = [PUBLIC_KEY_SPKI_BASE64, LEGACY_PUBLIC_KEY_SPKI_BASE64];
 const LINE_CONTACT_URL = "https://lin.ee/zlvGPLz";
 const SALES_PHONE = "0985460355";
 
@@ -46,6 +48,10 @@ type GateState = {
 
 const textEncoder = new TextEncoder();
 
+function normalizeLicenseToken(value: string) {
+  return String(value || "").replace(/\s+/g, "").trim();
+}
+
 function decodeBase64Url(value: string) {
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - value.length % 4) % 4);
   const binary = atob(normalized);
@@ -56,29 +62,36 @@ function decodeJsonPart(value: string) {
   return JSON.parse(new TextDecoder().decode(decodeBase64Url(value))) as LicensePayload;
 }
 
-async function importPublicKey() {
-  const binary = Uint8Array.from(atob(PUBLIC_KEY_SPKI_BASE64), c => c.charCodeAt(0));
-  return crypto.subtle.importKey(
-    "spki",
-    binary,
-    { name: "ECDSA", namedCurve: "P-256" },
-    false,
-    ["verify"],
-  );
+async function importPublicKeys() {
+  return await Promise.all([...new Set(PUBLIC_KEY_RING)].map((keyBase64) => {
+    const binary = Uint8Array.from(atob(keyBase64), c => c.charCodeAt(0));
+    return crypto.subtle.importKey(
+      "spki",
+      binary,
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["verify"],
+    );
+  }));
 }
 
-async function verifyToken(token: string, deviceCode: string, nowMs: number): Promise<LicensePayload> {
-  const parts = token.trim().split(".");
+async function verifyToken(tokenInput: string, deviceCode: string, nowMs: number): Promise<LicensePayload> {
+  const token = normalizeLicenseToken(tokenInput);
+  const parts = token.split(".");
   if (parts.length !== 3 || parts[0] !== "CP1") throw new Error("LICENSE_FORMAT_INVALID");
   const payload = decodeJsonPart(parts[1]);
   const signature = decodeBase64Url(parts[2]);
-  const publicKey = await importPublicKey();
-  const ok = await crypto.subtle.verify(
-    { name: "ECDSA", hash: "SHA-256" },
-    publicKey,
-    signature,
-    textEncoder.encode(parts[1]),
-  );
+  const publicKeys = await importPublicKeys();
+  let ok = false;
+  for (const publicKey of publicKeys) {
+    ok = await crypto.subtle.verify(
+      { name: "ECDSA", hash: "SHA-256" },
+      publicKey,
+      signature,
+      textEncoder.encode(parts[1]),
+    );
+    if (ok) break;
+  }
   if (!ok) throw new Error("LICENSE_SIGNATURE_INVALID");
   if (payload.v !== 1 || payload.product !== PRODUCT_ID || payload.issuer !== ISSUER) throw new Error("LICENSE_PRODUCT_INVALID");
   if (![1, 2].includes(payload.maxDevices)) throw new Error("LICENSE_DEVICE_LIMIT_INVALID");
@@ -167,7 +180,8 @@ async function loadRuntime(): Promise<{ db: Database | null; row: RuntimeRow; de
   }
 }
 
-async function saveRuntime(db: Database | null, row: RuntimeRow, token: string, lastSeen: string) {
+async function saveRuntime(db: Database | null, row: RuntimeRow, tokenInput: string, lastSeen: string) {
+  const token = normalizeLicenseToken(tokenInput);
   if (db) {
     await db.execute("UPDATE cpipos_license_runtime SET token = $1, last_seen_at = $2, updated_at = CURRENT_TIMESTAMP WHERE id = 1", [token, lastSeen]);
   } else {
@@ -180,7 +194,7 @@ async function saveRuntime(db: Database | null, row: RuntimeRow, token: string, 
 
 function friendlyError(code?: string) {
   switch (code) {
-    case "LICENSE_SIGNATURE_INVALID": return "ลายเซ็น License ไม่ถูกต้องหรือถูกแก้ไข";
+    case "LICENSE_SIGNATURE_INVALID": return "ลายเซ็น License ไม่ถูกต้อง หรือใช้ License ที่ออกจาก Key คนละชุดกับเวอร์ชันโปรแกรมนี้";
     case "LICENSE_DEVICE_NOT_ALLOWED": return "License นี้ไม่ได้ออกให้รหัสเครื่องนี้";
     case "LICENSE_EXPIRED": return "License หมดอายุแล้ว";
     case "LICENSE_NOT_ACTIVE_YET": return "License ยังไม่ถึงวันที่เริ่มใช้งาน";
@@ -197,7 +211,7 @@ async function evaluateGate(candidateToken?: string): Promise<GateState> {
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
   const lastSeenMs = Date.parse(runtime.row.last_seen_at);
-  const token = candidateToken ?? runtime.row.token;
+  const token = normalizeLicenseToken(candidateToken ?? runtime.row.token);
 
   if (Number.isFinite(lastSeenMs) && nowMs + CLOCK_ROLLBACK_TOLERANCE_MS < lastSeenMs) {
     return { loading: false, mode: "locked", deviceCode: runtime.deviceCode, token, message: friendlyError("CLOCK_ROLLBACK_DETECTED") };
@@ -206,17 +220,17 @@ async function evaluateGate(candidateToken?: string): Promise<GateState> {
   if (token.trim()) {
     try {
       const payload = await verifyToken(token, runtime.deviceCode, nowMs);
-      await saveRuntime(runtime.db, runtime.row, token.trim(), nowIso);
-      return { loading: false, mode: "licensed", deviceCode: runtime.deviceCode, token: token.trim(), payload };
+      await saveRuntime(runtime.db, runtime.row, token, nowIso);
+      return { loading: false, mode: "licensed", deviceCode: runtime.deviceCode, token, payload };
     } catch (error) {
       const code = error instanceof Error ? error.message : "LICENSE_INVALID";
       const trialStartedMs = Date.parse(runtime.row.trial_started_at);
       const trialEndsMs = trialStartedMs + TRIAL_DAYS * 86400000;
       if (nowMs < trialEndsMs) {
-        await saveRuntime(runtime.db, runtime.row, token.trim(), nowIso);
-        return { loading: false, mode: "trial", deviceCode: runtime.deviceCode, token: token.trim(), trialEndsAt: new Date(trialEndsMs).toISOString(), daysRemaining: Math.max(1, Math.ceil((trialEndsMs - nowMs) / 86400000)), message: friendlyError(code) };
+        await saveRuntime(runtime.db, runtime.row, token, nowIso);
+        return { loading: false, mode: "trial", deviceCode: runtime.deviceCode, token, trialEndsAt: new Date(trialEndsMs).toISOString(), daysRemaining: Math.max(1, Math.ceil((trialEndsMs - nowMs) / 86400000)), message: friendlyError(code) };
       }
-      return { loading: false, mode: "locked", deviceCode: runtime.deviceCode, token: token.trim(), message: friendlyError(code) };
+      return { loading: false, mode: "locked", deviceCode: runtime.deviceCode, token, message: friendlyError(code) };
     }
   }
 
@@ -278,9 +292,10 @@ export function LicenseGate({ children }: { children: ReactNode }) {
 
   const activate = async () => {
     setBusy(true);
-    const next = await evaluateGate(tokenInput.trim());
+    const cleanToken = normalizeLicenseToken(tokenInput);
+    const next = await evaluateGate(cleanToken);
     setState(next);
-    setTokenInput(next.token);
+    setTokenInput(next.token || cleanToken);
     setBusy(false);
     if (next.mode === "licensed") setOpen(false);
   };
@@ -319,9 +334,9 @@ export function LicenseGate({ children }: { children: ReactNode }) {
         {state.mode === "trial" && <><div><span>ทดลองคงเหลือ</span><strong>{state.daysRemaining} วัน</strong></div><div><span>ทดลองถึง</span><strong>{formatDate(state.trialEndsAt)}</strong></div></>}
       </div>
       <div className="license-device-box compact"><span>ส่งรหัสนี้ให้ฝ่าย IT เพื่อออก License สำหรับเครื่องนี้</span><strong>{state.deviceCode}</strong><button onClick={() => void copyDevice()}>{copyText}</button></div>
-      <label className="license-token-field">{locked ? "ใส่ลายเส้น License ที่ได้รับจากฝ่าย IT" : "License Key ที่ออกโดย IT"}<textarea value={tokenInput} onChange={e => setTokenInput(e.target.value.trim())} placeholder="CP1.xxxxx.xxxxx" spellCheck={false} /></label>
+      <label className="license-token-field">{locked ? "ใส่ลายเส้น License ที่ได้รับจากฝ่าย IT" : "License Key ที่ออกโดย IT"}<textarea value={tokenInput} onChange={e => setTokenInput(e.target.value)} placeholder="CP1.xxxxx.xxxxx" spellCheck={false} /></label>
       {state.message && <p className="license-error">{state.message}</p>}
-      <div className="license-actions"><button className="license-primary" disabled={busy || !tokenInput.trim()} onClick={() => void activate()}>{busy ? "กำลังตรวจสอบลายเส้น..." : (locked ? "ตรวจสอบลายเส้นและเปิดใช้งานทันที" : "ตรวจสอบและเปิดใช้งาน")}</button>{!locked && <button className="license-secondary" onClick={() => setOpen(false)}>กลับ</button>}</div>
+      <div className="license-actions"><button className="license-primary" disabled={busy || !normalizeLicenseToken(tokenInput)} onClick={() => void activate()}>{busy ? "กำลังตรวจสอบลายเส้น..." : (locked ? "ตรวจสอบลายเส้นและเปิดใช้งานทันที" : "ตรวจสอบและเปิดใช้งาน")}</button>{!locked && <button className="license-secondary" onClick={() => setOpen(false)}>กลับ</button>}</div>
       <p className="license-help">License ถูกตรวจสอบด้วยลายเซ็นดิจิทัล ECDSA P-256 แบบออฟไลน์ และเมื่อมีอินเทอร์เน็ตจะตรวจสถานะกับระบบ IT เป็นระยะ โดยโปรแกรมไม่มี private key ของบริษัทอยู่ภายในเครื่องลูกค้า</p>
     </section></div>}
   </>;
