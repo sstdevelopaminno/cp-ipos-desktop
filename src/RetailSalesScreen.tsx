@@ -75,7 +75,11 @@ export function RetailSalesScreen(props: Props) {
 
   useEffect(() => {
     const refresh = () => setAllowedModes(licensedSalesModes());
-    const open = () => setPickerOpen(true);
+    const open = () => {
+      const modes = licensedSalesModes();
+      setAllowedModes(modes);
+      if (modes.length > 1) setPickerOpen(true);
+    };
     const first = window.setTimeout(refresh, 0);
     const second = window.setTimeout(refresh, 500);
     window.addEventListener("cpipos:license-online-status", refresh);
@@ -99,7 +103,7 @@ export function RetailSalesScreen(props: Props) {
       setMode(fallback);
       saveMode(fallback);
     }
-    setPickerOpen(true);
+    setPickerOpen(allowedModes.length > 1);
   }, [allowed, mode]);
 
   useEffect(() => {
@@ -126,20 +130,17 @@ export function RetailSalesScreen(props: Props) {
       <button className="icon-close" onClick={() => setPickerOpen(false)}>×</button>
     </header>
     <div className="mode-card-grid">
-      {(["grocery", "takeaway", "dine-in"] as UiMode[]).map((item) => {
-        const enabled = allowed.has(item);
+      {(allowedModes as UiMode[]).map((item) => {
         const text = MODE_LABELS[item];
         return <button
           key={item}
-          className={`mode-card ${mode === item ? "is-selected" : ""} ${!enabled ? "is-locked" : ""}`}
-          disabled={!enabled}
+          className={`mode-card ${mode === item ? "is-selected" : ""}`}
           onClick={() => selectMode(item)}
         >
           <span className="mode-icon"><ModeIcon mode={item}/></span>
           <strong>{th ? text.th : text.en}</strong>
           <small>{th ? text.noteTh : text.noteEn}</small>
           {mode === item ? <b className="mode-check">✓</b> : null}
-          {!enabled ? <em>{th ? "ปิดโดย IT" : "Locked by IT"}</em> : null}
         </button>;
       })}
     </div>
