@@ -272,3 +272,20 @@
 .grocery-keyboard-modal{outline:none}
 
 .grocery-transfer-qr{display:grid;justify-items:center;gap:8px;margin:12px 0;padding:14px;border:1px solid #d7e2ef;border-radius:14px;background:#fbfdff;text-align:center}.grocery-transfer-qr>span{padding:5px 8px;border-radius:999px;font-size:9px;font-weight:900;letter-spacing:.04em}.grocery-transfer-qr>span.online{background:#e9f8ef;color:#15733c}.grocery-transfer-qr>span.offline{background:#fff4df;color:#9f650f}.grocery-transfer-qr img{width:min(290px,62vw);height:min(290px,62vw);max-width:290px;max-height:290px;object-fit:contain;border:1px solid #d9e2ed;border-radius:12px;background:#fff;padding:8px}.grocery-transfer-qr strong{font-size:14px;color:#1c2f4b}.grocery-transfer-qr p{margin:0;color:#61748d;font-size:11px;line-height:1.5}.grocery-transfer-qr small{color:#73849a}
+
+
+/* Receipt action visibility: keep primary print button readable even when other global button rules load later. */
+.grocery-modal-actions.receipt-actions .secondary-action{
+  background:#eef3f8!important;
+  color:#34475d!important;
+  border:1px solid #d3dfeb!important;
+}
+.grocery-modal-actions.receipt-actions button:not(.secondary-action){
+  background:#0969da!important;
+  color:#fff!important;
+  border:1px solid #0969da!important;
+}
+.grocery-modal-actions.receipt-actions button:not(.secondary-action):hover{
+  background:#075fc7!important;
+  border-color:#075fc7!important;
+}
