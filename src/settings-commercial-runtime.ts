@@ -151,12 +151,12 @@ function renderBackup(host: HTMLElement) {
   const planCards = plans.map(plan => {
     const noPrice = plan.price_thb == null;
     const unavailable = noPrice || !online || !licensed || Boolean(pending) || Boolean(entitlement) || Boolean(cloud?.syncing);
-    const note = !licensed
-      ? "เปิดใช้งาน License Desktop ก่อน แล้วจึงส่งคำขอซื้อไปยัง IT"
-      : !online
-        ? "เชื่อมต่ออินเทอร์เน็ตเพื่อส่งคำขอซื้อ"
-        : noPrice
-          ? "รอฝ่าย IT กำหนดราคาแพ็กเกจ"
+    const note = !online
+      ? "เชื่อมต่ออินเทอร์เน็ตเพื่อดึงราคาและส่งคำขอซื้อ"
+      : noPrice
+        ? "เชื่อมระบบ IT แล้ว · รอฝ่าย IT กำหนดราคาแพ็กเกจ"
+        : !licensed
+          ? "แพ็กเกจจากระบบ IT · เปิด License Desktop ก่อนส่งคำขอซื้อ"
           : "คลิกเพื่อส่งคำขอซื้อไปยังระบบหลังบ้าน IT";
     return `<button class="cloud-plan-card" data-plan="${cell(plan.code)}" ${unavailable ? "disabled" : ""}>
       <span class="cloud-plan-icon">☁</span>
@@ -189,7 +189,7 @@ function renderBackup(host: HTMLElement) {
     ${!entitlement && !pending ? `<div class="cloud-plan-grid">${planCards}</div>` : ""}
     ${entitlement ? `<div class="cloud-snapshots"><strong>Cloud Archive ล่าสุด</strong>${(cloud?.snapshots || []).slice(0, 5).map(item => `<span>${cell(formatDate(item.completed_at))} · ${cell(item.status)} · ${Math.max(0, Number(item.database_bytes || 0) / 1024 / 1024).toFixed(1)} MB</span>`).join("") || "<span>ยังไม่มี Snapshot</span>"}</div>` : ""}
     ${cloud?.lastError ? `<p class="commercial-status cloud-error">${cell(cloud.lastError)}</p>` : ""}
-    <div class="cloud-connection-line"><span>${online ? "● ONLINE" : "○ OFFLINE"}</span><span>${licensed ? cell(licenseStatus()) : "ต้องเปิด License"}</span><span>${expiredPending ? "READ ONLY · WAIT IT" : entitlement ? "AUTO BACKUP ON" : "CLOUD NOT ACTIVE"}</span></div>
+    <div class="cloud-connection-line"><span>${online ? "● ONLINE" : "○ OFFLINE"}</span><span>${online && cloud?.checkedAt ? "เชื่อมต่อรายการ Cloud จาก IT" : "รอเชื่อมระบบ IT"}</span><span>${licensed ? cell(licenseStatus()) : "TRIAL · ดูแพ็กเกจได้"}</span><span>${expiredPending ? "READ ONLY · WAIT IT" : entitlement ? "AUTO BACKUP ON" : "CLOUD NOT ACTIVE"}</span></div>
   </div>`;
 
   host.querySelectorAll<HTMLButtonElement>("[data-plan]").forEach(button => {
@@ -205,7 +205,7 @@ function renderBackup(host: HTMLElement) {
     (event.currentTarget as HTMLButtonElement).disabled = true;
     window.dispatchEvent(new CustomEvent("cpipos:cloud-backup-now"));
   });
-  if (online && licensed && !cloud?.checkedAt) window.dispatchEvent(new CustomEvent("cpipos:cloud-refresh"));
+  if (online && !cloud?.checkedAt) window.dispatchEvent(new CustomEvent("cpipos:cloud-refresh"));
 }
 
 function renderLicense(host: HTMLElement) {
