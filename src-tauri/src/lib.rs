@@ -254,8 +254,8 @@ fn save_product_image<R: Runtime>(
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let relative = format!("media/products/{}-{}", chrono_like_stamp(), safe_name);
     let path = app.path().app_data_dir().map_err(|e| e.to_string())?.join(&relative);
-    fs::write(path, bytes).map_err(|e| e.to_string())?;
-    Ok(relative)
+    fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    Ok(path.to_string_lossy().to_string())
 }
 
 fn chrono_like_stamp() -> String {
