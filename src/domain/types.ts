@@ -89,6 +89,7 @@ export type AppSettings = {
   printerLastCheckedAt: string;
   cashDrawerEnabled: boolean;
   paymentQrEnabled?: boolean;
+  paymentQrPromptPayId?: string;
   paymentQrImage?: string;
   paymentQrAccountName?: string;
   paymentQrNote?: string;
