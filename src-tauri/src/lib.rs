@@ -264,6 +264,29 @@ fn chrono_like_stamp() -> String {
 }
 
 #[tauri::command]
+fn get_or_create_trial_started_at_ms<R: Runtime>(app: tauri::AppHandle<R>) -> Result<u64, String> {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?.join("license");
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("trial-start-ms.txt");
+
+    if let Ok(raw) = fs::read_to_string(&path) {
+        if let Ok(value) = raw.trim().parse::<u64>() {
+            if value > 0 {
+                return Ok(value);
+            }
+        }
+    }
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_millis() as u64;
+    fs::write(&path, now.to_string()).map_err(|e| e.to_string())?;
+    Ok(now)
+}
+
+#[tauri::command]
 fn get_local_storage_metrics<R: Runtime>(app: tauri::AppHandle<R>) -> Result<LocalStorageMetrics, String> {
     let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let database = app_dir.join("cpipos.db");
@@ -310,6 +333,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             save_product_image,
+            get_or_create_trial_started_at_ms,
             get_local_storage_metrics,
             system_health::get_windows_system_health,
             complete_startup_splash,
