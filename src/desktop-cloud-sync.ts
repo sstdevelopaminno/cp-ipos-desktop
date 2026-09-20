@@ -1,13 +1,12 @@
 import Database from "@tauri-apps/plugin-sql";
 import { invoke } from "@tauri-apps/api/core";
+import { CPIPOS_DESKTOP_VERSION, CPIPOS_UPDATE_POLICY_KEY } from "./app-version";
 
 const CONTROL_PLANE = String(import.meta.env.VITE_CPIPOS_IT_BASE_URL || "https://cp-ipos-it-web.vercel.app").replace(/\/$/, "");
 const HEARTBEAT_URL = `${CONTROL_PLANE}/api/desktop-license/heartbeat`;
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 const FIRST_SYNC_DELAY_MS = 15_000;
-const APP_VERSION = "0.3.0";
 const COMMAND_RESULTS_KEY = "cpipos.mdm.command-results.v1";
-const UPDATE_POLICY_KEY = "cpipos.update.policy.v1";
 
 type LicenseRuntime = {
   mode: "trial" | "licensed" | "locked" | "error";
@@ -202,7 +201,7 @@ async function executeMdmCommands(commands: MdmCommand[], control: ControlEnvelo
           onlinePrinters: printers.filter(printer => !printer.isOffline).length
         };
       } else if (command.type === "check_update") {
-        result = { appVersion: APP_VERSION, update: control.update ?? null };
+        result = { appVersion: CPIPOS_DESKTOP_VERSION, update: control.update ?? null };
       } else if (command.type === "collect_health") {
         result = {
           cpuPercent: system.cpuPercent ?? null,
@@ -239,7 +238,7 @@ async function syncOnce(): Promise<number> {
     const payload = {
       token: license.token,
       deviceCode: license.deviceCode,
-      appVersion: APP_VERSION,
+      appVersion: CPIPOS_DESKTOP_VERSION,
       runtimeVersion: "tauri2",
       deviceName: system.deviceName || settings.deviceName || null,
       machineId: system.machineId || null,
@@ -304,7 +303,7 @@ async function syncOnce(): Promise<number> {
       window.__CPIPOS_CONTROL_STATE__ = control;
       window.dispatchEvent(new CustomEvent("cpipos:license-entitlements", { detail: control.entitlements ?? {} }));
       if (control.update) {
-        localStorage.setItem(UPDATE_POLICY_KEY, JSON.stringify(control.update));
+        localStorage.setItem(CPIPOS_UPDATE_POLICY_KEY, JSON.stringify(control.update));
         window.dispatchEvent(new CustomEvent("cpipos:update-policy", { detail: control.update }));
       }
 

@@ -1,4 +1,4 @@
-const APP_VERSION = "0.3.0";
+import { CPIPOS_DESKTOP_VERSION as APP_VERSION } from "./app-version";
 
 function applyV030LicenseAuthorityUi() {
   document.querySelectorAll<HTMLElement>(".settings-menu-card").forEach((card) => {

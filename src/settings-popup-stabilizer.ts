@@ -1,4 +1,4 @@
-const APP_VERSION = "0.3.2";
+import { CPIPOS_DESKTOP_VERSION } from "./app-version";
 
 type RuntimeWindow = Window & {
   __CPIPOS_CONTROL_STATE__?: {
@@ -68,8 +68,8 @@ function renderRemote(host: HTMLElement) {
 
 function renderAbout(host: HTMLElement) {
   const policy = runtimeWindow().__CPIPOS_CONTROL_STATE__?.update;
-  const current = policy?.current_version || APP_VERSION;
-  const latest = policy?.latest_version || APP_VERSION;
+  const current = policy?.current_version || CPIPOS_DESKTOP_VERSION;
+  const latest = policy?.latest_version || CPIPOS_DESKTOP_VERSION;
   const status = policy?.update_available ? (policy.mandatory ? "ต้องอัปเดต" : "มีอัปเดต") : "ล่าสุด";
   host.innerHTML = `<section class="cpipos-live-card cpipos-live-card--about">
     <span class="cpipos-live-pill is-ok">VERSION</span>

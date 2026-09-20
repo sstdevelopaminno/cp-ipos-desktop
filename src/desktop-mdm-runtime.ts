@@ -1,14 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
+import { CPIPOS_DESKTOP_VERSION, CPIPOS_UPDATE_POLICY_KEY } from "./app-version";
 import { licensedSalesModes } from "./license-entitlements";
 
 const CONTROL_PLANE = String(import.meta.env.VITE_CPIPOS_IT_BASE_URL || "https://cp-ipos-it-web.vercel.app").replace(/\/$/, "");
 const HEARTBEAT_URL = `${CONTROL_PLANE}/api/desktop-license/heartbeat`;
-const APP_VERSION = "0.3.1";
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 const ONLINE_FIRST_CHECK_MS = 30_000;
 const FAST_ACK_MS = 2500;
 const COMMAND_RESULTS_KEY = "cpipos.mdm.command-results.v1";
-const UPDATE_POLICY_KEY = "cpipos.update.policy.v1";
 
 type LicenseRuntime = { mode?: "trial" | "licensed" | "locked" | "error"; token?: string; deviceCode?: string; payload?: { licenseId?: string; expiresAt?: string | null } };
 type SystemHealth = { deviceName?: string; machineId?: string; cpuPercent?: number; memoryPercent?: number; diskFreeBytes?: number; logicalProcessors?: number };
@@ -31,7 +30,7 @@ function readCommandResults(): CommandResult[] { try { const raw = localStorage.
 function saveCommandResults(rows: CommandResult[]) { try { localStorage.setItem(COMMAND_RESULTS_KEY, JSON.stringify(rows.slice(-20))); } catch { /* best effort */ } }
 function addCommandResult(result: CommandResult) { const current = readCommandResults().filter(item => item.id !== result.id); saveCommandResults([...current, result]); }
 function publishControl(control: ControlEnvelope | null, extra: Record<string, unknown> = {}) { const previous = runtimeWindow().__CPIPOS_CONTROL_STATE__ || {}; runtimeWindow().__CPIPOS_CONTROL_STATE__ = { ...previous, ...(control || {}), ...extra }; window.dispatchEvent(new CustomEvent("cpipos:control-state", { detail: runtimeWindow().__CPIPOS_CONTROL_STATE__ })); }
-function publishUpdate(policy?: UpdatePolicy) { if (!policy) return; try { localStorage.setItem(UPDATE_POLICY_KEY, JSON.stringify(policy)); } catch { /* best effort */ } window.dispatchEvent(new CustomEvent("cpipos:update-policy", { detail: policy })); }
+function publishUpdate(policy?: UpdatePolicy) { if (!policy) return; try { localStorage.setItem(CPIPOS_UPDATE_POLICY_KEY, JSON.stringify(policy)); } catch { /* best effort */ } window.dispatchEvent(new CustomEvent("cpipos:update-policy", { detail: policy })); }
 async function collectLightHealth() { try { return await invoke<SystemHealth>("get_windows_system_health"); } catch { return {} as SystemHealth; } }
 
 async function executeCommand(command: ControlCommand, health: SystemHealth, control: ControlEnvelope): Promise<CommandResult> {
@@ -56,7 +55,7 @@ async function heartbeat() {
   try {
     const health = await collectLightHealth();
     const pendingResults = readCommandResults();
-    const response = await fetch(HEARTBEAT_URL, { method: "POST", headers: { "content-type": "application/json" }, cache: "no-store", body: JSON.stringify({ token: license.token, deviceCode: license.deviceCode, appVersion: APP_VERSION, runtimeVersion: "tauri-2-webview2-lite-mdm", deviceName: health.deviceName || null, machineId: health.machineId || null, cpuPercent: Number(health.cpuPercent || 0), memoryPercent: Number(health.memoryPercent || 0), diskFreeBytes: Number(health.diskFreeBytes || 0), printerStatus: "managed_by_desktop", printerName: null, integrityStatus: health.machineId ? "ok" : "unknown", tamperDetected: false, connectivity: { online: navigator.onLine, controlPlane: CONTROL_PLANE, remoteManagement: true, mode: "it_driven_light" }, systemHealth: { logicalProcessors: Number(health.logicalProcessors || 0) }, printerHealth: { mode: "it_command_recheck" }, securitySignals: { machineBinding: health.machineId ? "present" : "unknown", signedLicense: true }, metadata: { salesModes: licensedSalesModes(), source: "cpipos-desktop", heartbeatVersion: 3, dbTelemetry: "disabled_client_ui" }, sales: [], commandResults: pendingResults }) });
+    const response = await fetch(HEARTBEAT_URL, { method: "POST", headers: { "content-type": "application/json" }, cache: "no-store", body: JSON.stringify({ token: license.token, deviceCode: license.deviceCode, appVersion: CPIPOS_DESKTOP_VERSION, runtimeVersion: "tauri-2-webview2-lite-mdm", deviceName: health.deviceName || null, machineId: health.machineId || null, cpuPercent: Number(health.cpuPercent || 0), memoryPercent: Number(health.memoryPercent || 0), diskFreeBytes: Number(health.diskFreeBytes || 0), printerStatus: "managed_by_desktop", printerName: null, integrityStatus: health.machineId ? "ok" : "unknown", tamperDetected: false, connectivity: { online: navigator.onLine, controlPlane: CONTROL_PLANE, remoteManagement: true, mode: "it_driven_light" }, systemHealth: { logicalProcessors: Number(health.logicalProcessors || 0) }, printerHealth: { mode: "it_command_recheck" }, securitySignals: { machineBinding: health.machineId ? "present" : "unknown", signedLicense: true }, metadata: { salesModes: licensedSalesModes(), source: "cpipos-desktop", desktopVersion: CPIPOS_DESKTOP_VERSION, heartbeatVersion: 4, dbTelemetry: "disabled_client_ui" }, sales: [], commandResults: pendingResults }) });
     const payload = await response.json().catch(() => ({})) as HeartbeatResponse;
     if (!response.ok || payload.valid === false) { if (payload.lock) window.dispatchEvent(new CustomEvent("cpipos:license-online-status", { detail: { lock: true, code: payload.code || "LICENSE_CHECK_FAILED" } })); throw new Error(payload.code || `HEARTBEAT_HTTP_${response.status}`); }
     if (pendingResults.length) saveCommandResults([]);

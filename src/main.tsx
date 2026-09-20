@@ -8,7 +8,6 @@ import "./browser-printer-preview-unblock";
 import "./printer-first-run-fix";
 import App from "./App";
 import { LicenseGate } from "./LicenseGate";
-import "./desktop-cloud-sync";
 import "./desktop-paid-cloud-backup";
 import "./desktop-version-network-patch";
 import "./desktop-mdm-late-start";

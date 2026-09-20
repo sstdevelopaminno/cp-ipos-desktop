@@ -1,3 +1,5 @@
+import { CPIPOS_DESKTOP_VERSION, CPIPOS_UPDATE_POLICY_KEY } from "./app-version";
+
 type UpdatePolicy = {
   channel?: string;
   current_version?: string;
@@ -66,7 +68,6 @@ type RuntimeWindow = Window & {
 };
 
 const runtimeWindow = () => window as RuntimeWindow;
-const UPDATE_POLICY_KEY = "cpipos.update.policy.v1";
 const FALLBACK_CLOUD_PLANS: CloudPlan[] = [7, 15, 30, 60, 90].map(days => ({
   code: `BACKUP_${days}D`,
   days,
@@ -85,7 +86,7 @@ const cell = (value: unknown) => String(value ?? "")
 
 function readUpdatePolicy(): UpdatePolicy | null {
   try {
-    const raw = localStorage.getItem(UPDATE_POLICY_KEY);
+    const raw = localStorage.getItem(CPIPOS_UPDATE_POLICY_KEY);
     return raw ? JSON.parse(raw) as UpdatePolicy : null;
   } catch { return null; }
 }
@@ -172,7 +173,7 @@ function reconcileSettingsMenu() {
 
     if (label.includes("เวอร์ชัน") || label.includes("Version")) {
       const policy = runtimeWindow().__CPIPOS_CONTROL_STATE__?.update || readUpdatePolicy();
-      meta.textContent = `CpIPOS Desktop ${policy?.current_version || "0.3.1"}`;
+      meta.textContent = `CpIPOS Desktop ${policy?.current_version || CPIPOS_DESKTOP_VERSION}`;
     }
   });
 }
@@ -279,9 +280,9 @@ function renderLicense(host: HTMLElement) {
 
 function renderRelease(host: HTMLElement) {
   const policy = runtimeWindow().__CPIPOS_CONTROL_STATE__?.update || readUpdatePolicy();
-  const current = policy?.current_version || "0.3.1";
-  const latest = policy?.latest_version || "0.3.1";
-  const minimum = policy?.minimum_version || "0.3.1";
+  const current = policy?.current_version || CPIPOS_DESKTOP_VERSION;
+  const latest = policy?.latest_version || CPIPOS_DESKTOP_VERSION;
+  const minimum = policy?.minimum_version || CPIPOS_DESKTOP_VERSION;
   const available = Boolean(policy?.update_available);
   host.innerHTML = `<div class="commercial-card"><span class="commercial-kicker">CpIPOS Desktop Release</span><h3>เวอร์ชัน ${cell(current)}</h3><p>ระบบ IT จะตรวจ current / latest / minimum version ทุก heartbeat เมื่อเครื่องออนไลน์</p><div class="commercial-summary"><span>Current: ${cell(current)}</span><span>Latest: ${cell(latest)}</span><span>Minimum: ${cell(minimum)}</span><span>Channel: ${cell(policy?.channel || "stable")}</span><span>Status: ${available ? (policy?.mandatory ? "UPDATE REQUIRED" : "UPDATE AVAILABLE") : "CURRENT"}</span></div></div>`;
 }
