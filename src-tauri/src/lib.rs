@@ -312,6 +312,7 @@ fn complete_startup_splash<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), S
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_sql::Builder::default().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let handle = app.handle().clone();
             schema_repair::ensure_database_schema(&handle)

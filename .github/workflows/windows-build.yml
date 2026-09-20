@@ -72,6 +72,7 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         with:
           tagName: ${{ env.CPIPOS_RELEASE_TAG }}
           releaseName: "CpIPOS Desktop ${{ env.CPIPOS_RELEASE_TAG }}"
@@ -82,7 +83,7 @@ jobs:
 
             Offline-first POS release for Windows.
             Includes signed offline License enforcement, 7-day trial lock, licensed sales-mode entitlements,
-            MDM heartbeat/telemetry, Cloud Backup integration, receipt printing, cash drawer support,
+            MDM heartbeat/telemetry with IT policy-driven signed auto-install updater, Cloud Backup integration, receipt printing, cash drawer support,
             PromptPay/QR payment, grocery barcode workflow, takeaway mode, dine-in/table mode,
             whole-bill amount/percent discounts with persisted receipt metadata, and startup SQLite schema repair.
 
@@ -97,5 +98,8 @@ jobs:
           name: cpipos-desktop-windows-installers
           path: |
             src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/msi/*.sig
             src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.sig
+            src-tauri/target/release/bundle/**/*.json
           if-no-files-found: warn
