@@ -95,7 +95,7 @@ async function resetDesktopStorage() {
 
 async function resetStorage(button: HTMLButtonElement) {
   const confirmed = window.confirm(
-    "ยืนยันล้างพื้นที่จัดเก็บ?\n\nรายการขาย ประวัติใบเสร็จ audit กะขาย และไฟล์ media ในเครื่องนี้จะถูกลบ แต่ข้อมูลสินค้า พนักงาน และการตั้งค่าหลักยังอยู่"
+    "ยืนยันล้างพื้นที่จัดเก็บ?\n\nระบบจะลบรายการขาย ประวัติใบเสร็จ audit กะขาย และตัดการอ้างอิงไฟล์ media เดิม โดยยังเก็บสินค้า พนักงาน และการตั้งค่าหลักไว้"
   );
   if (!confirmed) return;
 
@@ -128,7 +128,7 @@ function injectStorageCleanupButton() {
   panel.innerHTML = `
     <div>
       <strong>ล้างพื้นที่จัดเก็บในเครื่อง</strong>
-      <small>ลบยอดขาย ประวัติใบเสร็จ audit กะขาย และไฟล์ media เก่าที่ใช้พื้นที่ โดยยังเก็บสินค้า พนักงาน และการตั้งค่าหลักไว้</small>
+      <small>ลบยอดขาย ประวัติใบเสร็จ audit กะขาย และตัดการอ้างอิงไฟล์ media เดิม โดยยังเก็บสินค้า พนักงาน และการตั้งค่าหลักไว้</small>
     </div>
   `;
 
