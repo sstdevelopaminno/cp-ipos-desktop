@@ -9,7 +9,10 @@ const BACKUP_GROWTH_BYTES = 1024 * 1024;
 const LOW_DISK_BYTES = 2 * 1024 * 1024 * 1024;
 const CRITICAL_DISK_BYTES = 512 * 1024 * 1024;
 const LOCAL_DB_ARCHIVE_TRIGGER_BYTES = 512 * 1024 * 1024;
-const CHUNK_ROWS = 150;
+const CHUNK_ROWS = 75;
+const CLOUD_FETCH_TIMEOUT_MS = 10_000;
+const CHUNK_PAUSE_MS = 40;
+const REFRESH_MIN_GAP_MS = 60_000;
 const BACKUP_STATE_KEY = "cpipos.cloud.backup.state.v2";
 const BACKUP_TABLES = [
   "app_meta",
@@ -63,6 +66,8 @@ declare global {
 }
 
 let running = false;
+let refreshing = false;
+let lastRefreshAt = 0;
 let stopped = false;
 let statusTimer: number | undefined;
 
@@ -77,76 +82,100 @@ function licenseReady() {
   return runtime?.mode === "licensed" && Boolean(runtime.token && runtime.deviceCode) ? runtime : null;
 }
 
+const pause = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms));
+
 async function callCloud(body: Record<string, unknown>) {
   const license = licenseReady();
   if (!license) throw new Error("LICENSE_REQUIRED");
-  const response = await fetch(CLOUD_URL, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ...body, token: license.token, deviceCode: license.deviceCode }),
-    cache: "no-store"
-  });
-  const payload = await response.json() as { data?: any; error?: { code?: string; message?: string } | null };
-  if (!response.ok || payload.data == null) throw new Error(payload.error?.code || payload.error?.message || "CLOUD_REQUEST_FAILED");
-  return payload.data;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), CLOUD_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(CLOUD_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...body, token: license.token, deviceCode: license.deviceCode }),
+      cache: "no-store",
+      signal: controller.signal
+    });
+    const payload = await response.json() as { data?: any; error?: { code?: string; message?: string } | null };
+    if (!response.ok || payload.data == null) throw new Error(payload.error?.code || payload.error?.message || "CLOUD_REQUEST_FAILED");
+    return payload.data;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 async function fetchPublicPlans() {
-  const response = await fetch(CLOUD_URL, { method: "GET", cache: "no-store" });
-  const payload = await response.json() as { data?: { plans?: CloudPlan[] } | null; error?: { code?: string; message?: string } | null };
-  if (!response.ok || payload.data == null) throw new Error(payload.error?.code || payload.error?.message || "CLOUD_PLANS_FAILED");
-  return Array.isArray(payload.data.plans) ? payload.data.plans : [];
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), CLOUD_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(CLOUD_URL, { method: "GET", cache: "no-store", signal: controller.signal });
+    const payload = await response.json() as { data?: { plans?: CloudPlan[] } | null; error?: { code?: string; message?: string } | null };
+    if (!response.ok || payload.data == null) throw new Error(payload.error?.code || payload.error?.message || "CLOUD_PLANS_FAILED");
+    return Array.isArray(payload.data.plans) ? payload.data.plans : [];
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
-async function refreshCloudState() {
-  if (!navigator.onLine) {
-    publish({ connected: false, checkedAt: new Date().toISOString() });
-    return null;
-  }
-
-  const license = licenseReady();
-  if (!license) {
-    try {
-      const plans = await fetchPublicPlans();
-      publish({
-        plans,
-        connected: false,
-        checkedAt: new Date().toISOString(),
-        lastError: ""
-      });
-      return null;
-    } catch (error) {
-      publish({
-        connected: false,
-        checkedAt: new Date().toISOString(),
-        lastError: error instanceof Error ? error.message : "CLOUD_PLANS_FAILED"
-      });
+async function refreshCloudState(force = false) {
+  const cached = window.__CPIPOS_CLOUD_BACKUP__ || null;
+  if (!force && refreshing) return cached;
+  if (!force && cached && Date.now() - lastRefreshAt < REFRESH_MIN_GAP_MS) return cached;
+  refreshing = true;
+  try {
+    if (!navigator.onLine) {
+      publish({ connected: false, checkedAt: new Date().toISOString() });
       return null;
     }
-  }
 
-  try {
-    const data = await callCloud({ action: "status" });
-    const local = readLocalBackupState();
-    publish({
-      plans: Array.isArray(data.plans) ? data.plans : [],
-      request: data.request || null,
-      entitlement: data.entitlement || null,
-      snapshots: Array.isArray(data.snapshots) ? data.snapshots : [],
-      connected: Boolean(data.connected),
-      cloud_readable: Boolean(data.cloud_readable),
-      renewal_required: Boolean(data.renewal_required),
-      lifecycle_status: String(data.lifecycle_status || "not_active"),
-      automatic_backup: data.automatic_backup !== false,
-      checkedAt: new Date().toISOString(),
-      lastError: "",
-      lastOffloadedRows: local.lastOffloadedRows,
-      lastOffloadedAt: local.lastOffloadedAt
-    });
-    return data as CloudState;
-  } catch (error) {
-    publish({ connected: false, checkedAt: new Date().toISOString(), lastError: error instanceof Error ? error.message : "CLOUD_STATUS_FAILED" });
-    return null;
+    const license = licenseReady();
+    if (!license) {
+      try {
+        const plans = await fetchPublicPlans();
+        publish({
+          plans,
+          connected: false,
+          checkedAt: new Date().toISOString(),
+          lastError: ""
+        });
+        return null;
+      } catch (error) {
+        publish({
+          connected: false,
+          checkedAt: new Date().toISOString(),
+          lastError: error instanceof Error ? error.message : "CLOUD_PLANS_FAILED"
+        });
+        return null;
+      }
+    }
+
+    try {
+      const data = await callCloud({ action: "status" });
+      const local = readLocalBackupState();
+      publish({
+        plans: Array.isArray(data.plans) ? data.plans : [],
+        request: data.request || null,
+        entitlement: data.entitlement || null,
+        snapshots: Array.isArray(data.snapshots) ? data.snapshots : [],
+        connected: Boolean(data.connected),
+        cloud_readable: Boolean(data.cloud_readable),
+        renewal_required: Boolean(data.renewal_required),
+        lifecycle_status: data.lifecycle_status,
+        automatic_backup: data.automatic_backup !== false,
+        checkedAt: new Date().toISOString(),
+        lastError: "",
+        lastOffloadedRows: local.lastOffloadedRows,
+        lastOffloadedAt: local.lastOffloadedAt
+      });
+      return data as CloudState;
+    } catch (error) {
+      publish({ connected: false, checkedAt: new Date().toISOString(), lastError: error instanceof Error ? error.message : "CLOUD_STATUS_FAILED" });
+      return null;
+    }
+  } finally {
+    refreshing = false;
+    lastRefreshAt = Date.now();
   }
 }
 
@@ -154,7 +183,7 @@ async function requestPlan(planCode: string) {
   if (!navigator.onLine) throw new Error("OFFLINE");
   const data = await callCloud({ action: "request", planCode });
   publish({ request: data, lastError: "" });
-  await refreshCloudState();
+  await refreshCloudState(true);
   return data;
 }
 
@@ -240,6 +269,7 @@ async function uploadSnapshot(entitlement: CloudEntitlement, databaseBytes: numb
     const total = rowCounts[table] || 0;
     if (total === 0) {
       await callCloud({ action: "chunk", entitlementId: entitlement.id, snapshotKey, tableName: table, chunkIndex: 0, rows: [], databaseBytes, rowCounts });
+      await pause(CHUNK_PAUSE_MS);
       continue;
     }
     let offset = 0;
@@ -250,6 +280,7 @@ async function uploadSnapshot(entitlement: CloudEntitlement, databaseBytes: numb
       offset += rows.length;
       chunkIndex += 1;
       if (!rows.length) break;
+      await pause(CHUNK_PAUSE_MS);
     }
   }
 
@@ -262,7 +293,7 @@ async function uploadSnapshot(entitlement: CloudEntitlement, databaseBytes: numb
     await offloadVerifiedHistory(metrics, Number(rowCounts.sales || 0), Number(rowCounts.sale_items || 0), completed);
   }
   publish({ syncing: false, lastError: "" });
-  await refreshCloudState();
+  await refreshCloudState(true);
   return completed;
 }
 
@@ -290,7 +321,7 @@ async function maybeBackup(force = false) {
 }
 
 async function cycle() {
-  const state = await refreshCloudState();
+  const state = await refreshCloudState(true);
   if (state?.entitlement?.status === "active") await maybeBackup(false);
   window.clearTimeout(statusTimer);
   statusTimer = window.setTimeout(() => { void cycle(); }, STATUS_INTERVAL_MS);
@@ -302,7 +333,7 @@ function start() {
   window.setTimeout(() => { void cycle(); }, 2 * 60 * 1000);
   window.addEventListener("online", () => { window.setTimeout(() => { void cycle(); }, 30_000); });
   window.addEventListener("offline", () => publish({ connected: false }));
-  window.addEventListener("cpipos:cloud-refresh", () => { void refreshCloudState(); });
+  window.addEventListener("cpipos:cloud-refresh", () => { void refreshCloudState(false); });
   window.addEventListener("cpipos:cloud-backup-now", () => { void maybeBackup(true); });
   window.addEventListener("cpipos:cloud-purchase", event => {
     const planCode = String((event as CustomEvent<{ planCode?: string }>).detail?.planCode || "");

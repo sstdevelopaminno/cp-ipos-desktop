@@ -308,6 +308,10 @@ function enhanceModal() {
   if (!body) return;
   const section = sectionFromModal();
   if (!section) return;
+  if (section === "backup" && body.querySelector(".backup-cloud-native-panel")) {
+    body.querySelector(".commercial-settings-extension")?.remove();
+    return;
+  }
   hideLegacyFields(section, body);
   const cloud = runtimeWindow().__CPIPOS_CLOUD_BACKUP__;
   const license = runtimeLicense();

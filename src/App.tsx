@@ -378,6 +378,37 @@ function DeleteEmployeeModal({ repo, staff, employee, onClose, onDeleted }: { re
   </Modal>;
 }
 
+type NativeCloudPlan = { code: string; days: number; label_th?: string; price_thb?: number | null; active?: boolean };
+type NativeCloudState = {
+  plans?: NativeCloudPlan[];
+  request?: { status?: string; plan_days?: number; price_thb?: number | null } | null;
+  entitlement?: { plan_code?: string; cloud_code?: string; status?: string; expires_at?: string | null; last_backup_at?: string | null } | null;
+  connected?: boolean;
+  cloud_readable?: boolean;
+  syncing?: boolean;
+  checkedAt?: string;
+  lastError?: string;
+  lifecycle_status?: string;
+  renewal_required?: boolean;
+};
+const fallbackCloudPlans: NativeCloudPlan[] = [7, 15, 30, 60, 90].map(days => ({ code: `BACKUP_${days}D`, days, label_th: `Cloud Backup ${days} วัน`, price_thb: null, active: true }));
+const cloudRuntime = () => (window as Window & { __CPIPOS_CLOUD_BACKUP__?: NativeCloudState }).__CPIPOS_CLOUD_BACKUP__;
+const cloudDateText = (value?: string | null) => {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString("th-TH");
+};
+const cloudMoney = (value?: number | null) => value == null ? "รอ IT กำหนดราคา" : new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", maximumFractionDigits: 0 }).format(value);
+const cloudExpiryTone = (expiresAt?: string | null) => {
+  if (!expiresAt) return { tone: "ok", text: "Cloud พร้อมใช้งาน" };
+  const ms = Date.parse(expiresAt) - Date.now();
+  const days = Math.ceil(ms / 86400000);
+  if (days > 5) return { tone: "ok", text: `Cloud เหลือ ${days} วัน` };
+  if (days >= 0) return { tone: "warn", text: `Cloud ใกล้ครบกำหนด เหลือ ${days} วัน` };
+  const expiredDays = Math.abs(days);
+  if (expiredDays <= 5) return { tone: "danger", text: `Cloud หมดอายุแล้ว ${expiredDays} วัน ระบบจะตัดใน ${Math.max(0, 5 - expiredDays)} วัน` };
+  return { tone: "off", text: "Cloud ถูกตัดแล้ว กลับมาใช้ข้อมูลในเครื่อง" };
+};
 type SettingsSection = "store" | "branch" | "license" | "language" | "owner" | "receipt" | "paymentQr" | "printer" | "scanner" | "storage" | "backup" | "remote" | "about";
 type SettingsNavItem = { id: SettingsSection; label: string; description: string; meta: string; tone: string };
 
@@ -388,8 +419,28 @@ function SettingsScreen({ repo, staff, settings, language, refreshSettings }: { 
   const [logoError, setLogoError] = useState("");
   const [saveError, setSaveError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [cloudState, setCloudState] = useState<NativeCloudState | undefined>(() => cloudRuntime());
   useEffect(() => { setForm(settings); void repo.getStorageHealth().then(setHealth); }, [settings]);
+  useEffect(() => {
+    const refresh = () => setCloudState(cloudRuntime());
+    window.addEventListener("cpipos:cloud-state", refresh);
+    window.addEventListener("online", refresh);
+    window.addEventListener("offline", refresh);
+    refresh();
+    return () => {
+      window.removeEventListener("cpipos:cloud-state", refresh);
+      window.removeEventListener("online", refresh);
+      window.removeEventListener("offline", refresh);
+    };
+  }, []);
   const set = (key: keyof AppSettings, value: string | boolean) => setForm(f => ({ ...f, [key]: value }));
+  const cloudMeta = cloudState?.entitlement
+    ? `${cloudExpiryTone(cloudState.entitlement.expires_at).text}`
+    : cloudState?.request?.status === "pending"
+      ? "รอ IT ยืนยัน Cloud"
+      : navigator.onLine
+        ? "เลือกแพ็กเกจ Cloud"
+        : "Cloud แสดงได้เมื่อออนไลน์";
   const nav: SettingsNavItem[] = [
     { id: "store", label: t(language, "storeInfo"), description: "ชื่อร้าน โลโก้ ที่อยู่ และเลขผู้เสียภาษี", meta: form.storeName || "ยังไม่ระบุชื่อร้าน", tone: "blue" },
     { id: "branch", label: t(language, "branchDevice"), description: "ชื่อสาขา เครื่องขาย และรหัสอุปกรณ์", meta: form.deviceName || form.deviceId, tone: "cyan" },
@@ -401,7 +452,7 @@ function SettingsScreen({ repo, staff, settings, language, refreshSettings }: { 
     { id: "printer", label: t(language, "printer"), description: "เครื่องพิมพ์ใบเสร็จและขนาดกระดาษ", meta: form.printerName || "ยังไม่ได้เลือกเครื่องพิมพ์", tone: "slate" },
     { id: "scanner", label: t(language, "scanner"), description: "โหมดรับค่าจากเครื่องอ่านบาร์โค้ด", meta: form.scannerMode, tone: "teal" },
     { id: "storage", label: t(language, "storage"), description: "พื้นที่จัดเก็บ ฐานข้อมูล ยอดขาย และ audit", meta: health ? health.salesCount.toLocaleString("th-TH") + " sales" : "กำลังตรวจสอบ", tone: "indigo" },
-    { id: "backup", label: t(language, "backupRestore"), description: "สำรองและกู้คืนข้อมูลเครื่องขาย", meta: t(language, "notReady"), tone: "orange" },
+    { id: "backup", label: t(language, "backupRestore"), description: "สำรองและกู้คืนข้อมูลเครื่องขาย", meta: cloudMeta, tone: "orange" },
     { id: "remote", label: t(language, "remoteManagement"), description: "การจัดการระยะไกลและสถานะการเชื่อมต่อ", meta: t(language, "notReady"), tone: "pink" },
     { id: "about", label: t(language, "versionAbout"), description: "เวอร์ชันแอปและข้อมูลระบบ", meta: "CpIPOS Desktop 0.1.0", tone: "gray" },
   ];
@@ -447,7 +498,7 @@ function SettingsModal({ item, section, form, health, language, logoError, saveE
       {section === "printer" && <PrinterSettingsPanel form={form} set={set} />}
       {section === "scanner" && <div className="settings-form-grid"><label>โหมดเครื่องอ่านบาร์โค้ด<select value={form.scannerMode} onChange={e => set("scannerMode", e.target.value)}><option value="keyboard-wedge">Keyboard wedge / กด Enter หลังสแกน</option><option value="manual">Manual input / พิมพ์เอง</option></select></label><p className="warning settings-wide">เครื่องอ่านบาร์โค้ดทั่วไปควรใช้โหมด keyboard-wedge เพื่อส่งค่าเข้าช่องค้นหาเหมือนแป้นพิมพ์</p></div>}
       {section === "storage" && <StoragePanel health={health} />}
-      {section === "backup" && <p className="warning">{t(language, "notReady")} - ฟังก์ชันสำรองและกู้คืนจะเปิดใช้เมื่อระบบ backup local storage เสร็จสมบูรณ์</p>}
+      {section === "backup" && <BackupCloudNativePanel />}
       {section === "remote" && <div className="settings-form-grid"><label className="inline-check settings-wide"><input type="checkbox" checked={form.remoteManagementEnabled} disabled readOnly /> เปิด Remote Management</label><p className="warning settings-wide">{t(language, "notReady")} - ยังไม่เปิดการจัดการระยะไกลในรุ่นนี้</p></div>}
       {section === "about" && <div className="metric-grid"><Metric label="App" value="CpIPOS Desktop" /><Metric label="Version" value="0.1.0" /><Metric label="Mode" value="Offline POS" /></div>}
       {editable && <p className="warning">{t(language, "recordOnly")}</p>}
@@ -459,6 +510,40 @@ function SettingsModal({ item, section, form, health, language, logoError, saveE
 
 
 
+function BackupCloudNativePanel() {
+  const [cloud, setCloud] = useState<NativeCloudState | undefined>(() => cloudRuntime());
+  const [online, setOnline] = useState(() => navigator.onLine);
+  useEffect(() => {
+    const refresh = () => { setCloud(cloudRuntime()); setOnline(navigator.onLine); };
+    window.addEventListener("cpipos:cloud-state", refresh);
+    window.addEventListener("online", refresh);
+    window.addEventListener("offline", refresh);
+    window.dispatchEvent(new CustomEvent("cpipos:cloud-refresh"));
+    refresh();
+    return () => {
+      window.removeEventListener("cpipos:cloud-state", refresh);
+      window.removeEventListener("online", refresh);
+      window.removeEventListener("offline", refresh);
+    };
+  }, []);
+
+  const plans = cloud?.plans?.length ? cloud.plans : fallbackCloudPlans;
+  const pending = cloud?.request?.status === "pending" ? cloud.request : null;
+  const entitlement = cloud?.entitlement || null;
+  const expiry = cloudExpiryTone(entitlement?.expires_at);
+  const buy = (code: string) => window.dispatchEvent(new CustomEvent("cpipos:cloud-purchase", { detail: { planCode: code } }));
+  const backupNow = () => window.dispatchEvent(new CustomEvent("cpipos:cloud-backup-now"));
+
+  return <div className="backup-cloud-native-panel commercial-card cloud-backup-card">
+    <div className="cloud-hero"><span className="cloud-hero-icon">Cloud</span><div><span className="commercial-kicker">CLOUD BACKUP / RESTORE</span><h3>Cloud สำรองข้อมูล CpIPOS</h3><p>แสดงแพ็กเกจให้ลูกค้าตัดสินใจได้ทันที และจะซิงก์ขึ้น Cloud เมื่อ IT ยืนยันสิทธิ์แล้ว</p></div></div>
+    {entitlement && <div className="cloud-active-card"><div><span className="cloud-live-dot">●</span><strong>Cloud เชื่อมต่อแล้ว</strong></div><code>{entitlement.cloud_code || "CLOUD"}</code><span>แพ็กเกจ: {entitlement.plan_code || "-"}</span><span>ใช้งานถึง: {cloudDateText(entitlement.expires_at)}</span><span>สำรองล่าสุด: {cloudDateText(entitlement.last_backup_at)}</span><button className="commercial-cloud-now" disabled={!online || cloud?.syncing} onClick={backupNow}>{cloud?.syncing ? "กำลังสำรองข้อมูล..." : "สำรองข้อมูลตอนนี้"}</button></div>}
+    {entitlement && <div className={`cloud-lifecycle-alert ${expiry.tone}`}><strong>{expiry.text}</strong><span>{expiry.tone === "danger" || expiry.tone === "off" ? "ถ้าไม่ต่ออายุภายในช่วงผ่อนผัน ระบบจะหยุด Cloud และกลับไปใช้ข้อมูลในเครื่อง" : "ระบบขายยังใช้ฐานข้อมูลในเครื่องเป็นหลักเพื่อให้ขายต่อได้แม้เน็ตหลุด"}</span></div>}
+    {pending && <div className="cloud-pending-card"><strong>รอฝ่าย IT ยืนยันการซื้อ Cloud</strong><span>{pending.plan_days || "-"} วัน · {cloudMoney(pending.price_thb)}</span></div>}
+    {!entitlement && !pending && <div className="cloud-plan-grid">{plans.map(plan => <button key={plan.code} className="cloud-plan-card" disabled={!online || cloud?.syncing || plan.price_thb == null} onClick={() => buy(plan.code)}><span className="cloud-days">{plan.days} วัน</span><strong>{plan.label_th || `Cloud Backup ${plan.days} วัน`}</strong><em>{cloudMoney(plan.price_thb)}</em><small>{!online ? "รออินเทอร์เน็ต" : plan.price_thb == null ? "รอ IT กำหนดราคา" : "ส่งคำขอซื้อให้ IT"}</small></button>)}</div>}
+    {cloud?.lastError && <p className="commercial-status cloud-error">{cloud.lastError}</p>}
+    <div className="cloud-connection-line"><span>{online ? "● ONLINE" : "○ OFFLINE"}</span><span>{entitlement ? "CLOUD ACTIVE" : "CLOUD NOT ACTIVE"}</span><span>{cloud?.cloud_readable ? "SEARCH CLOUD" : "LOCAL FIRST"}</span><span>{cloud?.syncing ? "SYNCING" : "IDLE"}</span></div>
+  </div>;
+}
 function PaymentQrSettingsPanel({ form, set }: { form: AppSettings; set: (key: keyof AppSettings, value: string | boolean) => void }) {
   const [online, setOnline] = useState(() => navigator.onLine);
   const [imageError, setImageError] = useState("");

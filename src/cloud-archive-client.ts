@@ -2,6 +2,7 @@ import type { AppSettings, Receipt, Sale, SaleItem } from "./domain/types";
 
 const CONTROL_PLANE = String(import.meta.env.VITE_CPIPOS_IT_BASE_URL || "https://cp-ipos-it-web.vercel.app").replace(/\/$/, "");
 const CLOUD_URL = `${CONTROL_PLANE}/api/desktop-license/cloud`;
+const CLOUD_FETCH_TIMEOUT_MS = 8000;
 
 type LicenseRuntime = { mode?: "trial" | "licensed" | "locked" | "error"; token?: string; deviceCode?: string };
 type RuntimeWindow = Window & {
@@ -21,15 +22,22 @@ function license() {
 async function callCloud<T>(body: Record<string, unknown>): Promise<T> {
   const current = license();
   if (!current) throw new Error("LICENSE_REQUIRED");
-  const response = await fetch(CLOUD_URL, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ...body, token: current.token, deviceCode: current.deviceCode }),
-    cache: "no-store"
-  });
-  const payload = await response.json() as { data?: T | null; error?: { code?: string; message?: string } | null };
-  if (!response.ok || payload.data == null) throw new Error(payload.error?.code || payload.error?.message || "CLOUD_ARCHIVE_REQUEST_FAILED");
-  return payload.data;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), CLOUD_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(CLOUD_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...body, token: current.token, deviceCode: current.deviceCode }),
+      cache: "no-store",
+      signal: controller.signal
+    });
+    const payload = await response.json() as { data?: T | null; error?: { code?: string; message?: string } | null };
+    if (!response.ok || payload.data == null) throw new Error(payload.error?.code || payload.error?.message || "CLOUD_ARCHIVE_REQUEST_FAILED");
+    return payload.data;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }
 
 export function cloudArchiveReadable() {

@@ -3,6 +3,7 @@ import type { PosRepository } from "./data/repository";
 import type { AppSettings, Language, Receipt, Sale, SaleItem, Shift, Staff } from "./domain/types";
 import { t } from "./i18n";
 import { printReceiptNative } from "./receipt-print";
+import { getCloudArchivedReceipt, listCloudArchivedSales, mergeLocalAndCloudSales } from "./cloud-archive-client";
 import "./sales-history-ui.css";
 import "./sales-receipt-ui.css";
 
@@ -47,13 +48,29 @@ export function SalesHistoryScreenV2({ repo, staff, shift, settings, language }:
   const load = async () => {
     setLoading(true);
     try {
-      setRows(await repo.listSales(2000, { status: "all" }));
+      const localRows = await repo.listSales(2000, { status: "all" });
+      const cloudRows = await listCloudArchivedSales(3000);
+      setRows(mergeLocalAndCloudSales(localRows, cloudRows));
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => { void load(); }, []);
+
+  const openReceipt = async (sale: Sale) => {
+    try {
+      const local = await repo.getReceipt(sale.id);
+      if (local) {
+        setReceipt(local);
+        return;
+      }
+    } catch {
+      // Archived Cloud rows may no longer exist in the local SQLite database.
+    }
+    const cloudReceipt = await getCloudArchivedReceipt(sale.id, settings);
+    if (cloudReceipt) setReceipt(cloudReceipt);
+  };
 
   const target = period === "day" ? date : period === "month" ? month : year;
   const filtered = useMemo(() => {
@@ -132,7 +149,7 @@ export function SalesHistoryScreenV2({ repo, staff, shift, settings, language }:
             <td className="sales-history-number"><strong>{money(s.total)}</strong></td>
             <td className="sales-history-number">{money(s.paid)}</td>
             <td className="sales-history-number">{money(s.changeAmount)}</td>
-            <td><div className="sales-history-actions"><button className="sales-history-action receipt" onClick={async () => setReceipt(await repo.getReceipt(s.id))}>ใบเสร็จ</button>{s.status === "completed" ? <button className="sales-history-action void" onClick={() => setVoiding(s)}>ยกเลิกบิล</button> : <button className="sales-history-action voided" disabled>ยกเลิกแล้ว</button>}</div></td>
+            <td><div className="sales-history-actions"><button className="sales-history-action receipt" onClick={() => void openReceipt(s)}>ใบเสร็จ</button>{s.status === "completed" ? <button className="sales-history-action void" onClick={() => setVoiding(s)}>ยกเลิกบิล</button> : <button className="sales-history-action voided" disabled>ยกเลิกแล้ว</button>}</div></td>
           </tr>)}</tbody>
         </table>
         {!pageRows.length && <EmptyState text={loading ? "กำลังโหลดรายการขาย..." : t(language, "empty")} />}
