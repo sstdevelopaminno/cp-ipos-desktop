@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 const CONTROL_PLANE = String(import.meta.env.VITE_CPIPOS_IT_BASE_URL || "https://cp-ipos-it-web.vercel.app").replace(/\/$/, "");
 const CLOUD_URL = `${CONTROL_PLANE}/api/desktop-license/cloud`;
-const STATUS_INTERVAL_MS = 5 * 60 * 1000;
+const STATUS_INTERVAL_MS = 30 * 60 * 1000;
 const BACKUP_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 const BACKUP_GROWTH_BYTES = 1024 * 1024;
 const LOW_DISK_BYTES = 2 * 1024 * 1024 * 1024;
@@ -299,8 +299,8 @@ async function cycle() {
 function start() {
   const local = readLocalBackupState();
   publish({ plans: [], request: null, entitlement: null, snapshots: [], connected: false, automatic_backup: true, syncing: false, lastOffloadedRows: local.lastOffloadedRows, lastOffloadedAt: local.lastOffloadedAt });
-  window.setTimeout(() => { void cycle(); }, 1200);
-  window.addEventListener("online", () => { void cycle(); });
+  window.setTimeout(() => { void cycle(); }, 2 * 60 * 1000);
+  window.addEventListener("online", () => { window.setTimeout(() => { void cycle(); }, 30_000); });
   window.addEventListener("offline", () => publish({ connected: false }));
   window.addEventListener("cpipos:cloud-refresh", () => { void refreshCloudState(); });
   window.addEventListener("cpipos:cloud-backup-now", () => { void maybeBackup(true); });

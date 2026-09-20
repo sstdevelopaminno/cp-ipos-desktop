@@ -12,9 +12,16 @@ type WindowsSystemHealth = { machineId?: string };
 type BindingRow = { machine_id: string; device_code: string; license_id: string; token_sha256: string };
 
 const encoder = new TextEncoder();
+const FIRST_CHECK_DELAY_MS = 60 * 1000;
+const PERIODIC_CHECK_MS = 15 * 60 * 1000;
+const MIN_CHECK_GAP_MS = 5 * 60 * 1000;
+const MACHINE_ID_CACHE_MS = 60 * 60 * 1000;
 let checking = false;
 let lastToken = "";
 let stopped = false;
+let lastCheckAt = 0;
+let cachedMachineId = "";
+let cachedMachineIdAt = 0;
 
 function runtime() {
   return (window as Window & { __CPIPOS_LICENSE_RUNTIME__?: LicenseRuntime }).__CPIPOS_LICENSE_RUNTIME__;
@@ -26,18 +33,23 @@ async function sha256(value: string) {
 }
 
 async function currentMachineId() {
+  if (cachedMachineId && Date.now() - cachedMachineIdAt < MACHINE_ID_CACHE_MS) return cachedMachineId;
   try {
     const system = await invoke<WindowsSystemHealth>("get_windows_system_health");
-    return String(system.machineId || "").trim().toUpperCase();
-  } catch { return ""; }
+    cachedMachineId = String(system.machineId || "").trim().toUpperCase();
+    cachedMachineIdAt = Date.now();
+    return cachedMachineId;
+  } catch { return cachedMachineId; }
 }
 
-async function checkBinding() {
+async function checkBinding(force = false) {
   if (checking || stopped) return;
+  if (!force && Date.now() - lastCheckAt < MIN_CHECK_GAP_MS) return;
   const license = runtime();
   if (!license || license.mode !== "licensed" || !license.token || !license.deviceCode) return;
   if (lastToken === license.token) return;
   checking = true;
+  lastCheckAt = Date.now();
   try {
     const machineId = await currentMachineId();
     if (!machineId) return;
@@ -74,7 +86,6 @@ async function checkBinding() {
       return;
     }
 
-    // A legitimate IT reissue for the same physical Windows machine is allowed.
     await db.execute(
       "UPDATE cpipos_license_machine_binding SET license_id=$1,token_sha256=$2,last_verified_at=$3 WHERE id=1",
       [licenseId, tokenHash, new Date().toISOString()]
@@ -88,12 +99,12 @@ async function checkBinding() {
 }
 
 function start() {
-  const check = () => void checkBinding();
+  const check = () => void checkBinding(false);
   window.addEventListener("cpipos:license-online-status", check);
   window.addEventListener("focus", check);
-  const timer = window.setInterval(check, 5000);
-  window.setTimeout(check, 800);
-  window.addEventListener("beforeunload", () => { stopped = true; window.clearInterval(timer); }, { once: true });
+  const periodic = window.setInterval(check, PERIODIC_CHECK_MS);
+  const first = window.setTimeout(() => void checkBinding(true), FIRST_CHECK_DELAY_MS);
+  window.addEventListener("beforeunload", () => { stopped = true; window.clearInterval(periodic); window.clearTimeout(first); }, { once: true });
 }
 
 if (typeof window !== "undefined") start();
