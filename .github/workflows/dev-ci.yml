@@ -3,6 +3,7 @@ name: Desktop Dev CI
 on:
   push:
     branches:
+      - main
       - dev/ui-system
   pull_request:
     branches:
