@@ -1,6 +1,8 @@
 name: Windows Build
 
 on:
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       version:
@@ -23,7 +25,7 @@ on:
 
 jobs:
   dev-build:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev/ui-system'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/dev/ui-system') || github.event_name == 'pull_request'
     permissions:
       contents: read
     runs-on: windows-latest
@@ -129,6 +131,9 @@ jobs:
 
       - name: Rust stability check
         run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Require production acceptance evidence for stable customer release
+        run: node scripts/assert-production-acceptance.mjs
 
       - name: Publish CpIPOS Desktop release
         uses: tauri-apps/tauri-action@v0
