@@ -106,7 +106,10 @@ async function sha256Code(value: string) {
 async function readNativeTrialStartedAt() {
   try {
     const value = await invoke<number>("get_or_create_trial_started_at_ms");
-    if (!Number.isFinite(value) || value <= 0) return null;
+    if (!Number.isFinite(value) || value <= 0) {
+      if ("__TAURI_INTERNALS__" in window) throw new Error("LICENSE_NATIVE_STORAGE_UNAVAILABLE");
+      return null;
+    }
     return new Date(value).toISOString();
   } catch {
     // Preview browsers are for UI development only. A packaged Tauri app must
@@ -334,7 +337,7 @@ export function LicenseGate({ children }: { children: ReactNode }) {
 
   return <>
     {!locked && children}
-    {locked && <main className="license-lock-page"><section className="license-lock-card"><img src="/icon.png" alt="CpIPOS" /><span className="license-lock-pill">TRIAL ENDED · LICENSE REQUIRED</span><h1>ครบกำหนดทดลองใช้งาน CpIPOS Desktop</h1><p>{state.message || "กรุณาซื้อโปรแกรมและใส่ลายเส้น License ที่ออกโดยฝ่าย IT"}</p><div className="license-lock-contact"><img src="/line-contact-qr.svg" alt="LINE ซื้อโปรแกรม CpIPOS" /><div><strong>ติดต่อซื้อโปรแกรม</strong><span>โทร {SALES_PHONE}</span><span>LINE: สแกน QR Code</span></div></div><div className="license-device-box"><span>รหัสเครื่องสำหรับส่งให้ IT</span><strong>{state.deviceCode}</strong><button onClick={() => void copyDevice()}>{copyText}</button></div><button className="license-primary" onClick={() => setOpen(true)}>ซื้อ / ใส่ลายเส้น License</button></section></main>}
+    {locked && <main className="license-lock-page"><section className="license-lock-card"><img src="/icon.png" alt="CpIPOS" /><span className="license-lock-pill">{state.mode === "error" ? "LICENSE STORAGE ERROR · SALES BLOCKED" : "TRIAL ENDED · LICENSE REQUIRED"}</span><h1>{state.mode === "error" ? "ระบบอ่านข้อมูล License ไม่สำเร็จ" : "ครบกำหนดทดลองใช้งาน CpIPOS Desktop"}</h1><p>{state.message || "กรุณาซื้อโปรแกรมและใส่ลายเส้น License ที่ออกโดยฝ่าย IT"}</p><div className="license-lock-contact"><img src="/line-contact-qr.svg" alt="LINE ซื้อโปรแกรม CpIPOS" /><div><strong>ติดต่อซื้อโปรแกรม</strong><span>โทร {SALES_PHONE}</span><span>LINE: สแกน QR Code</span></div></div><div className="license-device-box"><span>รหัสเครื่องสำหรับส่งให้ IT</span><strong>{state.deviceCode}</strong><button onClick={() => void copyDevice()}>{copyText}</button></div><button className="license-primary" onClick={() => setOpen(true)}>ซื้อ / ใส่ลายเส้น License</button></section></main>}
     {state.mode === "trial" && <button className="license-floating trial" onClick={() => setOpen(true)} title="ทดลองใช้งานฟรี"><span>T</span><strong>{statusLabel}</strong></button>}
     {open && <div className="license-modal-backdrop"><section className="license-modal">
       <header><div><span className="license-kicker">CUTTING POINT INNOVATION CO., LTD.</span><h2>{locked ? "ซื้อโปรแกรม / เปิดใช้งาน CpIPOS Desktop" : state.mode === "licensed" ? "สถานะ License" : "เปิดใช้งาน CpIPOS Desktop"}</h2></div>{!locked && <button className="license-close" onClick={() => setOpen(false)}>×</button>}</header>
