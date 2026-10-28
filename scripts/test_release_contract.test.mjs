@@ -37,3 +37,11 @@ test("Company display metadata is updated without changing the signed license is
   assert.match(cargo, /CUTTING POINT INNOVATION CO\., LTD\./);
   assert.match(issuer, /issuer:\s*"CUTTING-POINT-TECH-IT"/);
 });
+
+
+test("Customer bearer license outputs are excluded from Git", () => {
+  const ignore = read(".gitignore");
+  for (const pattern of ["cpipos-license-*.txt", "cpipos-license-*.json", "issued-licenses/", "licenses-issued/"]) {
+    assert.ok(ignore.split(/\\r?\\n/).includes(pattern), `Missing sensitive license ignore rule: ${pattern}`);
+  }
+});
