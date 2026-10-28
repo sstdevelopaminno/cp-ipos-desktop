@@ -1,6 +1,8 @@
 name: Windows Build
 
 on:
+  pull_request:
+    branches: [main]
   workflow_dispatch:
     inputs:
       version:
@@ -23,7 +25,7 @@ on:
 
 jobs:
   dev-build:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/dev/ui-system'
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/dev/ui-system') || github.event_name == 'pull_request'
     permissions:
       contents: read
     runs-on: windows-latest
@@ -47,7 +49,7 @@ jobs:
       - name: Frontend stability build
         run: npm run build
       - name: Release configuration and offline license issuer tests
-        run: node --test scripts/test_release_contract.test.mjs scripts/test_license_issuance.test.mjs
+        run: node --test scripts/test_release_contract.test.mjs scripts/test_license_issuance.test.mjs scripts/test_production_gate.test.mjs
 
       - name: SQLite transaction smoke test
         run: python scripts/test_sqlite_migrations.py
@@ -59,6 +61,10 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: npm run desktop:build
+
+      - name: Verify installer binaries and SHA-256 (not hardware acceptance)
+        shell: pwsh
+        run: ./scripts/verify-windows-artifacts.ps1
 
       - name: Upload development installer artifacts
         uses: actions/upload-artifact@v4
@@ -118,13 +124,16 @@ jobs:
       - name: Frontend stability build
         run: npm run build
       - name: Release configuration and offline license issuer tests
-        run: node --test scripts/test_release_contract.test.mjs scripts/test_license_issuance.test.mjs
+        run: node --test scripts/test_release_contract.test.mjs scripts/test_license_issuance.test.mjs scripts/test_production_gate.test.mjs
 
       - name: SQLite transaction smoke test
         run: python scripts/test_sqlite_migrations.py
 
       - name: Rust stability check
         run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Require production acceptance evidence for stable customer release
+        run: node scripts/assert-production-acceptance.mjs
 
       - name: Publish CpIPOS Desktop release
         uses: tauri-apps/tauri-action@v0
