@@ -26,6 +26,8 @@ jobs:
         run: npm ci
       - name: Frontend build
         run: npm run build
+      - name: Release configuration and offline license issuer tests
+        run: node --test scripts/test_release_contract.test.mjs scripts/test_license_issuance.test.mjs
       - name: SQLite grocery transaction smoke test
         run: python scripts/test_sqlite_migrations.py
       - name: Rust check
