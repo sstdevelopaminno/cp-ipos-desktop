@@ -54,7 +54,7 @@ const token = `CP1.${payloadPart}.${signature.toString("base64url")}`;
 const output = values.get("--out") || `cpipos-license-${payload.licenseId}.txt`;
 const parsedOutput = path.parse(output);
 const metadataOutput = path.join(parsedOutput.dir, `${parsedOutput.name}.json`);
-if (path.resolve(metadataOutput) === path.resolve(output)) {
+if (path.resolve(metadataOutput).toLowerCase() === path.resolve(output).toLowerCase()) {
   throw new Error("--out must not end with .json (reserved for license metadata)");
 }
 fs.writeFileSync(output, token + "\n", { mode: 0o600 });
