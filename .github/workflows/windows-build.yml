@@ -60,6 +60,10 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: npm run desktop:build
 
+      - name: Verify installer binaries and SHA-256 (not hardware acceptance)
+        shell: pwsh
+        run: ./scripts/verify-windows-artifacts.ps1
+
       - name: Upload development installer artifacts
         uses: actions/upload-artifact@v4
         if: always()
