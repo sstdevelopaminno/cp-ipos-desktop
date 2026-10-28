@@ -1,0 +1,39 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = fileURLToPath(new URL("../", import.meta.url));
+const read = file => readFileSync(path.join(root, file), "utf8");
+
+test("Desktop metadata has one consistent release version", () => {
+  const pkg = JSON.parse(read("package.json"));
+  const tauri = JSON.parse(read("src-tauri/tauri.conf.json"));
+  const cargo = read("src-tauri/Cargo.toml");
+  const appVersion = read("src/app-version.ts");
+  const cargoVersion = cargo.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+  const appVersionMatch = appVersion.match(/CPIPOS_DESKTOP_VERSION\s*=\s*"([^"]+)"/)?.[1];
+  assert.ok(pkg.version);
+  assert.equal(tauri.version, pkg.version, "Tauri and npm versions differ");
+  assert.equal(cargoVersion, pkg.version, "Cargo and npm versions differ");
+  assert.equal(appVersionMatch, pkg.version, "Application display version differs");
+});
+
+test("Windows updater artifacts stay enabled and application retains an explicit CSP", () => {
+  const config = JSON.parse(read("src-tauri/tauri.conf.json"));
+  assert.equal(config.bundle.active, true);
+  assert.equal(config.bundle.createUpdaterArtifacts, true);
+  assert.ok(config.bundle.targets.includes("nsis"));
+  assert.ok(config.bundle.targets.includes("msi"));
+  assert.ok(typeof config.app.security.csp === "string" && config.app.security.csp.length > 0);
+  assert.ok(config.plugins.updater.pubkey, "updater public key is missing");
+  assert.ok(config.plugins.updater.endpoints?.length, "updater endpoint is missing");
+});
+
+test("Company display metadata is updated without changing the signed license issuer", () => {
+  const cargo = read("src-tauri/Cargo.toml");
+  const issuer = read("scripts/issue-offline-license.mjs");
+  assert.match(cargo, /CUTTING POINT INNOVATION CO\., LTD\./);
+  assert.match(issuer, /issuer:\s*"CUTTING-POINT-TECH-IT"/);
+});

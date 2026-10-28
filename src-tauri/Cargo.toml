@@ -2,7 +2,7 @@
 name = "cp-ipos-desktop"
 version = "0.3.4"
 description = "CpIPOS Offline-first Windows POS"
-authors = ["CUTTING POINT TECH CO., LTD."]
+authors = ["CUTTING POINT INNOVATION CO., LTD."]
 edition = "2021"
 
 [lib]

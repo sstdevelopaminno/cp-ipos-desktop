@@ -4,6 +4,12 @@ Standalone Windows offline-first POS. This repository remains separate from CpIP
 
 Status: development prototype, not production-ready.
 
+## Release and branch status (2026-10-28)
+
+The public `v0.3.4` Windows installer was built from the separate `publish/v0.3.4` branch, **not** from the default `main` branch. `dev/ui-system` contains additional development that has not yet been safely reconciled with `main`. Do not treat a successful installer workflow as completed customer hardware/UAT acceptance. Keep existing customer releases unchanged until the release checklist in `docs/RELEASE_READINESS_2026-10-28.md` is verified.
+
+The historical signed-license issuer identifier `CUTTING-POINT-TECH-IT` is intentionally retained for backwards compatibility; changing company display names must not change existing cryptographic payload contracts.
+
 ## Current foundation
 
 - Tauri 2 Windows shell with React, TypeScript, Vite and local SQLite.

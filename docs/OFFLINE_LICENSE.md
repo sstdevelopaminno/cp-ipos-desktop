@@ -1,12 +1,12 @@
 # CpIPOS Desktop Offline License
 
-CpIPOS Desktop uses an offline signed-license model. The application contains only the company public key. The matching private key must stay with CUTTING POINT TECH IT and must never be committed to GitHub, bundled with the installer, emailed casually, or copied onto customer machines.
+CpIPOS Desktop uses an offline signed-license model. The application contains only the company public key. The matching private key must stay with CUTTING POINT INNOVATION IT and must never be committed to GitHub, bundled with the installer, emailed casually, or copied onto customer machines.
 
 ## Customer flow
 
 1. Install CpIPOS Desktop.
 2. The application creates a Device Code and starts a 7-day trial.
-3. Customer sends the Device Code to CUTTING POINT TECH IT.
+3. Customer sends the Device Code to CUTTING POINT INNOVATION IT.
 4. IT issues one signed license for exactly one or two Device Codes.
 5. Customer pastes the `CP1...` token into the License window.
 6. The application verifies the ECDSA P-256 signature locally, checks product/issuer, device binding, activation date and expiry, then unlocks production mode.
