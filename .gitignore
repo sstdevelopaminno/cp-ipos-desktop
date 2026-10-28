@@ -26,3 +26,12 @@ backups/
 *.sqlite-*
 *.sqlite3-*
 src-tauri/gen/schemas/
+
+# Issued offline license tokens are bearer credentials (never commit these files).
+cpipos-license-*.txt
+cpipos-license-*.json
+issued-licenses/
+licenses-issued/
+*.license.txt
+*.license.json
+*.license.token
