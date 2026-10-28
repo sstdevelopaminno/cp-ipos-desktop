@@ -14,7 +14,7 @@ CpIPOS Desktop uses an offline signed-license model. The application contains on
 
 ## Issue a license on the IT machine
 
-Keep `cpipos-license-private-key.pem` outside the repository on an IT-controlled machine.
+Keep `cpipos-license-private-key.pem` outside the repository on an IT-controlled machine. **Store issued customer license tokens and metadata outside the repository too** (for example, an access-controlled IT issuance directory). The tool writes both a token file and a same-basename JSON metadata file; never add either to Git, commit them, upload them as workflow artifacts, or paste them into routine CI logs. Generated default `cpipos-license-*.txt/.json` files are gitignored as a safety net, not a substitute for an external protected storage directory.
 
 ```powershell
 $env:CPIPOS_LICENSE_PRIVATE_KEY="D:\CpIPOS-License\cpipos-license-private-key.pem"
