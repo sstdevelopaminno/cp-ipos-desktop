@@ -1,0 +1,78 @@
+.grocery-checkout-panel::after{
+  content:"";
+  flex:1 1 auto;
+  min-height:112px;
+  margin-top:8px;
+  border:0;
+  border-radius:0;
+  background:url("/icon.png") center center / 76px 76px no-repeat;
+  opacity:.56;
+}
+
+.grocery-checkout-panel:has(.grocery-pay-button:not(:disabled))::after{
+  min-height:88px;
+  background:url("/icon.png") center center / 62px 62px no-repeat;
+  opacity:.44;
+}
+
+.grocery-empty-table{
+  min-height:320px!important;
+  height:100%;
+  display:flex!important;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:8px!important;
+  padding:32px 16px;
+  text-align:center;
+  color:#728399;
+}
+
+.grocery-empty-table::before,
+.grocery-empty-table::after{
+  display:none!important;
+  content:none!important;
+}
+
+.grocery-empty-table strong{
+  color:#162946!important;
+  font-size:24px!important;
+  line-height:1.2;
+  font-weight:900;
+}
+
+.grocery-empty-table span{
+  max-width:360px;
+  color:#6b7d92;
+  font-size:15px!important;
+  line-height:1.5;
+}
+
+@media(max-height:760px){
+  .grocery-checkout-panel::after{
+    min-height:72px;
+    background-size:54px 54px;
+    opacity:.42;
+  }
+
+  .grocery-empty-table{
+    min-height:230px!important;
+    padding:22px 12px;
+  }
+
+  .grocery-empty-table strong{
+    font-size:20px!important;
+  }
+
+  .grocery-empty-table span{
+    font-size:13px!important;
+  }
+}
+
+@media print{
+  .grocery-checkout-panel::after,
+  .grocery-empty-table::before,
+  .grocery-empty-table::after{
+    display:none!important;
+  }
+}

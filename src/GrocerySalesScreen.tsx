@@ -1,0 +1,951 @@
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import type { AppSettings, CartLine, Language, Product, Receipt, Shift, Staff } from "./domain/types";
+import type { PosRepository, ProductInput } from "./data/repository";
+import { productName } from "./i18n";
+import { resolvePaymentQr } from "./payment-qr";
+import { printReceiptNative } from "./receipt-print";
+import "./grocery-sales.css";
+
+type Props = {
+  repo: PosRepository;
+  staff: Staff;
+  shift: Shift;
+  settings: AppSettings;
+  products: Product[];
+  language: Language;
+  refreshProducts: () => Promise<void>;
+};
+
+type ToastState = { kind: "ok" | "warn" | "error"; text: string } | null;
+type Discount = { type: "amount" | "percent"; value: number } | null;
+type PricedReceipt = Receipt & {
+  subtotal?: number;
+  discountAmount?: number;
+  discountType?: "amount" | "percent";
+  discountValue?: number;
+};
+
+type CheckoutLine = {
+  productId: string;
+  name: string;
+  quantity: number;
+  unitPrice: number;
+  originalUnitPrice: number;
+  discountType: "none" | "amount" | "percent";
+  discountValue: number;
+};
+
+type ParkedBill = {
+  id: string;
+  label: string;
+  createdAt: string;
+  cashierName: string;
+  shiftId: string;
+  deviceId: string;
+  cart: CartLine[];
+  discount: Discount;
+  itemCount: number;
+  totalQty: number;
+  subtotal: number;
+  total: number;
+};
+
+const moneyNumber = (n: number) => Math.round((Number(n) || 0) * 100) / 100;
+const money = (n: number) => `฿${moneyNumber(n).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const roundQty = (n: number) => Math.round((Number(n) || 0) * 1000) / 1000;
+const cleanCode = (value: string) => value.trim().replace(/\s+/g, "");
+const normalizeCode = (value: string) => cleanCode(value).toLowerCase();
+const physicalScannerDigit = (code: string) => {
+  const topRow = /^Digit([0-9])$/.exec(code);
+  if (topRow) return topRow[1];
+  const numpad = /^Numpad([0-9])$/.exec(code);
+  return numpad ? numpad[1] : "";
+};
+const safeScanQty = (value: number | string) => Math.max(0.001, roundQty(Number(value) || 1));
+const SYSTEM_LOGO = "/icon.png";
+const parkedBillKey = (deviceId: string, shiftId: string) => `cpipos.sales.parked.${deviceId || "device"}.${shiftId || "shift"}`;
+const readParkedBills = (key: string): ParkedBill[] => {
+  try {
+    const raw = localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter(bill => bill && Array.isArray(bill.cart)) as ParkedBill[] : [];
+  } catch {
+    return [];
+  }
+};
+const writeParkedBills = (key: string, bills: ParkedBill[]) => localStorage.setItem(key, JSON.stringify(bills));
+const openDrawerNative = async (settings: AppSettings) => { if (!settings.printerName) throw new Error("PRINTER_NOT_CONFIGURED"); await invoke("open_cash_drawer", { printerName: settings.printerName }); };
+const isEditableElement = (target: EventTarget | null) => {
+  const element = target instanceof HTMLElement ? target : null;
+  if (!element) return false;
+  return element.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName);
+};
+const editableValue = (target: EventTarget | null) => {
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return target.value;
+  return "";
+};
+function priceCart(cart: CartLine[], discount: Discount, language: Language) {
+  const subtotal = moneyNumber(cart.reduce((sum, line) => sum + line.quantity * line.price, 0));
+  const requestedDiscount = discount
+    ? discount.type === "percent"
+      ? moneyNumber(subtotal * Math.min(100, Math.max(0, discount.value)) / 100)
+      : moneyNumber(Math.min(subtotal, Math.max(0, discount.value)))
+    : 0;
+  const rate = subtotal > 0 ? requestedDiscount / subtotal : 0;
+  const checkoutItems: CheckoutLine[] = cart.map(line => ({
+    productId: line.id,
+    name: productName(language, line),
+    quantity: roundQty(line.quantity),
+    unitPrice: moneyNumber(line.price * (1 - rate)),
+    originalUnitPrice: moneyNumber(line.price),
+    discountType: discount?.type || "none",
+    discountValue: moneyNumber(discount?.value || 0),
+  }));
+  const total = moneyNumber(checkoutItems.reduce((sum, line) => sum + line.quantity * moneyNumber(line.unitPrice), 0));
+  const discountAmount = moneyNumber(Math.max(0, subtotal - total));
+  return { subtotal, total, discountAmount, checkoutItems };
+}
+
+export function RetailSalesScreen({ repo, staff, shift, settings, products, language, refreshProducts }: Props) {
+  const scanRef = useRef<HTMLInputElement>(null);
+  const scanValueRef = useRef("");
+  const qtyRef = useRef<HTMLInputElement>(null);
+  const unknownTimerRef = useRef<number | null>(null);
+  const cartRef = useRef<CartLine[]>([]);
+  const [cart, setCart] = useState<CartLine[]>([]);
+  const [scanValue, setScanValue] = useState("");
+  const [scanQty, setScanQty] = useState(1);
+  const [toast, setToast] = useState<ToastState>(null);
+  const [paymentChoice, setPaymentChoice] = useState(false);
+  const [cashOpen, setCashOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [discountOpen, setDiscountOpen] = useState(false);
+  const [discount, setDiscount] = useState<Discount>(null);
+  const [receipt, setReceipt] = useState<PricedReceipt | null>(null);
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
+  const [parkListOpen, setParkListOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [parkedBills, setParkedBills] = useState<ParkedBill[]>(() => readParkedBills(parkedBillKey(settings.deviceId, shift.id)));
+  const [unknownBarcode, setUnknownBarcode] = useState("");
+  const [quickAddBarcode, setQuickAddBarcode] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const totalQty = cart.reduce((sum, line) => sum + line.quantity, 0);
+  const pricing = useMemo(() => priceCart(cart, discount, language), [cart, discount, language]);
+  const parkedStorageKey = useMemo(() => parkedBillKey(settings.deviceId, shift.id), [settings.deviceId, shift.id]);
+
+  const productIndex = useMemo(() => {
+    const index = new Map<string, Product>();
+    for (const product of products) {
+      if (!product.active) continue;
+      const barcode = normalizeCode(product.barcode || "");
+      const code = normalizeCode(product.productCode || "");
+      if (barcode) index.set(barcode, product);
+      if (code) index.set(code, product);
+    }
+    return index;
+  }, [products]);
+
+  useEffect(() => {
+    setParkedBills(readParkedBills(parkedStorageKey));
+  }, [parkedStorageKey]);
+
+  const replaceCart = (rows: CartLine[]) => {
+    cartRef.current = rows;
+    setCart(rows);
+    if (!rows.length) setDiscount(null);
+  };
+
+  const persistParkedBills = (bills: ParkedBill[]) => {
+    setParkedBills(bills);
+    writeParkedBills(parkedStorageKey, bills);
+  };
+
+  const focusScanner = () => window.setTimeout(() => scanRef.current?.focus(), 20);
+  const writeScannerValue = (value: string) => {
+    scanValueRef.current = value;
+    setScanValue(value);
+  };
+  const clearScannerValue = () => writeScannerValue("");
+  const notify = (kind: NonNullable<ToastState>["kind"], text: string) => {
+    setToast({ kind, text });
+    window.setTimeout(() => setToast(null), 1500);
+  };
+
+  const addProduct = (product: Product, quantity = 1) => {
+    const qty = safeScanQty(quantity);
+    const rows = cartRef.current;
+    const existing = rows.find(x => x.id === product.id);
+    const current = existing?.quantity || 0;
+    const nextQuantity = roundQty(current + qty);
+    if (product.stockQuantity >= 0 && nextQuantity > product.stockQuantity) {
+      notify("warn", `สต๊อกไม่พอ · คงเหลือ ${product.stockQuantity} ${product.unit}`);
+      focusScanner();
+      return false;
+    }
+    const nextRows = existing
+      ? rows.map(x => x.id === product.id ? { ...x, quantity: nextQuantity } : x)
+      : [...rows, { ...product, quantity: qty }];
+    replaceCart(nextRows);
+    focusScanner();
+    return true;
+  };
+
+  const addScannedProduct = (product: Product) => {
+    const qty = safeScanQty(scanQty);
+    const added = addProduct(product, qty);
+    if (added) {
+      if (qty !== 1) notify("ok", `เพิ่ม ${productName(language, product)} จำนวน ${qty} ${product.unit}`);
+      setScanQty(1);
+      window.setTimeout(() => qtyRef.current?.blur(), 20);
+    }
+  };
+
+  const setQuantity = (line: CartLine, quantity: number) => {
+    const nextQuantity = Math.max(0.001, roundQty(quantity));
+    if (nextQuantity > line.stockQuantity) {
+      notify("warn", `สต๊อกไม่พอ · คงเหลือ ${line.stockQuantity} ${line.unit}`);
+      return;
+    }
+    replaceCart(cartRef.current.map(x => x.id === line.id ? { ...x, quantity: nextQuantity } : x));
+    focusScanner();
+  };
+
+  const removeLine = async (line: CartLine) => {
+    replaceCart(cartRef.current.filter(x => x.id !== line.id));
+    focusScanner();
+    try {
+      await repo.recordCartItemRemoved(line, line.quantity, staff, shift, settings.deviceId);
+    } catch {
+      // Keep the checkout UI responsive even if a non-financial audit write fails.
+    }
+  };
+
+  const createParkedBill = (rows: CartLine[], currentDiscount: Discount, label?: string): ParkedBill => {
+    const priced = priceCart(rows, currentDiscount, language);
+    return {
+      id: crypto.randomUUID(),
+      label: label || `บิลพัก #${parkedBills.length + 1}`,
+      createdAt: new Date().toISOString(),
+      cashierName: staff.displayName,
+      shiftId: shift.id,
+      deviceId: settings.deviceId,
+      cart: rows.map(line => ({ ...line })),
+      discount: currentDiscount ? { ...currentDiscount } : null,
+      itemCount: rows.length,
+      totalQty: roundQty(rows.reduce((sum, line) => sum + line.quantity, 0)),
+      subtotal: priced.subtotal,
+      total: priced.total,
+    };
+  };
+
+  const parkCurrentBill = () => {
+    if (busy || !cartRef.current.length) { notify("warn", "ยังไม่มีสินค้าให้พักบิล"); return; }
+    const bill = createParkedBill([...cartRef.current], discount);
+    persistParkedBills([bill, ...parkedBills]);
+    replaceCart([]);
+    setDiscount(null);
+    setPaymentChoice(false);
+    setCashOpen(false);
+    setTransferOpen(false);
+    notify("ok", `พักบิล ${bill.itemCount} รายการแล้ว`);
+    focusScanner();
+  };
+
+  const restoreParkedBill = (bill: ParkedBill) => {
+    if (busy) return;
+    const remaining = parkedBills.filter(item => item.id !== bill.id);
+    const nextParked = cartRef.current.length ? [createParkedBill([...cartRef.current], discount, "พักจากตะกร้าปัจจุบัน"), ...remaining] : remaining;
+    persistParkedBills(nextParked);
+    replaceCart(bill.cart.map(line => ({ ...line })));
+    setDiscount(bill.discount ? { ...bill.discount } : null);
+    setParkListOpen(false);
+    notify("ok", `เรียกบิลพัก ${bill.itemCount} รายการกลับมาแล้ว`);
+    focusScanner();
+  };
+
+  const removeParkedBill = (id: string) => {
+    persistParkedBills(parkedBills.filter(bill => bill.id !== id));
+    notify("ok", "ลบรายการพักบิลแล้ว");
+  };
+
+  const resolveScan = async (raw: string, showUnknown = true) => {
+    const rawCode = cleanCode(raw);
+    const key = normalizeCode(rawCode);
+    if (!key) return;
+
+    const memoryProduct = productIndex.get(key);
+    if (memoryProduct) {
+      clearScannerValue();
+      addScannedProduct(memoryProduct);
+      return;
+    }
+
+    try {
+      const found = await repo.findProductByBarcode(rawCode) || await repo.findProductByCode(rawCode);
+      if (found && found.active) {
+        clearScannerValue();
+        addScannedProduct(found);
+        return;
+      }
+    } catch {
+      notify("error", "ค้นหาสินค้าไม่สำเร็จ");
+      focusScanner();
+      return;
+    }
+
+    if (showUnknown) {
+      clearScannerValue();
+      setUnknownBarcode(rawCode);
+    }
+    focusScanner();
+  };
+
+  const onScanChange = (value: string) => {
+    writeScannerValue(value);
+    const key = normalizeCode(value);
+    if (!key) return;
+    const found = productIndex.get(key);
+    if (found) {
+      clearScannerValue();
+      addScannedProduct(found);
+    }
+  };
+
+  useEffect(() => {
+    if (unknownTimerRef.current !== null) window.clearTimeout(unknownTimerRef.current);
+    const key = normalizeCode(scanValue);
+    if (!key || key.length < 5 || productIndex.has(key)) return;
+    unknownTimerRef.current = window.setTimeout(() => {
+      void resolveScan(scanValue, true);
+    }, 160);
+    return () => {
+      if (unknownTimerRef.current !== null) window.clearTimeout(unknownTimerRef.current);
+    };
+  }, [scanValue, productIndex, scanQty]);
+
+  useEffect(() => {
+    scanValueRef.current = scanValue;
+  }, [scanValue]);
+
+  useEffect(() => {
+    focusScanner();
+    return () => {
+      if (unknownTimerRef.current !== null) window.clearTimeout(unknownTimerRef.current);
+    };
+  }, []);
+
+  const completeSale = async (method: "cash" | "transfer", paid: number) => {
+    if (busy || !cartRef.current.length) return;
+    const cartSnapshot = [...cartRef.current];
+    const priced = priceCart(cartSnapshot, discount, language);
+    setBusy(true);
+    try {
+      const sale = await repo.checkout({
+        items: priced.checkoutItems,
+        paymentMethod: method,
+        paid,
+        staff,
+        shift,
+        deviceId: settings.deviceId,
+      });
+      const savedReceipt = await repo.getReceipt(sale.id);
+      const grossItems = cartSnapshot.map(line => ({
+        productId: line.id,
+        name: productName(language, line),
+        quantity: line.quantity,
+        unitPrice: line.price,
+        lineTotal: moneyNumber(line.price * line.quantity),
+      }));
+      const preview: PricedReceipt = savedReceipt
+        ? {
+            ...savedReceipt,
+            total: sale.total,
+            paid: sale.paid,
+            changeAmount: sale.changeAmount,
+            items: priced.discountAmount > 0 ? grossItems : savedReceipt.items,
+            subtotal: priced.subtotal,
+            discountAmount: priced.discountAmount,
+            discountType: discount?.type,
+            discountValue: discount?.value,
+          }
+        : {
+            ...sale,
+            items: grossItems,
+            settings,
+            subtotal: priced.subtotal,
+            discountAmount: priced.discountAmount,
+            discountType: discount?.type,
+            discountValue: discount?.value,
+          };
+      replaceCart([]);
+      setDiscount(null);
+      setPaymentChoice(false);
+      setCashOpen(false);
+      setTransferOpen(false);
+      setReceipt(preview);
+      await refreshProducts();
+      if (settings.printerAutoPrintReceipt !== false) {
+        try { await printReceiptNative(preview); } catch { notify("warn", "พิมพ์ใบเสร็จอัตโนมัติไม่สำเร็จ"); }
+      }
+      if (method === "cash" && settings.cashDrawerEnabled !== false) {
+        try { await openDrawerNative(settings); } catch { notify("warn", "เปิดลิ้นชักอัตโนมัติไม่สำเร็จ"); }
+      }
+      notify("ok", `บันทึกบิล ${sale.receiptNo} แล้ว`);
+    } catch (error) {
+      notify("error", error instanceof Error ? error.message : "บันทึกการขายไม่สำเร็จ");
+    } finally {
+      setBusy(false);
+      focusScanner();
+    }
+  };
+
+  const clearAll = async () => {
+    const rows = cartRef.current;
+    if (!rows.length) {
+      setClearOpen(false);
+      return;
+    }
+    try {
+      await repo.cancelBill({
+        items: rows.map(line => ({ productId: line.id, name: productName(language, line), quantity: line.quantity, unitPrice: line.price })),
+        reason: "ล้างรายการทั้งหมดก่อนชำระเงิน",
+        staff,
+        shift,
+        deviceId: settings.deviceId,
+      });
+    } catch {
+      // Clearing an unpaid cart remains available even when a non-financial audit write fails.
+    }
+    replaceCart([]);
+    setDiscount(null);
+    setClearOpen(false);
+    notify("ok", "ล้างรายการทั้งหมดแล้ว");
+    focusScanner();
+  };
+
+
+  const hasOpenPopup = paymentChoice || cashOpen || transferOpen || discountOpen || parkListOpen || receipt !== null || clearOpen || cancelOpen || drawerOpen || unknownBarcode !== "" || quickAddBarcode !== null;
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (hasOpenPopup || event.altKey || event.ctrlKey || event.metaKey) return;
+      const key = event.key;
+      const lowerKey = key.toLowerCase();
+      const isEditingText = isEditableElement(event.target);
+      const activeInputValue = editableValue(event.target).trim();
+      const canUseLetterShortcut = !isEditingText || activeInputValue.length === 0;
+      const cartHasItems = cartRef.current.length > 0;
+
+      if (event.code === "NumpadAdd" || key === "+") {
+        event.preventDefault(); event.stopPropagation();
+        setScanQty(value => safeScanQty(value + 1));
+        window.setTimeout(() => qtyRef.current?.focus(), 0);
+        return;
+      }
+
+      if (event.code === "NumpadSubtract" || key === "-") {
+        event.preventDefault(); event.stopPropagation();
+        setScanQty(value => safeScanQty(Math.max(0.001, value - 1)));
+        window.setTimeout(() => qtyRef.current?.focus(), 0);
+        return;
+      }
+
+      if (key === "F8") {
+        event.preventDefault(); event.stopPropagation();
+        if (cartHasItems && !busy) setDiscountOpen(true);
+        else notify("warn", "ยังไม่มีสินค้าให้ใส่ส่วนลด");
+        return;
+      }
+
+      if (key === "F9") {
+        event.preventDefault(); event.stopPropagation();
+        if (cartHasItems && !busy) setClearOpen(true);
+        else notify("warn", "ยังไม่มีรายการให้ล้าง");
+        return;
+      }
+
+      if (key === "F10") {
+        event.preventDefault(); event.stopPropagation();
+        if (cartHasItems && !busy) parkCurrentBill();
+        else notify("warn", "ยังไม่มีสินค้าให้พักบิล");
+        return;
+      }
+
+      if (key === "F11") {
+        event.preventDefault(); event.stopPropagation();
+        if (parkedBills.length) setParkListOpen(true);
+        else notify("warn", "ยังไม่มีบิลพัก");
+        return;
+      }
+
+      if (!canUseLetterShortcut) return;
+
+      if (lowerKey === "w") {
+        event.preventDefault(); event.stopPropagation();
+        if (settings.cashDrawerEnabled) setDrawerOpen(true);
+        else notify("warn", "ยังไม่ได้เปิดใช้งานลิ้นชักเงินสด");
+        return;
+      }
+
+      if (lowerKey === "d") {
+        event.preventDefault(); event.stopPropagation();
+        if (cartHasItems && !busy) setCancelOpen(true);
+        else notify("warn", "ยังไม่มีบิลให้ยกเลิก");
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [hasOpenPopup, busy, parkedBills.length, settings.cashDrawerEnabled]);
+  return <section className="grocery-pos-layout">
+    <div className="grocery-pos-main">
+      <section className="grocery-scan-zone grocery-scan-zone-with-qty">
+        <div className="grocery-scan-title">
+          <strong>SD · ขายทั่วไป · สแกน SKU</strong>
+          <small>ใส่จำนวนก่อนยิงบาร์โค้ดได้ เช่น 6 ชิ้น แล้วยิงครั้งเดียวลงตะกร้าเป็นรายการเดียว</small>
+        </div>
+        <div className="grocery-scan-row grocery-scan-row-with-qty">
+          <label className="scan-qty-field">
+            <span>จำนวน</span>
+            <input
+              ref={qtyRef}
+              type="number"
+              min="0.001"
+              step="1"
+              value={scanQty}
+              onChange={e => setScanQty(safeScanQty(e.target.value))}
+              onFocus={e => e.currentTarget.select()}
+              disabled={hasOpenPopup}
+              onKeyDown={e => {
+                if (e.key === "Enter") {
+                  e.preventDefault(); e.stopPropagation();
+                  focusScanner();
+                }
+              }}
+              aria-label="จำนวนสินค้าสำหรับการสแกนครั้งถัดไป"
+            />
+          </label>
+          <input
+            ref={scanRef}
+            value={scanValue}
+            onChange={e => onScanChange(e.target.value)}
+            onKeyDown={e => {
+              if (hasOpenPopup) return;
+
+              const digit = physicalScannerDigit(e.code);
+              if (digit) {
+                // Keyboard-wedge scanners emit physical Digit/Numpad codes even when
+                // Windows is using a Thai keyboard layout. Prevent the localized
+                // character and append the real barcode digit ourselves.
+                e.preventDefault();
+                e.stopPropagation();
+                onScanChange(scanValueRef.current + digit);
+                return;
+              }
+
+              if (e.key === "Enter" || e.code === "NumpadEnter") {
+                e.preventDefault();
+                e.stopPropagation();
+                const raw = scanValueRef.current || scanValue;
+                if (cleanCode(raw)) void resolveScan(raw, true);
+                else if (cartRef.current.length && !busy) setPaymentChoice(true);
+              }
+            }}
+            placeholder="ยิงบาร์โค้ด / กรอก SKU"
+            inputMode="numeric"
+            autoComplete="off"
+            disabled={hasOpenPopup}
+            autoFocus
+          />
+          <div className="scanner-ready"><span className="scanner-ready-dot"/><span>พร้อมสแกน</span></div>
+        </div>
+        <div className="grocery-scan-status">{cart.length ? `ตะกร้า: ${cart.length} รายการ / ${roundQty(totalQty)} ชิ้น` : `พร้อมรับการสแกนสินค้า · จำนวนครั้งถัดไป ${scanQty}`}</div>
+      </section>
+
+      <section className="grocery-table-panel">
+        <header>
+          <div><strong>ตารางขายสินค้า · {cart.length} รายการ · {roundQty(totalQty)} ชิ้น</strong>{pricing.discountAmount > 0 && <small>ส่วนลด {money(pricing.discountAmount)}</small>}</div>
+          <div className="grocery-table-header-actions"><button disabled={!cart.length || busy} onClick={() => setClearOpen(true)}>ล้างตาราง</button><b>{money(pricing.total)}</b></div>
+        </header>
+        <div className="grocery-table-scroll-v2">
+          <table className="grocery-table-v2">
+            <thead><tr><th>#</th><th>SKU / บาร์โค้ด</th><th>หมวดหมู่</th><th>สินค้า</th><th>จำนวน</th><th>ราคา/หน่วย</th><th>ราคารวม</th><th>ลบ</th></tr></thead>
+            <tbody>{cart.map((line, index) => <tr key={line.id}>
+              <td>{index + 1}</td>
+              <td><strong>{line.productCode}</strong><small>{line.barcode || "-"}</small></td>
+              <td>{line.categoryName}</td>
+              <td><strong>{productName(language, line)}</strong><small>คงเหลือ {line.stockQuantity} {line.unit}</small></td>
+              <td><div className="grocery-qty-control"><button onClick={() => setQuantity(line, line.quantity - 1)}>−</button><input type="number" min="0.001" step="0.001" value={line.quantity} onChange={e => setQuantity(line, Number(e.target.value || 1))}/><button onClick={() => setQuantity(line, line.quantity + 1)}>+</button></div></td>
+              <td>{money(line.price)}</td>
+              <td><strong>{money(line.price * line.quantity)}</strong></td>
+              <td><button className="grocery-remove-line" onClick={() => void removeLine(line)}>×</button></td>
+            </tr>)}</tbody>
+          </table>
+          {!cart.length && <div className="grocery-empty-table"><strong>ยังไม่มีสินค้าในตะกร้า</strong><span>ยิงบาร์โค้ดหรือกรอก SKU เพื่อเริ่มขาย</span></div>}
+        </div>
+      </section>
+    </div>
+
+    <aside className="grocery-checkout-panel">
+      <div className="grocery-checkout-mode"><span>โหมดขาย</span><strong>ร้านของชำ</strong></div>
+      <div className="grocery-checkout-summary">
+        <div><span>ยอดสินค้า</span><strong>{money(pricing.subtotal)}</strong></div>
+        {pricing.discountAmount > 0 && <div className="discount-row"><span>ส่วนลด</span><strong>−{money(pricing.discountAmount)}</strong></div>}
+        <div className="grand-total"><span>ยอดชำระ</span><strong>{money(pricing.total)}</strong></div>
+      </div>
+      <div className="grocery-shortcuts">
+        <button disabled={!cart.length || busy} onClick={parkCurrentBill}><span>▣</span><strong>พักบิล</strong></button>
+        <button className={parkedBills.length ? "active" : ""} disabled={busy} onClick={() => setParkListOpen(true)}><span>☰</span><strong>บิลพัก</strong>{parkedBills.length > 0 && <small>{parkedBills.length} บิล</small>}</button>
+        <button disabled title="ระบบสมาชิกจะพัฒนาในรอบถัดไป"><span>♙</span><strong>สมาชิก</strong></button>
+        <button className={discount ? "active" : ""} disabled={!cart.length || busy} onClick={() => setDiscountOpen(true)}><span>%</span><strong>ส่วนลด</strong>{pricing.discountAmount > 0 && <small>{money(pricing.discountAmount)}</small>}</button>
+        <button disabled={busy || !settings.cashDrawerEnabled} onClick={() => setDrawerOpen(true)}><span>▤</span><strong>เปิดลิ้นชัก</strong></button>
+      </div>
+      <button className="grocery-pay-button" disabled={!cart.length || busy} onClick={() => setPaymentChoice(true)}>{busy ? "กำลังบันทึก..." : "ชำระเงิน"}</button>
+      <button className="grocery-cancel-button" disabled={!cart.length || busy} onClick={() => setCancelOpen(true)}>ยกเลิกบิล</button>
+    </aside>
+
+    {toast && <div className={`grocery-toast ${toast.kind}`}>{toast.text}</div>}
+    {paymentChoice && <PaymentChoice total={pricing.total} onClose={() => setPaymentChoice(false)} onCash={() => { setPaymentChoice(false); setCashOpen(true); }} onTransfer={() => { setPaymentChoice(false); setTransferOpen(true); }} />}
+    {cashOpen && <CashPayment total={pricing.total} busy={busy} onClose={() => setCashOpen(false)} onConfirm={paid => completeSale("cash", paid)} />}
+    {transferOpen && <TransferPayment total={pricing.total} settings={settings} busy={busy} onClose={() => setTransferOpen(false)} onConfirm={() => completeSale("transfer", pricing.total)} />}
+    {discountOpen && <DiscountModal subtotal={pricing.subtotal} current={discount} onClose={() => setDiscountOpen(false)} onApply={next => { setDiscount(next); setDiscountOpen(false); focusScanner(); }} />}
+    {parkListOpen && <ParkedBillsModal bills={parkedBills} onClose={() => { setParkListOpen(false); focusScanner(); }} onRestore={restoreParkedBill} onRemove={removeParkedBill} />}
+    {receipt && <ReceiptView receipt={receipt} onClose={() => { setReceipt(null); focusScanner(); }} />}
+    {clearOpen && <ClearCartModal count={cart.length} onClose={() => setClearOpen(false)} onConfirm={() => void clearAll()} />}
+    {cancelOpen && <CancelCart repo={repo} cart={cart} staff={staff} shift={shift} settings={settings} onClose={() => setCancelOpen(false)} onDone={() => { replaceCart([]); setDiscount(null); setCancelOpen(false); focusScanner(); }} />}
+    {drawerOpen && <CashDrawerModal repo={repo} settings={settings} onClose={() => { setDrawerOpen(false); focusScanner(); }} onDone={() => { setDrawerOpen(false); notify("ok", "เปิดลิ้นชักแล้ว"); focusScanner(); }} />}
+    {unknownBarcode && <SimpleModal title="ไม่พบสินค้า" onClose={() => { setUnknownBarcode(""); focusScanner(); }}><div className="grocery-unknown-code">{unknownBarcode}</div><p>ยังไม่มีบาร์โค้ด/SKU นี้ในฐานข้อมูลเครื่อง</p><div className="grocery-modal-actions"><button className="secondary-action" onClick={() => { setUnknownBarcode(""); focusScanner(); }}>ปิด</button><button onClick={() => { setQuickAddBarcode(unknownBarcode); setUnknownBarcode(""); }}>เพิ่มสินค้าใหม่</button></div></SimpleModal>}
+    {quickAddBarcode !== null && <QuickAddProduct repo={repo} staff={staff} barcode={quickAddBarcode} onClose={() => { setQuickAddBarcode(null); focusScanner(); }} onSaved={async product => { setQuickAddBarcode(null); await refreshProducts(); addProduct(product); }} />}
+  </section>;
+}
+
+function ParkedBillsModal({ bills, onClose, onRestore, onRemove }: { bills: ParkedBill[]; onClose: () => void; onRestore: (bill: ParkedBill) => void; onRemove: (id: string) => void }) {
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const selectedBill = bills[selectedIndex] || null;
+  useEffect(() => {
+    if (selectedIndex > Math.max(0, bills.length - 1)) setSelectedIndex(Math.max(0, bills.length - 1));
+  }, [bills.length, selectedIndex]);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
+      if (!bills.length) return;
+      if (event.key === "ArrowDown") { event.preventDefault(); event.stopPropagation(); setSelectedIndex(index => Math.min(bills.length - 1, index + 1)); return; }
+      if (event.key === "ArrowUp") { event.preventDefault(); event.stopPropagation(); setSelectedIndex(index => Math.max(0, index - 1)); return; }
+      if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); if (selectedBill) onRestore(selectedBill); }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [bills, onClose, onRestore, selectedBill]);
+  return <SimpleModal title="รายการพักบิล" onClose={onClose}>
+    <div className="parked-bill-list">{bills.length ? bills.map((bill, index) => <button key={bill.id} className={`parked-bill-card ${index === selectedIndex ? "keyboard-selected" : ""}`} onFocus={() => setSelectedIndex(index)} onMouseEnter={() => setSelectedIndex(index)} onClick={() => onRestore(bill)}>
+      <span className="parked-bill-icon">▣</span>
+      <span className="parked-bill-copy"><strong>{bill.label}</strong><small>{new Date(bill.createdAt).toLocaleString("th-TH")} · {bill.cashierName}</small><em>{bill.itemCount} รายการ · {bill.totalQty} ชิ้น</em></span>
+      <span className="parked-bill-total">{money(bill.total)}</span>
+      <span className="parked-bill-actions"><span>เรียกบิล</span><i onClick={event => { event.stopPropagation(); onRemove(bill.id); }}>ลบ</i></span>
+    </button>) : <div className="grocery-empty-table"><strong>ยังไม่มีรายการพักบิล</strong><span>กดพักบิลจากตะกร้าปัจจุบันเพื่อเก็บไว้ชั่วคราว</span></div>}</div>
+    <div className="grocery-modal-actions"><button className="secondary-action" onClick={onClose}>ปิด</button></div>
+  </SimpleModal>;
+}
+function PaymentChoice({ total, onClose, onCash, onTransfer }: { total: number; onClose: () => void; onCash: () => void; onTransfer: () => void }) {
+  const [method, setMethod] = useState<"cash" | "transfer">("cash");
+  const openedAtRef = useRef(Date.now());
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); event.stopPropagation(); setMethod(value => value === "cash" ? "transfer" : "cash"); return; }
+      if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); if (Date.now() - openedAtRef.current < 150) return; method === "cash" ? onCash() : onTransfer(); }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [method, onCash, onClose, onTransfer]);
+  return <SimpleModal title="เลือกวิธีชำระเงิน" onClose={onClose}>
+    <div className="grocery-payment-total">ยอดชำระ <strong>{money(total)}</strong></div>
+    <div className="grocery-payment-choice" role="radiogroup" aria-label="เลือกวิธีชำระเงิน">
+      <button className={method === "cash" ? "keyboard-selected" : ""} role="radio" aria-checked={method === "cash"} onFocus={() => setMethod("cash")} onMouseEnter={() => setMethod("cash")} onClick={onCash}><span>฿</span><strong>เงินสด</strong><small>เปิดหน้ารับเงินและคำนวณเงินทอน</small></button>
+      <button className={method === "transfer" ? "keyboard-selected" : ""} role="radio" aria-checked={method === "transfer"} onFocus={() => setMethod("transfer")} onMouseEnter={() => setMethod("transfer")} onClick={onTransfer}><span>⇄</span><strong>เงินโอน</strong><small>พนักงานตรวจสอบยอดเข้าจริงก่อนยืนยัน</small></button>
+    </div>
+  </SimpleModal>;
+}
+function CashPayment({ total, busy, onClose, onConfirm }: { total: number; busy: boolean; onClose: () => void; onConfirm: (paid: number) => Promise<void> }) {
+  const [value, setValue] = useState("");
+  const paid = Number(value || 0);
+  const press = (key: string) => setValue(v => key === "clear" ? "" : key === "back" ? v.slice(0, -1) : key === "." && v.includes(".") ? v : key === "." && !v ? "0." : `${v}${key}`);
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== modalRef.current) active.blur();
+    modalRef.current?.focus({ preventScroll: true });
+  }, []);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (busy || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
+      if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); if (Number(value || 0) >= total) void onConfirm(Number(value || 0)); return; }
+      if (event.key === "Backspace") { event.preventDefault(); event.stopPropagation(); press("back"); return; }
+      if (event.key === "Delete") { event.preventDefault(); event.stopPropagation(); press("clear"); return; }
+      if (/^[0-9]$/.test(event.key)) { event.preventDefault(); event.stopPropagation(); press(event.key); return; }
+      if (event.key === "." || event.code === "NumpadDecimal") { event.preventDefault(); event.stopPropagation(); press("."); }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [busy, onClose, onConfirm, total, value]);
+  return <SimpleModal title="รับชำระเงินสด" onClose={busy ? () => {} : onClose}>
+    <div className="grocery-keyboard-modal" ref={modalRef} tabIndex={-1}>
+    <div className="grocery-cash-summary"><div><span>ยอดชำระ</span><strong>{money(total)}</strong></div><div><span>รับเงิน</span><strong>{money(paid)}</strong></div><div className="change"><span>เงินทอน</span><strong>{money(Math.max(0, paid - total))}</strong></div></div>
+    <div className="grocery-cash-quick"><button onClick={() => setValue(String(total))}>ยอดพอดี</button>{[100,200,500,1000].filter(v => v >= total).map(v => <button key={v} onClick={() => setValue(String(v))}>{v}</button>)}</div>
+    <div className="grocery-cash-keypad">{["1","2","3","4","5","6","7","8","9","00","0","."].map(key => <button key={key} onClick={() => press(key)}>{key}</button>)}</div>
+    <div className="grocery-keypad-actions"><button onClick={() => press("clear")}>ล้าง</button><button onClick={() => press("back")}>ลบ</button></div>
+    <div className="grocery-modal-actions"><button className="secondary-action" disabled={busy} onClick={onClose}>ยกเลิก</button><button disabled={busy || paid < total} onClick={() => void onConfirm(paid)}>{busy ? "กำลังบันทึก..." : `ยืนยันรับเงิน ${money(paid)}`}</button></div>
+    </div>
+  </SimpleModal>;
+}
+function TransferPayment({ total, settings, busy, onClose, onConfirm }: { total: number; settings: AppSettings; busy: boolean; onClose: () => void; onConfirm: () => Promise<void> }) {
+  const [online, setOnline] = useState(() => navigator.onLine);
+  const resolved = resolvePaymentQr(settings, total, online);
+  const [qrSrc, setQrSrc] = useState(resolved.src);
+  const [qrLoaded, setQrLoaded] = useState(false);
+
+  useEffect(() => {
+    const refreshOnline = () => setOnline(navigator.onLine);
+    window.addEventListener("online", refreshOnline);
+    window.addEventListener("offline", refreshOnline);
+    return () => {
+      window.removeEventListener("online", refreshOnline);
+      window.removeEventListener("offline", refreshOnline);
+    };
+  }, []);
+
+  useEffect(() => {
+    setQrSrc(resolved.src);
+    setQrLoaded(false);
+  }, [resolved.src]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (busy) return;
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
+      if (event.key === "Enter" && resolved.ready && qrSrc && qrLoaded) { event.preventDefault(); event.stopPropagation(); void onConfirm(); }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [busy, onClose, onConfirm, qrLoaded, qrSrc, resolved.ready]);
+
+  const ready = resolved.ready && Boolean(qrSrc) && qrLoaded;
+
+  return <SimpleModal title="ชำระด้วยเงินโอน" onClose={busy ? () => {} : onClose}>
+    <div className="grocery-payment-total">ยอดชำระ <strong>{money(total)}</strong></div>
+    {resolved.ready && qrSrc ? <div className="grocery-transfer-qr">
+      <span className={resolved.mode === "promptpay_online" ? "online" : "offline"}>{resolved.mode === "promptpay_online" ? "PROMPTPAY ONLINE · ล็อกยอด" : "QR ธนาคารสำรอง"}</span>
+      <img src={qrSrc} alt="QR ชำระเงิน" onLoad={() => setQrLoaded(true)} onError={() => {
+        if (settings.paymentQrImage && qrSrc !== settings.paymentQrImage) {
+          setQrSrc(settings.paymentQrImage);
+          setQrLoaded(false);
+        } else {
+          setQrSrc("");
+          setQrLoaded(false);
+        }
+      }} />
+      <strong>{settings.paymentQrAccountName || "บัญชีรับชำระ"}</strong>
+      <p>{resolved.mode === "promptpay_online" ? `QR นี้กำหนดยอดไว้ที่ ${money(total)}` : "เครื่องออฟไลน์หรือใช้ QR สำรอง กรุณาตรวจสอบยอดที่โอนก่อนยืนยัน"}</p>
+      {settings.paymentQrNote ? <small>{settings.paymentQrNote}</small> : null}
+    </div> : <div className="grocery-transfer-warning"><strong>ยังไม่มี QR พร้อมใช้งาน</strong><p>{online ? "ไปที่ ตั้งค่า > ตั้งค่า QR ชำระเงิน แล้วกรอก PromptPay หรืออัปโหลดภาพ QR สำรอง" : "เครื่องออฟไลน์ กรุณาอัปโหลดภาพ QR ธนาคารสำรองไว้ในเมนูตั้งค่า"}</p></div>}
+    <div className="grocery-modal-actions"><button className="secondary-action" disabled={busy} onClick={onClose}>ยกเลิก</button><button disabled={busy || !ready} onClick={() => void onConfirm()}>{busy ? "กำลังบันทึก..." : "ยืนยันรับชำระ"}</button></div>
+  </SimpleModal>;
+}
+function DiscountModal({ subtotal, current, onClose, onApply }: { subtotal: number; current: Discount; onClose: () => void; onApply: (discount: Discount) => void }) {
+  const [type, setType] = useState<"amount" | "percent">(current?.type || "percent");
+  const [value, setValue] = useState(String(current?.value || ""));
+  const numeric = Math.max(0, Number(value || 0));
+  const capped = type === "percent" ? Math.min(100, numeric) : Math.min(subtotal, numeric);
+  const preview = type === "percent" ? moneyNumber(subtotal * capped / 100) : moneyNumber(capped);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
+      if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); event.stopPropagation(); setType(mode => mode === "percent" ? "amount" : "percent"); return; }
+      if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); if (capped > 0) onApply({ type, value: capped }); }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [capped, onApply, onClose, type]);
+  return <SimpleModal title="ส่วนลดทั้งบิล" onClose={onClose}>
+    <div className="discount-type-switch"><button className={type === "percent" ? "active" : ""} onClick={() => setType("percent")}>เปอร์เซ็นต์ (%)</button><button className={type === "amount" ? "active" : ""} onClick={() => setType("amount")}>จำนวนเงิน (บาท)</button></div>
+    <label className="discount-input">{type === "percent" ? "ส่วนลดเปอร์เซ็นต์" : "ส่วนลดเป็นบาท"}<div><input type="number" min="0" max={type === "percent" ? 100 : subtotal} value={value} onChange={e => setValue(e.target.value)} autoFocus/><span>{type === "percent" ? "%" : "บาท"}</span></div></label>
+    {type === "percent" && <div className="discount-quick">{[5,10,15,20].map(v => <button key={v} onClick={() => setValue(String(v))}>{v}%</button>)}</div>}
+    <div className="discount-preview"><span>ยอดสินค้า</span><strong>{money(subtotal)}</strong><span>ส่วนลดประมาณ</span><strong>−{money(preview)}</strong><span>ยอดหลังส่วนลด</span><strong>{money(Math.max(0, subtotal - preview))}</strong></div>
+    <div className="grocery-modal-actions"><button className="secondary-action" onClick={() => onApply(null)}>ล้างส่วนลด</button><button className="secondary-action" onClick={onClose}>ยกเลิก</button><button disabled={capped <= 0} onClick={() => onApply({ type, value: capped })}>ใช้ส่วนลด</button></div>
+  </SimpleModal>;
+}
+function ReceiptView({ receipt, onClose }: { receipt: PricedReceipt; onClose: () => void }) {
+  const subtotal = receipt.subtotal ?? moneyNumber(receipt.items.reduce((sum, item) => sum + Math.max(0, item.lineTotal), 0));
+  const discountAmount = receipt.discountAmount ?? moneyNumber(Math.max(0, subtotal - receipt.total));
+  const logoSrc = receipt.settings.storeLogoPath || SYSTEM_LOGO;
+  const printerName = receipt.settings.printerName?.trim();
+  const print80 = () => { void printReceiptNative(receipt); };
+  return <SimpleModal title={`ใบเสร็จ ${receipt.receiptNo}`} onClose={onClose} wide={false}>
+    <div className="receipt-preview-shell"><div className="receipt-paper-80">
+      <div className="receipt-logo-wrap"><img src={logoSrc} alt="โลโก้ร้าน" onError={event => { event.currentTarget.src = SYSTEM_LOGO; }} /></div>
+      <h2>{receipt.settings.receiptHeader || receipt.settings.storeName}</h2>
+      <p>{receipt.settings.branchName}</p>
+      {receipt.settings.address && <p>{receipt.settings.address}</p>}
+      {receipt.settings.phone && <p>โทร {receipt.settings.phone}</p>}
+      {receipt.settings.taxId && <p>เลขประจำตัวผู้เสียภาษี {receipt.settings.taxId}</p>}
+      <div className="receipt-meta"><span>เลขที่ {receipt.receiptNo}</span><span>{new Date(receipt.createdAt).toLocaleString("th-TH")}</span><span>พนักงาน {receipt.cashierName || receipt.employeeCode || "-"}</span></div>
+      <div className="receipt-divider"/>
+      {receipt.items.filter(item => item.lineTotal >= 0).map(item => <div className="grocery-receipt-row" key={item.id || `${item.name}-${item.quantity}`}><span><b>{item.name}</b><small>{item.quantity} × {money(item.unitPrice)}</small></span><strong>{money(item.lineTotal)}</strong></div>)}
+      <div className="receipt-divider"/>
+      <div className="grocery-receipt-row"><span>ยอดสินค้า</span><strong>{money(subtotal)}</strong></div>
+      {discountAmount > 0 && <div className="grocery-receipt-row discount"><span>ส่วนลด{receipt.discountType === "percent" && receipt.discountValue ? ` (${receipt.discountValue}%)` : ""}</span><strong>−{money(discountAmount)}</strong></div>}
+      <div className="grocery-receipt-row total"><span>ยอดสุทธิ</span><strong>{money(receipt.total)}</strong></div>
+      <div className="grocery-receipt-row"><span>ชำระโดย</span><strong>{receipt.paymentMethod === "cash" ? "เงินสด" : "เงินโอน"}</strong></div>
+      {receipt.paymentMethod === "cash" && <><div className="grocery-receipt-row"><span>รับเงิน</span><strong>{money(receipt.paid)}</strong></div><div className="grocery-receipt-row"><span>เงินทอน</span><strong>{money(receipt.changeAmount)}</strong></div></>}
+      <div className="receipt-divider"/>
+      <p className="receipt-footer">{receipt.settings.receiptFooter}</p>
+    </div></div>
+    <div className="receipt-printer-note">{printerName ? `เครื่องพิมพ์: ${printerName} · กระดาษ ${receipt.settings.printerPaperWidthMm || "80"}mm` : "ยังไม่ได้ระบุชื่อเครื่องพิมพ์ในตั้งค่า: ระบบจะเปิด Windows Print Dialog ให้เลือกเครื่องพิมพ์ 80mm"}</div>
+    <div className="grocery-modal-actions receipt-actions"><button className="secondary-action" onClick={onClose}>ปิด</button><button onClick={print80}>พิมพ์ใบเสร็จ 80mm</button></div>
+  </SimpleModal>;
+}
+
+function ClearCartModal({ count, onClose, onConfirm }: { count: number; onClose: () => void; onConfirm: () => void }) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
+      if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); onConfirm(); }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [onClose, onConfirm]);
+  return <SimpleModal title="ล้างรายการทั้งหมด" onClose={onClose}><div className="clear-cart-warning"><strong>ต้องการล้างสินค้า {count} รายการออกจากตะกร้าหรือไม่?</strong><p>รายการยังไม่ชำระเงิน จึงยังไม่มีการตัดสต๊อก</p></div><div className="grocery-modal-actions"><button className="secondary-action" onClick={onClose}>กลับ</button><button className="danger-action" onClick={onConfirm}>ล้างรายการทั้งหมด</button></div></SimpleModal>;
+}
+function CancelCart({ repo, cart, staff, shift, settings, onClose, onDone }: { repo: PosRepository; cart: CartLine[]; staff: Staff; shift: Shift; settings: AppSettings; onClose: () => void; onDone: () => void }) {
+  const [pin, setPin] = useState("");
+  const [reason, setReason] = useState("ยกเลิกบิลจากหน้าขาย");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submitButtonRef = useRef<HTMLButtonElement | null>(null);
+  const submit = async (event?: FormEvent<HTMLFormElement>) => {
+    event?.preventDefault();
+    if (busy) return;
+    if (pin.trim().length !== 4) { setError("กรุณาใส่ PIN 4 หลัก"); return; }
+    setBusy(true); setError("");
+    const auth = await repo.verifyPin(pin);
+    if (!auth) { setError("PIN ไม่ถูกต้อง"); setBusy(false); return; }
+    try {
+      await repo.cancelBill({ items: cart.map(line => ({ productId: line.id, name: line.nameTh || line.name, quantity: line.quantity, unitPrice: line.price })), reason: reason.trim() || "ยกเลิกบิลจากหน้าขาย", staff: auth, shift, deviceId: settings.deviceId });
+      onDone();
+    } catch (e) { setError(e instanceof Error ? e.message : "ยกเลิกบิลไม่สำเร็จ"); setBusy(false); }
+  };
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (busy) return;
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
+      if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); void submit(); }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [busy, onClose, pin, reason]);
+  useEffect(() => {
+    if (pin.length === 4) submitButtonRef.current?.focus({ preventScroll: true });
+  }, [pin]);  return <SimpleModal title="ยกเลิกบิลปัจจุบัน" onClose={busy ? () => {} : onClose}>
+    <form onSubmit={event => void submit(event)}>
+      <div className="grocery-transfer-warning"><strong>ยกเลิกก่อนชำระเงิน</strong><p>ระบบจะไม่ตัดสต๊อกและจะบันทึกผู้ทำรายการกับเหตุผลไว้ใน Audit</p></div>
+      <label className="grocery-field">PIN พนักงาน<input type="password" inputMode="numeric" pattern="[0-9]*" maxLength={4} value={pin} onChange={e => { setPin(e.target.value.replace(/\D/g, "").slice(0, 4)); setError(""); }} autoFocus /></label>
+      <label className="grocery-field">เหตุผล<input value={reason} onChange={e => setReason(e.target.value)} placeholder="ระบุเหตุผลการยกเลิก" /></label>
+      {error && <p className="grocery-error" role="alert">{error}</p>}
+      <div className="grocery-modal-actions"><button type="button" className="secondary-action" disabled={busy} onClick={onClose}>กลับ</button><button ref={submitButtonRef} type="submit" className="danger-action" disabled={busy || pin.length !== 4}>{busy ? "กำลังบันทึก..." : "ยืนยันยกเลิกบิล"}</button></div>
+    </form>
+  </SimpleModal>;
+}
+function CashDrawerModal({ repo, settings, onClose, onDone }: { repo: PosRepository; settings: AppSettings; onClose: () => void; onDone: () => void }) {
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submitButtonRef = useRef<HTMLButtonElement | null>(null);
+  const handlePinChange = (value: string) => {
+    setPin(value.replace(/\D/g, "").slice(0, 4));
+    setError("");
+  };
+  const submit = async (event?: FormEvent<HTMLFormElement>) => {
+    event?.preventDefault();
+    if (busy) return;
+    if (pin.length !== 4) { setError("กรุณาใส่ PIN 4 หลัก"); return; }
+    setBusy(true); setError("");
+    const auth = await repo.verifyPin(pin);
+    if (!auth || !["owner", "manager"].includes(auth.role)) { setError("ต้องใช้ PIN ผู้จัดการหรือเจ้าของร้าน"); setBusy(false); return; }
+    try { await openDrawerNative(settings); onDone(); }
+    catch { setError("เปิดลิ้นชักไม่สำเร็จ ตรวจสอบเครื่องพิมพ์และสายลิ้นชัก"); setBusy(false); }
+  };
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (busy) return;
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
+      if (event.key === "Enter") { event.preventDefault(); event.stopPropagation(); void submit(); }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [busy, onClose, pin]);
+  useEffect(() => {
+    if (pin.length === 4) submitButtonRef.current?.focus({ preventScroll: true });
+  }, [pin]);  return <SimpleModal title="เปิดลิ้นชัก" onClose={busy ? () => {} : onClose} wide={false}>
+    <form className="cash-drawer-auth" onSubmit={event => void submit(event)}>
+      <div className="cash-drawer-hero">
+        <div className="cash-drawer-icon" aria-hidden="true">▤</div>
+        <div>
+          <strong>ยืนยันสิทธิ์ก่อนเปิดลิ้นชัก</strong>
+          <p>ใช้ได้เฉพาะผู้จัดการหรือเจ้าของร้าน การรับเงินสดหลังปิดบิลยังเปิดอัตโนมัติตามการตั้งค่าเดิม</p>
+        </div>
+      </div>
+      <label className="cash-drawer-pin-field">
+        <span>PIN ผู้จัดการ / เจ้าของร้าน</span>
+        <input type="password" inputMode="numeric" pattern="[0-9]*" maxLength={4} value={pin} onChange={e => handlePinChange(e.target.value)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); void submit(); } }} autoFocus autoComplete="off" aria-describedby="cash-drawer-enter-hint cash-drawer-pin-dots" />
+      </label>
+      <div className="cash-drawer-pin-dots" id="cash-drawer-pin-dots" aria-label={`ใส่ PIN แล้ว ${pin.length} จาก 4 หลัก`}>
+        {Array.from({ length: 4 }, (_, index) => <span key={index} className={index < pin.length ? "filled" : ""} />)}
+      </div>
+      <p className="cash-drawer-enter-hint" id="cash-drawer-enter-hint">ใส่ PIN ครบ 4 หลักแล้วกด Enter เพื่อเปิดลิ้นชักได้ทันที</p>
+      {error && <p className="grocery-error cash-drawer-error" role="alert">{error}</p>}
+      <div className="grocery-modal-actions cash-drawer-actions">
+        <button type="button" className="secondary-action" disabled={busy} onClick={onClose}>กลับ</button>
+        <button ref={submitButtonRef} type="submit" className="danger-action" disabled={busy || pin.length !== 4}>{busy ? "กำลังเปิด..." : "ยืนยันเปิดลิ้นชัก"}</button>
+      </div>
+    </form>
+  </SimpleModal>;
+}
+function QuickAddProduct({ repo, staff, barcode, onClose, onSaved }: { repo: PosRepository; staff: Staff; barcode: string; onClose: () => void; onSaved: (product: Product) => void }) {
+  const [form, setForm] = useState<ProductInput>({ productCode: "", barcode, nameTh: "", nameEn: "", categoryId: "grocery", categoryName: "ของชำ", price: 0, cost: 0, unit: "ชิ้น", stockQuantity: 0, minimumStock: 0, quantityScale: 1, imagePath: "", active: true });
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const set = (key: keyof ProductInput, value: string | number | boolean) => setForm(old => ({ ...old, [key]: value }));
+  const save = async () => {
+    if (!form.productCode.trim() || !form.nameTh.trim()) { setError("กรุณากรอกรหัสสินค้าและชื่อสินค้า"); return; }
+    setBusy(true); setError("");
+    try {
+      const existingCode = await repo.findProductByCode(form.productCode);
+      if (existingCode) throw new Error("รหัสสินค้านี้ถูกใช้แล้ว");
+      if (form.barcode) {
+        const existingBarcode = await repo.findProductByBarcode(form.barcode);
+        if (existingBarcode) throw new Error("บาร์โค้ดนี้ถูกใช้แล้ว");
+      }
+      const product = await repo.createProduct(form, staff);
+      onSaved(product);
+    } catch (e) { setError(e instanceof Error ? e.message : "เพิ่มสินค้าไม่สำเร็จ"); setBusy(false); }
+  };
+  return <SimpleModal title="เพิ่มสินค้าใหม่" onClose={busy ? () => {} : onClose}><div className="grocery-product-grid"><label>รหัสสินค้า *<input value={form.productCode} onChange={e => set("productCode", e.target.value)} autoFocus /></label><label>บาร์โค้ด<input value={form.barcode || ""} onChange={e => set("barcode", e.target.value)} /></label><label>ชื่อสินค้า (ไทย) *<input value={form.nameTh} onChange={e => set("nameTh", e.target.value)} /></label><label>ชื่ออังกฤษ<input value={form.nameEn || ""} onChange={e => set("nameEn", e.target.value)} /></label><label>หมวดหมู่<input value={form.categoryName} onChange={e => { set("categoryName", e.target.value); set("categoryId", e.target.value.trim().toLowerCase().replace(/\s+/g, "-") || "grocery"); }} /></label><label>หน่วย<select value={form.unit} onChange={e => set("unit", e.target.value)}><option>ชิ้น</option><option>ขวด</option><option>กระป๋อง</option><option>ถุง</option><option>กล่อง</option><option>แพ็ค</option><option>ลัง</option><option>kg</option><option>g</option></select></label><label>ราคาขาย<input type="number" value={form.price} onChange={e => set("price", Number(e.target.value))} /></label><label>ต้นทุน<input type="number" value={form.cost} onChange={e => set("cost", Number(e.target.value))} /></label><label>สต๊อกเริ่มต้น<input type="number" step="0.001" value={form.stockQuantity} onChange={e => set("stockQuantity", Number(e.target.value))} /></label><label>แจ้งเตือนสต๊อก<input type="number" step="0.001" value={form.minimumStock} onChange={e => set("minimumStock", Number(e.target.value))} /></label></div>{error && <p className="grocery-error">{error}</p>}<div className="grocery-modal-actions"><button className="secondary-action" disabled={busy} onClick={onClose}>ยกเลิก</button><button disabled={busy} onClick={() => void save()}>{busy ? "กำลังบันทึก..." : "บันทึกสินค้า"}</button></div></SimpleModal>;
+}
+
+function SimpleModal({ title, children, onClose, wide = true }: { title: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault(); event.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [onClose]);
+  return <div className="grocery-modal-backdrop"><section className={`grocery-modal ${wide ? "" : "receipt-modal"}`}><header><h2>{title}</h2><button onClick={onClose} aria-label="ปิด">×</button></header>{children}</section></div>;
+}

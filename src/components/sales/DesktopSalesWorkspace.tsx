@@ -1,23 +1,53 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import type { PosRepository } from "../../data/repository";
-import type { AppSettings, CartLine, Language, Product, Receipt, Shift, Staff } from "../../domain/types";
+import type { AppSettings, CartLine, Language, Product, Shift, Staff } from "../../domain/types";
 import { productName } from "../../i18n";
+import { listSalesTables, SALES_TABLES_EVENT, type SalesTable } from "../../sales-tables";
+import { resolvePaymentQr } from "../../payment-qr";
+import { productImageSrc } from "../../product-image";
+import { printPaymentNoticeNative } from "../../payment-notice-print";
+import { printReceiptNative, type PrintableReceipt } from "../../receipt-print";
 import { useDesktopLicense } from "../license/LicenseGate";
 import "./desktop-sales-workspace.css";
 
 type SalesMode = "grocery" | "takeaway" | "dine_in";
-type TableBill = { tableCode: string; billNo: string; openedAt: string; items: CartLine[] };
+type Discount = { type: "amount" | "percent"; value: number } | null;
+type TableBill = { tableCode: string; billNo: string; openedAt: string; items: CartLine[]; discount?: Discount };
 type TableBills = Record<string, TableBill>;
 type PaymentStep = "review" | "cash" | "transfer" | null;
 type NoticeKind = "ok" | "warn" | "error";
 
-const TABLE_CODES = Array.from({ length: 20 }, (_, index) => `T${String(index + 1).padStart(2, "0")}`);
 const TABLE_BILLS_KEY = "cpipos.desktop.table-bills.v1";
 const GROCERY_CART_KEY = "cpipos.desktop.grocery-cart.v1";
 const TAKEAWAY_CART_KEY = "cpipos.desktop.takeaway-cart.v1";
+const TAKEAWAY_DISCOUNT_KEY = "cpipos.desktop.takeaway-discount.v1";
 
 function money(value: number) {
   return `฿${Number(value || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+const moneyNumber = (value: number) => Math.round((Number(value) || 0) * 100) / 100;
+
+function priceCart(cart: CartLine[], discount: Discount, language: Language) {
+  const subtotal = moneyNumber(cart.reduce((sum, line) => sum + Number(line.price) * Number(line.quantity), 0));
+  const requestedDiscount = discount
+    ? discount.type === "percent"
+      ? moneyNumber(subtotal * Math.min(100, Math.max(0, discount.value)) / 100)
+      : moneyNumber(Math.min(subtotal, Math.max(0, discount.value)))
+    : 0;
+  const rate = subtotal > 0 ? requestedDiscount / subtotal : 0;
+  const checkoutItems = cart.map(line => ({
+    productId: line.id,
+    name: productName(language, line),
+    quantity: Number(line.quantity),
+    unitPrice: moneyNumber(Number(line.price) * (1 - rate)),
+    originalUnitPrice: moneyNumber(Number(line.price)),
+    discountType: discount?.type || "none" as const,
+    discountValue: moneyNumber(discount?.value || 0),
+  }));
+  const total = moneyNumber(checkoutItems.reduce((sum, line) => sum + Number(line.quantity) * Number(line.unitPrice), 0));
+  return { subtotal, total, discountAmount: moneyNumber(Math.max(0, subtotal - total)), checkoutItems };
 }
 
 function readJson<T>(key: string, fallback: T): T {
@@ -33,59 +63,14 @@ function writeJson(key: string, value: unknown) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* persistence is best-effort */ }
 }
 
-function safeText(value: unknown) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function printDocument(html: string) {
-  const frame = document.createElement("iframe");
-  frame.style.position = "fixed";
-  frame.style.right = "0";
-  frame.style.bottom = "0";
-  frame.style.width = "0";
-  frame.style.height = "0";
-  frame.style.border = "0";
-  frame.setAttribute("aria-hidden", "true");
-  document.body.appendChild(frame);
-  const doc = frame.contentDocument;
-  if (!doc) { frame.remove(); return; }
-  doc.open();
-  doc.write(html);
-  doc.close();
-  window.setTimeout(() => {
-    frame.contentWindow?.focus();
-    frame.contentWindow?.print();
-    window.setTimeout(() => frame.remove(), 1000);
-  }, 180);
-}
-
-function thermalBaseCss() {
-  return `@page{size:80mm auto;margin:0}html,body{margin:0;padding:0;width:80mm;background:#fff;color:#000;font-family:"Noto Sans Thai",Tahoma,"Segoe UI",sans-serif}*{box-sizing:border-box}.paper{width:70mm;margin:0 auto;padding:2mm 0 3mm;font-size:12px;line-height:1.35}.center{text-align:center}.logo{width:20mm;height:20mm;object-fit:contain}.store{font-size:17px;font-weight:900}.muted{font-size:11px}.hr{border-top:1px dashed #111;margin:2mm 0}.row{display:flex;justify-content:space-between;gap:2mm;margin:.7mm 0}.row strong{text-align:right}.items{width:100%;border-collapse:collapse}.items td{padding:.7mm 0;vertical-align:top}.items td:last-child{text-align:right;white-space:nowrap}.grand{font-size:18px;font-weight:900;border-top:1px solid #000;border-bottom:1px solid #000;padding:1.5mm 0;margin:1.5mm 0}.qr{width:42mm;height:42mm;object-fit:contain;image-rendering:pixelated}`;
-}
-
-function paymentNoticeHtml(args: { settings: AppSettings; staff: Staff; tableCode?: string | null; billNo: string; items: CartLine[]; total: number }) {
-  const qr = args.settings.paymentQrImage || "";
-  const itemRows = args.items.map((item) => `<tr><td><strong>${safeText(item.nameTh || item.name)}</strong><div class="muted">${item.quantity} x ${money(item.price)}</div></td><td>${money(item.price * item.quantity)}</td></tr>`).join("");
-  return `<!doctype html><html lang="th"><head><meta charset="utf-8"><title>PAYMENT NOTICE ${safeText(args.billNo)}</title><style>${thermalBaseCss()}</style></head><body><main class="paper"><div class="center"><img class="logo" src="${safeText("/icon.png")}" alt="CpIPOS"><div class="store">${safeText(args.settings.storeName)}</div><div>${safeText(args.settings.branchName)}</div></div><div class="hr"></div><div class="center store">ใบแจ้งชำระเงิน</div><div class="center muted">PAYMENT NOTICE / รอชำระ</div><div class="row"><span>ผู้ขาย</span><strong>${safeText(args.staff.displayName)}</strong></div>${args.tableCode ? `<div class="row"><span>โต๊ะ</span><strong>${safeText(args.tableCode)}</strong></div>` : ""}<div class="row"><span>เลขที่บิล</span><strong>${safeText(args.billNo)}</strong></div><div class="row"><span>วันที่</span><strong>${safeText(new Date().toLocaleString("th-TH"))}</strong></div><div class="hr"></div><table class="items"><tbody>${itemRows}</tbody></table><div class="row grand"><span>ยอดที่ต้องชำระ</span><strong>${money(args.total)}</strong></div>${args.settings.paymentQrAccountName ? `<div class="center muted">${safeText(args.settings.paymentQrAccountName)}</div>` : ""}<div class="center"><img class="qr" src="${safeText(qr)}" alt="Payment QR"><div><strong>สแกน QR เพื่อชำระเงิน</strong></div><div class="store">${money(args.total)}</div></div>${args.settings.paymentQrNote ? `<div class="center muted">${safeText(args.settings.paymentQrNote)}</div>` : ""}<div class="hr"></div><div class="center muted">ใบแจ้งนี้ใช้สำหรับชำระเงินเท่านั้น</div><div class="center muted">ยังไม่ใช่ใบเสร็จรับเงิน</div></main></body></html>`;
-}
-
-function receiptHtml(receipt: Receipt) {
-  const itemRows = receipt.items.map((item) => `<tr><td><strong>${safeText(item.name)}</strong><div class="muted">${item.quantity} x ${money(item.unitPrice)}</div></td><td>${money(item.lineTotal)}</td></tr>`).join("");
-  return `<!doctype html><html lang="th"><head><meta charset="utf-8"><title>${safeText(receipt.receiptNo)}</title><style>${thermalBaseCss()}</style></head><body><main class="paper"><div class="center"><img class="logo" src="/icon.png" alt="CpIPOS"><div class="store">${safeText(receipt.settings.storeName)}</div><div>${safeText(receipt.settings.branchName)}</div>${receipt.settings.address ? `<div class="muted">${safeText(receipt.settings.address)}</div>` : ""}</div><div class="hr"></div><div class="row"><span>เลขที่บิล</span><strong>${safeText(receipt.receiptNo)}</strong></div><div class="row"><span>วันที่</span><strong>${safeText(new Date(receipt.createdAt).toLocaleString("th-TH"))}</strong></div><div class="hr"></div><table class="items"><tbody>${itemRows}</tbody></table><div class="row grand"><span>ยอดรวม</span><strong>${money(receipt.total)}</strong></div><div class="row"><span>ชำระเงิน</span><strong>${receipt.paymentMethod === "cash" ? "เงินสด" : "โอน/QR"}</strong></div>${receipt.paymentMethod === "cash" ? `<div class="row"><span>รับเงิน</span><strong>${money(receipt.paid)}</strong></div><div class="row"><span>เงินทอน</span><strong>${money(receipt.changeAmount)}</strong></div>` : ""}<div class="hr"></div><div class="center">${safeText(receipt.settings.receiptFooter)}</div><div class="center muted">CpIPOS</div></main></body></html>`;
-}
-
-function Icon({ name }: { name: "bag" | "table" | "buffet" | "delivery" | "search" | "menu" }) {
+function Icon({ name }: { name: "bag" | "table" | "buffet" | "delivery" | "search" | "menu" | "drawer" }) {
   const common = { width: 27, height: 27, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
   if (name === "table") return <svg {...common}><path d="M4 9h16M6 9V6h12v3M7 9v10m10-10v10M5 19h4m6 0h4" /></svg>;
   if (name === "buffet") return <svg {...common}><path d="M4 13h16M6 13a6 6 0 0 1 12 0M12 7V5M7 18h10" /></svg>;
   if (name === "delivery") return <svg {...common}><path d="M3 15h11V7H8l-2 4H3v4Zm11-5h4l3 3v2h-7v-5Z"/><circle cx="7" cy="17" r="2"/><circle cx="18" cy="17" r="2"/></svg>;
   if (name === "search") return <svg {...common}><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg>;
   if (name === "menu") return <svg {...common}><path d="M4 7h16M4 12h16M4 17h16"/></svg>;
+  if (name === "drawer") return <svg {...common}><path d="M4 7h16v10H4zM4 11h16M9 14h6"/><path d="M7 4h10l2 3H5l2-3Z"/></svg>;
   return <svg {...common}><path d="M6 9h12l1 11H5L6 9Zm3 0V7a3 3 0 0 1 6 0v2"/></svg>;
 }
 
@@ -98,7 +83,49 @@ function Modal({ children, className = "", onClose }: { children: ReactNode; cla
   return <div className="desktop-pos-modal-backdrop" onMouseDown={onClose}><section className={`desktop-pos-modal ${className}`} onMouseDown={(event) => event.stopPropagation()}>{children}</section></div>;
 }
 
-export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, language, refreshProducts }: {
+function DiscountModal({ language, subtotal, current, onClose, onApply }: {
+  language: Language;
+  subtotal: number;
+  current: Discount;
+  onClose: () => void;
+  onApply: (discount: Discount) => void;
+}) {
+  const th = language === "th";
+  const [type, setType] = useState<"amount" | "percent">(current?.type || "percent");
+  const [value, setValue] = useState(current ? String(current.value) : "");
+  const raw = Number(value || 0);
+  const capped = type === "percent" ? Math.min(100, Math.max(0, raw)) : Math.min(subtotal, Math.max(0, raw));
+  const preview = type === "percent" ? moneyNumber(subtotal * capped / 100) : moneyNumber(capped);
+  const net = moneyNumber(Math.max(0, subtotal - preview));
+
+  return <Modal className="discount-modal" onClose={onClose}>
+    <header className="desktop-pos-modal__header">
+      <div><h2>{th ? "ส่วนลดทั้งบิล" : "Bill discount"}</h2><p>{th ? "เลือกเปอร์เซ็นต์หรือจำนวนเงิน ส่วนลดจะใช้กับยอดบิลปัจจุบัน" : "Apply a percentage or fixed discount to this bill."}</p></div>
+      <button className="icon-close" onClick={onClose}>×</button>
+    </header>
+    <div className="discount-mode-switch">
+      <button className={type === "percent" ? "active" : ""} onClick={() => setType("percent")}>{th ? "เปอร์เซ็นต์ (%)" : "Percent (%)"}</button>
+      <button className={type === "amount" ? "active" : ""} onClick={() => setType("amount")}>{th ? "จำนวนเงิน (บาท)" : "Amount (THB)"}</button>
+    </div>
+    <label className="discount-value-field">
+      <span>{type === "percent" ? (th ? "ส่วนลดเปอร์เซ็นต์" : "Discount percent") : (th ? "ส่วนลดเป็นบาท" : "Discount amount")}</span>
+      <div><input type="number" inputMode="decimal" min="0" max={type === "percent" ? 100 : subtotal} value={value} onChange={(event) => setValue(event.target.value)} autoFocus/><b>{type === "percent" ? "%" : "บาท"}</b></div>
+    </label>
+    {type === "percent" ? <div className="discount-quick-buttons">{[5,10,15,20].map(amount => <button key={amount} onClick={() => setValue(String(amount))}>{amount}%</button>)}</div> : null}
+    <div className="discount-preview">
+      <span>{th ? "ยอดสินค้า" : "Subtotal"}</span><strong>{money(subtotal)}</strong>
+      <span>{th ? "ส่วนลด" : "Discount"}</span><strong className="discount-negative">−{money(preview)}</strong>
+      <span>{th ? "ยอดสุทธิ" : "Net total"}</span><strong className="discount-net">{money(net)}</strong>
+    </div>
+    <div className="modal-actions discount-modal-actions">
+      <button onClick={() => onApply(null)}>{th ? "ล้างส่วนลด" : "Clear discount"}</button>
+      <button onClick={onClose}>{th ? "ยกเลิก" : "Cancel"}</button>
+      <button className="cash-action" disabled={capped <= 0 || subtotal <= 0} onClick={() => onApply({ type, value: moneyNumber(capped) })}>{th ? "ใช้ส่วนลด" : "Apply discount"}</button>
+    </div>
+  </Modal>;
+}
+
+export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, language, refreshProducts, fixedMode }: {
   repo: PosRepository;
   staff: Staff;
   shift: Shift;
@@ -106,35 +133,65 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
   products: Product[];
   language: Language;
   refreshProducts: () => Promise<void>;
+  fixedMode?: "takeaway" | "dine_in";
 }) {
   const license = useDesktopLicense();
   const th = language === "th";
-  const [mode, setMode] = useState<SalesMode | null>(null);
-  const [modePicker, setModePicker] = useState(true);
+  const [mode, setMode] = useState<SalesMode | null>(fixedMode ?? "takeaway");
+  const [modePicker, setModePicker] = useState(false);
   const [groceryCart, setGroceryCart] = useState<CartLine[]>(() => readJson<CartLine[]>(GROCERY_CART_KEY, []));
   const [takeawayCart, setTakeawayCart] = useState<CartLine[]>(() => readJson<CartLine[]>(TAKEAWAY_CART_KEY, []));
+  const [takeawayDiscount, setTakeawayDiscount] = useState<Discount>(() => readJson<Discount>(TAKEAWAY_DISCOUNT_KEY, null));
   const [tableBills, setTableBills] = useState<TableBills>(() => readJson<TableBills>(TABLE_BILLS_KEY, {}));
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
-  const [tableView, setTableView] = useState<"list" | "floor">("list");
+  const [salesTables, setSalesTables] = useState<SalesTable[]>(() => listSalesTables().filter((table) => table.active));
   const [category, setCategory] = useState("all");
   const [query, setQuery] = useState("");
   const [barcode, setBarcode] = useState("");
   const scanRef = useRef<HTMLInputElement>(null);
   const [paymentStep, setPaymentStep] = useState<PaymentStep>(null);
+  const [discountOpen, setDiscountOpen] = useState(false);
   const [cashInput, setCashInput] = useState("");
-  const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const [receipt, setReceipt] = useState<PrintableReceipt | null>(null);
   const [cancelBillOpen, setCancelBillOpen] = useState(false);
   const [cancelPin, setCancelPin] = useState("");
   const [cancelReason, setCancelReason] = useState("");
   const [cancelError, setCancelError] = useState("");
   const [moveOpen, setMoveOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerPin, setDrawerPin] = useState("");
+  const [drawerError, setDrawerError] = useState("");
   const [notice, setNotice] = useState<{ kind: NoticeKind; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [clock, setClock] = useState(() => new Date());
+  const [online, setOnline] = useState(() => navigator.onLine);
+  const [qrRenderSrc, setQrRenderSrc] = useState("");
+  const [qrLoaded, setQrLoaded] = useState(false);
 
   useEffect(() => { const timer = window.setInterval(() => setClock(new Date()), 1000); return () => window.clearInterval(timer); }, []);
+  useEffect(() => {
+    const refreshOnline = () => setOnline(navigator.onLine);
+    window.addEventListener("online", refreshOnline);
+    window.addEventListener("offline", refreshOnline);
+    return () => {
+      window.removeEventListener("online", refreshOnline);
+      window.removeEventListener("offline", refreshOnline);
+    };
+  }, []);
+  useEffect(() => {
+    const refreshTables = () => setSalesTables(listSalesTables().filter((table) => table.active));
+    window.addEventListener(SALES_TABLES_EVENT, refreshTables);
+    return () => window.removeEventListener(SALES_TABLES_EVENT, refreshTables);
+  }, []);
+  useEffect(() => {
+    if (!fixedMode) return;
+    setMode(fixedMode);
+    setModePicker(false);
+    if (fixedMode !== "dine_in") setSelectedTable(null);
+  }, [fixedMode]);
   useEffect(() => writeJson(GROCERY_CART_KEY, groceryCart), [groceryCart]);
   useEffect(() => writeJson(TAKEAWAY_CART_KEY, takeawayCart), [takeawayCart]);
+  useEffect(() => writeJson(TAKEAWAY_DISCOUNT_KEY, takeawayDiscount), [takeawayDiscount]);
   useEffect(() => writeJson(TABLE_BILLS_KEY, tableBills), [tableBills]);
 
   useEffect(() => {
@@ -148,11 +205,23 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
     : mode === "grocery"
       ? groceryCart
       : takeawayCart;
-  const total = cart.reduce((sum, line) => sum + Number(line.price) * Number(line.quantity), 0);
   const activeTableBill = selectedTable ? tableBills[selectedTable] : undefined;
+  const discount: Discount = mode === "dine_in" && selectedTable ? (activeTableBill?.discount ?? null) : takeawayDiscount;
+  const pricing = useMemo(() => priceCart(cart, discount, language), [cart, discount, language]);
+  const subtotal = pricing.subtotal;
+  const total = pricing.total;
+  const discountAmount = pricing.discountAmount;
+  const cashReceived = Number(cashInput || 0);
+  const cashDifference = cashReceived - total;
   const billNo = activeTableBill?.billNo ?? `DIN-${String(Date.now()).slice(-9)}`;
-  const qrReady = Boolean(settings.paymentQrEnabled && settings.paymentQrImage);
+  const paymentQr = resolvePaymentQr(settings, total, online);
+  const qrReady = paymentQr.ready && Boolean(qrRenderSrc) && qrLoaded;
   const canSwitchMode = cart.length === 0 && !selectedTable;
+
+  useEffect(() => {
+    setQrRenderSrc(paymentQr.src);
+    setQrLoaded(false);
+  }, [paymentQr.src]);
 
   const categories = useMemo(() => [{ id: "all", name: th ? "ทั้งหมด" : "All" }, ...Array.from(new Map(products.map((product) => [product.categoryId, { id: product.categoryId, name: product.categoryName }])).values())], [products, th]);
   const visibleProducts = useMemo(() => products.filter((product) => product.active && (category === "all" || product.categoryId === category) && (!query.trim() || `${product.productCode} ${product.barcode ?? ""} ${productName(language, product)} ${product.categoryName}`.toLowerCase().includes(query.trim().toLowerCase()))), [products, category, query, language]);
@@ -162,18 +231,49 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
     window.setTimeout(() => setNotice(null), 2200);
   };
 
+  const appendCashKey = (key: string) => {
+    setCashInput((current) => {
+      if (key === "." && current.includes(".")) return current;
+      if (!current && key === ".") return "0.";
+      if (!current && key === "00") return "0";
+      if (current === "0" && /^\d+$/.test(key)) return key === "00" ? "0" : key;
+      const next = `${current}${key}`;
+      const decimal = next.split(".")[1];
+      if (decimal && decimal.length > 2) return current;
+      return next.length <= 12 ? next : current;
+    });
+  };
+
   const setCart = (updater: (current: CartLine[]) => CartLine[]) => {
     if (mode === "dine_in" && selectedTable) {
       setTableBills((current) => {
         const bill = current[selectedTable];
         if (!bill) return current;
-        return { ...current, [selectedTable]: { ...bill, items: updater(bill.items) } };
+        const nextItems = updater(bill.items);
+        return { ...current, [selectedTable]: { ...bill, items: nextItems, discount: nextItems.length ? (bill.discount ?? null) : null } };
       });
     } else if (mode === "grocery") {
       setGroceryCart(updater);
     } else {
-      setTakeawayCart(updater);
+      setTakeawayCart((current) => {
+        const nextItems = updater(current);
+        if (!nextItems.length) setTakeawayDiscount(null);
+        return nextItems;
+      });
     }
+  };
+
+  const setCurrentDiscount = (next: Discount) => {
+    if (mode === "dine_in" && selectedTable) {
+      setTableBills((current) => {
+        const bill = current[selectedTable];
+        if (!bill) return current;
+        return { ...current, [selectedTable]: { ...bill, discount: next } };
+      });
+    } else {
+      setTakeawayDiscount(next);
+    }
+    setDiscountOpen(false);
   };
 
   const addProduct = (product: Product) => {
@@ -208,7 +308,7 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
     if (!license.modes.dineIn) return;
     setTableBills((current) => current[tableCode] ? current : {
       ...current,
-      [tableCode]: { tableCode, billNo: `TB-${tableCode}-${Date.now().toString().slice(-10)}`, openedAt: new Date().toISOString(), items: [] }
+      [tableCode]: { tableCode, billNo: `TB-${tableCode}-${Date.now().toString().slice(-10)}`, openedAt: new Date().toISOString(), items: [], discount: null }
     });
     setSelectedTable(tableCode);
   };
@@ -222,27 +322,110 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
       setGroceryCart([]);
     } else {
       setTakeawayCart([]);
+      setTakeawayDiscount(null);
+    }
+  };
+
+  const openDrawerNative = async () => {
+    if (settings.cashDrawerEnabled === false) throw new Error("CASH_DRAWER_DISABLED");
+    if (!settings.printerName?.trim()) throw new Error("PRINTER_NOT_CONFIGURED");
+    await invoke("open_cash_drawer", { printerName: settings.printerName.trim() });
+  };
+
+  const requestManualDrawer = () => {
+    if (settings.cashDrawerEnabled === false) {
+      showNotice("warn", th ? "ยังไม่ได้เปิดใช้งานลิ้นชักเงินสดในเมนูตั้งค่า" : "Cash drawer is disabled in Settings.");
+      return;
+    }
+    if (!settings.printerName?.trim()) {
+      showNotice("warn", th ? "กรุณาตั้งค่าเครื่องพิมพ์ก่อนเปิดลิ้นชัก" : "Configure a receipt printer before opening the drawer.");
+      return;
+    }
+    setDrawerPin("");
+    setDrawerError("");
+    setDrawerOpen(true);
+  };
+
+  const confirmManualDrawer = async () => {
+    if (busy || drawerPin.length !== 4) return;
+    setBusy(true);
+    setDrawerError("");
+    try {
+      const authorizer = await repo.verifyPin(drawerPin);
+      if (!authorizer || !["owner", "manager"].includes(authorizer.role)) {
+        throw new Error(th ? "ต้องใช้ PIN ผู้จัดการหรือเจ้าของร้าน" : "Owner/manager PIN required");
+      }
+      await openDrawerNative();
+      setDrawerOpen(false);
+      setDrawerPin("");
+      showNotice("ok", th ? "เปิดลิ้นชักแล้ว" : "Cash drawer opened");
+    } catch (error) {
+      setDrawerError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
     }
   };
 
   const completePayment = async (method: "cash" | "transfer", paid: number) => {
     if (!cart.length || busy) return;
+    const tableCodeAtPayment = mode === "dine_in" ? selectedTable : null;
     setBusy(true);
     try {
       const sale = await repo.checkout({
-        items: cart.map((line) => ({ productId: line.id, name: productName(language, line), quantity: line.quantity, unitPrice: line.price })),
+        items: pricing.checkoutItems,
         paymentMethod: method,
         paid,
         staff,
         shift,
-        deviceId: settings.deviceId
+        deviceId: settings.deviceId,
+        subtotal,
+        discountAmount,
+        discountType: discount?.type,
+        discountValue: discount?.value
       });
       const nextReceipt = await repo.getReceipt(sale.id);
+      const printableReceipt: PrintableReceipt | null = nextReceipt
+        ? {
+            ...nextReceipt,
+            tableCode: tableCodeAtPayment,
+            subtotal,
+            discountAmount,
+            discountType: discount?.type,
+            discountValue: discount?.value,
+            items: cart.map(line => ({
+              productId: line.id,
+              name: productName(language, line),
+              quantity: line.quantity,
+              unitPrice: line.price,
+              lineTotal: moneyNumber(line.quantity * line.price)
+            }))
+          }
+        : null;
+
       clearCurrentBill();
       setPaymentStep(null);
       setCashInput("");
+
+      if (printableReceipt) {
+        setReceipt(printableReceipt);
+        if (settings.printerAutoPrintReceipt !== false) {
+          try {
+            await printReceiptNative(printableReceipt);
+          } catch {
+            showNotice("warn", th ? "บันทึกบิลแล้ว แต่พิมพ์ใบเสร็จอัตโนมัติไม่สำเร็จ" : "Sale saved, but automatic receipt printing failed");
+          }
+        }
+      }
+
+      if (method === "cash" && settings.cashDrawerEnabled !== false) {
+        try {
+          await openDrawerNative();
+        } catch {
+          showNotice("warn", th ? "รับชำระเงินสดแล้ว แต่เปิดลิ้นชักอัตโนมัติไม่สำเร็จ" : "Cash sale completed, but the cash drawer did not open.");
+        }
+      }
+
       await refreshProducts();
-      if (nextReceipt) setReceipt(nextReceipt);
       showNotice("ok", th ? "บันทึกการขายเรียบร้อย" : "Sale completed");
     } catch (error) {
       showNotice("error", error instanceof Error ? error.message : String(error));
@@ -300,44 +483,45 @@ export function DesktopSalesWorkspace({ repo, staff, shift, settings, products, 
   }
 
   const renderTables = () => mode === "dine_in" && !selectedTable ? <section className="table-browser-panel">
-    <div className="table-browser-toolbar"><div className="table-tabs"><button className={tableView === "list" ? "active" : ""} onClick={() => setTableView("list")}>{th ? "รายการโต๊ะ" : "Table list"}</button><button className={tableView === "floor" ? "active" : ""} onClick={() => setTableView("floor")}>{th ? "แผนผังร้าน" : "Floor plan"}</button><span>{th ? "ทั้งหมด" : "All"}</span></div></div>
-    {tableView === "floor" ? <div className="floor-preview"><div><Icon name="table"/><strong>{th ? "แผนผังร้าน" : "Floor plan"}</strong><small>{th ? "รุ่น Desktop จะใช้ตำแหน่งโต๊ะจริงในขั้นถัดไป — เลือกโต๊ะจากรายการด้านล่างได้ทันที" : "Desktop floor coordinates are the next step. Use the live table list below."}</small></div></div> : null}
-    <div className="table-grid">{TABLE_CODES.map((tableCode) => {
-      const bill = tableBills[tableCode];
+    <div className="table-browser-toolbar"><div className="table-tabs"><button className="active">{th ? "รายการโต๊ะ" : "Table list"}</button><span>{th ? "ทั้งหมด" : "All"}</span></div></div>
+    <div className="table-grid">{salesTables.map((table) => {
+      const bill = tableBills[table.code];
       const amount = bill?.items.reduce((sum, line) => sum + line.quantity * line.price, 0) ?? 0;
-      return <button key={tableCode} className={bill ? "occupied" : "available"} onClick={() => openTable(tableCode)}><strong>{tableCode}</strong><span>{bill ? (th ? "มีบิล" : "Open") : (th ? "ว่าง" : "Available")}</span><small>{bill ? `${bill.items.length} ${th ? "รายการ" : "items"} · ${money(amount)}` : (th ? "เปิดบิล" : "Open bill")}</small></button>;
+      return <button key={table.id} className={bill ? "occupied" : "available"} onClick={() => openTable(table.code)}><strong>{table.code}</strong><span>{table.name}</span><small>{bill ? `${th ? "มีบิล" : "Open"} · ${bill.items.length} ${th ? "รายการ" : "items"} · ${money(amount)}` : (th ? "ว่าง · เปิดบิล" : "Available · Open bill")}</small></button>;
     })}</div>
   </section> : null;
 
-  const renderCatalog = () => mode === "grocery" || mode === "takeaway" || selectedTable ? <section className="product-browser">
-    <div className="catalog-tools"><button className="orange-chip">{th ? "เครื่องดื่ม" : "Products"}</button><label className="search-field"><Icon name="search"/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={th ? "ค้นหาสินค้า" : "Search products"}/></label><label className="scan-field"><input ref={scanRef} value={barcode} onChange={(event) => setBarcode(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void scanBarcode(); }} placeholder={th ? "สแกนบาร์โค้ด" : "Scan barcode"}/><button onClick={() => void scanBarcode()}>{th ? "เพิ่ม" : "Add"}</button></label></div>
-    <div className="category-row">{categories.map((item) => <button key={item.id} className={category === item.id ? "active" : ""} onClick={() => setCategory(item.id)}>{item.name}</button>)}</div>
-    <div className="desktop-product-grid">{visibleProducts.map((product) => <button key={product.id} className="desktop-product-card" disabled={product.stockQuantity <= 0} onClick={() => addProduct(product)}><span className="product-image">{product.imagePath ? <img src={product.imagePath} alt=""/> : productName(language, product).slice(0, 1)}</span><strong>{productName(language, product)}</strong><small>{product.barcode || product.productCode}</small><em>{th ? "คงเหลือ" : "Stock"}: {product.stockQuantity}</em><b>{money(product.price)}</b></button>)}</div>
+  const renderCatalog = () => mode === "grocery" || mode === "takeaway" || selectedTable ? <section className={`product-browser ${mode !== "grocery" ? "product-browser--restaurant" : ""}`}>
+    {mode === "grocery" ? <div className="catalog-tools"><button className="orange-chip">{th ? "เครื่องดื่ม" : "Products"}</button><label className="search-field"><Icon name="search"/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={th ? "ค้นหาสินค้า" : "Search products"}/></label><label className="scan-field"><input ref={scanRef} value={barcode} onChange={(event) => setBarcode(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void scanBarcode(); }} placeholder={th ? "สแกนบาร์โค้ด" : "Scan barcode"}/><button onClick={() => void scanBarcode()}>{th ? "เพิ่ม" : "Add"}</button></label></div> : null}
+    <div className={`category-row ${mode !== "grocery" ? "category-row--restaurant-top" : ""}`}>{categories.map((item) => <button key={item.id} className={category === item.id ? "active" : ""} onClick={() => setCategory(item.id)}>{item.name}</button>)}</div>
+    <div className="desktop-product-grid">{visibleProducts.map((product) => <button key={product.id} className="desktop-product-card" disabled={product.stockQuantity <= 0} onClick={() => addProduct(product)}><span className="product-image">{product.imagePath ? <img src={productImageSrc(product.imagePath)} alt=""/> : productName(language, product).slice(0, 1)}</span><strong>{productName(language, product)}</strong><small>{product.barcode || product.productCode}</small><em>{th ? "คงเหลือ" : "Stock"}: {product.stockQuantity}</em><b>{money(product.price)}</b></button>)}</div>
   </section> : null;
 
-  const renderCart = () => <aside className="desktop-cart-panel"><header><h2>{th ? `รายการสินค้า (${cart.length})` : `Cart (${cart.length})`}</h2><button disabled={!cart.length} onClick={() => setCart(() => [])}>{th ? "ล้างรายการ" : "Clear"}</button></header><div className="desktop-cart-list">{cart.length === 0 ? <div className="cart-empty"><img src="/icon.png" alt="CpIPOS"/></div> : cart.map((line) => <article key={line.id} className="desktop-cart-line"><div className="cart-product-mark">{productName(language, line).slice(0, 1)}</div><div className="cart-line-info"><strong>{productName(language, line)}</strong><small>{money(line.price)}</small><div className="cart-qty"><button onClick={() => setCart((current) => current.map((item) => item.id === line.id ? { ...item, quantity: Math.max(1, item.quantity - 1) } : item))}>−</button><span>{line.quantity}</span><button onClick={() => setCart((current) => current.map((item) => item.id === line.id ? { ...item, quantity: item.quantity + 1 } : item))}>+</button><button className="line-remove" onClick={() => setCart((current) => current.filter((item) => item.id !== line.id))}>×</button></div></div><strong>{money(line.price * line.quantity)}</strong></article>)}</div><footer>{selectedTable && activeTableBill ? <div className="bill-identity"><span>{th ? "เลขที่บิล" : "Bill"}</span><strong>{activeTableBill.billNo}</strong><span>{th ? "สถานะ" : "Status"}</span><strong>{th ? "นั่งโต๊ะ" : "Dine-in"}</strong></div> : null}<div className="cart-total"><span>{th ? "ยอดรวม" : "Total"}</span><strong>{money(total)}</strong></div><div className="cart-actions"><button disabled={!cart.length} className="muted-action">{th ? "สมาชิก" : "Member"}</button><button disabled={!cart.length} className="discount-action">{th ? "ส่วนลด" : "Discount"}</button></div><button className="checkout-button" disabled={!cart.length} onClick={() => setPaymentStep("review")}>{selectedTable || mode === "grocery" ? (th ? "ชำระเงิน" : "Pay") : (th ? "สร้างออเดอร์ POS" : "Create POS order")}</button></footer></aside>;
+  const renderCart = () => <aside className="desktop-cart-panel"><header><h2>{th ? `รายการสินค้า (${cart.length})` : `Cart (${cart.length})`}</h2><button disabled={!cart.length} onClick={() => setCart(() => [])}>{th ? "ล้างรายการ" : "Clear"}</button></header><div className="desktop-cart-list">{cart.length === 0 ? <div className="cart-empty"><img src="/icon.png" alt="CpIPOS"/></div> : cart.map((line) => <article key={line.id} className="desktop-cart-line"><div className="cart-product-mark">{productName(language, line).slice(0, 1)}</div><div className="cart-line-info"><strong>{productName(language, line)}</strong><small>{money(line.price)}</small><div className="cart-qty"><button onClick={() => setCart((current) => current.map((item) => item.id === line.id ? { ...item, quantity: Math.max(1, item.quantity - 1) } : item))}>−</button><span>{line.quantity}</span><button onClick={() => setCart((current) => current.map((item) => item.id === line.id ? { ...item, quantity: item.quantity + 1 } : item))}>+</button><button className="line-remove" onClick={() => setCart((current) => current.filter((item) => item.id !== line.id))}>×</button></div></div><strong>{money(line.price * line.quantity)}</strong></article>)}</div><footer>{selectedTable && activeTableBill ? <div className="bill-identity"><span>{th ? "เลขที่บิล" : "Bill"}</span><strong>{activeTableBill.billNo}</strong><span>{th ? "สถานะ" : "Status"}</span><strong>{th ? "นั่งโต๊ะ" : "Dine-in"}</strong></div> : null}<div className="cart-total"><span>{th ? "ยอดรวม" : "Total"}</span><strong>{money(total)}</strong></div>{discountAmount > 0 ? <div className="cart-discount-summary"><span>{th ? "ยอดสินค้า" : "Subtotal"} {money(subtotal)}</span><strong>{th ? "ส่วนลด" : "Discount"} −{money(discountAmount)}{discount?.type === "percent" ? ` (${discount.value}%)` : ""}</strong></div> : null}<div className="cart-actions"><button disabled={!cart.length} className="muted-action">{th ? "สมาชิก" : "Member"}</button><button disabled={!cart.length} className={`discount-action ${discountAmount > 0 ? "is-active" : ""}`} onClick={() => setDiscountOpen(true)}>{discountAmount > 0 ? (th ? "แก้ส่วนลด" : "Edit discount") : (th ? "ส่วนลด" : "Discount")}</button></div><button className="checkout-button" disabled={!cart.length} onClick={() => setPaymentStep("review")}>{selectedTable || mode === "grocery" ? (th ? "ชำระเงิน" : "Pay") : (th ? "สร้างออเดอร์ POS" : "Create POS order")}</button><button className="cash-drawer-button" onClick={requestManualDrawer}><Icon name="drawer"/><span>{th ? "เปิดลิ้นชัก" : "Open cash drawer"}</span></button></footer></aside>;
 
   return <section className="desktop-sales-workspace">
     <div className="sales-main-column">
-      <header className="sales-mode-toolbar"><button className="mode-switch mode-switch--primary" onClick={() => setModePicker(true)} disabled={!canSwitchMode}><span className="mode-switch__icon"><Icon name={mode === "dine_in" ? "table" : mode === "grocery" ? "menu" : "bag"}/></span><span><small>{th ? "สลับโหมดการขาย" : "Switch sales mode"}</small><strong>{mode === "dine_in" ? (th ? "นั่งโต๊ะ" : "Dine-in") : mode === "grocery" ? (th ? "ร้านชำ / ค้าปลีก" : "Grocery / Retail") : (th ? "กลับบ้าน" : "Takeaway")}</strong></span></button>{license.status === "trial" ? <span className="trial-mode-chip">{th ? `ทดลองใช้งาน · เปิดทุกโหมด · เหลือ ${license.trialDaysRemaining} วัน` : `Trial · all modes · ${license.trialDaysRemaining} days left`}</span> : null}</header>
       {selectedTable ? <div className="table-session-toolbar"><span>{th ? "โต๊ะ" : "Table"}: <strong>{selectedTable}</strong></span><button onClick={() => setMoveOpen(true)}>{th ? "ย้ายโต๊ะ" : "Move table"}</button><button onClick={() => setSelectedTable(null)}>{th ? "เลือกโต๊ะ" : "Choose table"}</button><button className="menu-button"><Icon name="menu"/>{th ? "จัดการเมนู" : "Menu"}</button></div> : null}
       {renderTables()}
       {renderCatalog()}
     </div>
     {renderCart()}
     {renderModePicker()}
+    {discountOpen ? <DiscountModal language={language} subtotal={subtotal} current={discount} onClose={() => setDiscountOpen(false)} onApply={setCurrentDiscount}/> : null}
     {notice ? <div className={`desktop-pos-toast ${notice.kind}`}>{notice.text}</div> : null}
 
-    {paymentStep === "review" ? <Modal className="payment-review-modal" onClose={() => setPaymentStep(null)}><header className="desktop-pos-modal__header"><div><h2>{th ? "รายการก่อนชำระเงิน" : "Review before payment"}</h2><p>{th ? "ตรวจสอบรายการสินค้าและยอดรวมก่อนเลือกวิธีชำระเงิน" : "Review items and total before choosing payment method."}</p></div><button className="close-text" onClick={() => setPaymentStep(null)}>{th ? "ปิด" : "Close"}</button></header><div className="review-table"><div className="review-head"><span>{th ? "รายการสินค้า" : "Item"}</span><span>{th ? "จำนวน" : "Qty"}</span><span>{th ? "รวมต่อรายการ" : "Total"}</span></div>{cart.map((line) => <div className="review-row" key={line.id}><span><strong>{productName(language, line)}</strong><small>{line.quantity} x {money(line.price)}</small></span><b>{line.quantity}</b><strong>{money(line.quantity * line.price)}</strong></div>)}</div><div className="review-total"><span>{th ? "รวมยอด" : "Grand total"}</span><strong>{money(total)}</strong></div><div className="modal-actions"><button className="cancel-action" onClick={() => setCancelBillOpen(true)}>{th ? "ยกเลิกบิล" : "Cancel bill"}</button><button className="cash-action" onClick={() => { setCashInput(String(total)); setPaymentStep("cash"); }}>{th ? "ชำระเงินสด" : "Cash"}</button><button className="transfer-action" onClick={() => setPaymentStep("transfer")}>{th ? "ชำระเงินโอน" : "Transfer / QR"}</button></div></Modal> : null}
+    {paymentStep === "review" ? <Modal className="payment-review-modal" onClose={() => setPaymentStep(null)}><header className="desktop-pos-modal__header"><div><h2>{th ? "รายการก่อนชำระเงิน" : "Review before payment"}</h2><p>{th ? "ตรวจสอบรายการสินค้าและยอดรวมก่อนเลือกวิธีชำระเงิน" : "Review items and total before choosing payment method."}</p></div><button className="close-text" onClick={() => setPaymentStep(null)}>{th ? "ปิด" : "Close"}</button></header><div className="review-table"><div className="review-head"><span>{th ? "รายการสินค้า" : "Item"}</span><span>{th ? "จำนวน" : "Qty"}</span><span>{th ? "รวมต่อรายการ" : "Total"}</span></div>{cart.map((line) => <div className="review-row" key={line.id}><span><strong>{productName(language, line)}</strong><small>{line.quantity} x {money(line.price)}</small></span><b>{line.quantity}</b><strong>{money(line.quantity * line.price)}</strong></div>)}</div>{discountAmount > 0 ? <div className="review-discount"><span>{th ? "ยอดสินค้า" : "Subtotal"}</span><strong>{money(subtotal)}</strong><span>{th ? "ส่วนลด" : "Discount"}</span><strong>−{money(discountAmount)}</strong></div> : null}<div className="review-total"><span>{th ? "รวมยอด" : "Grand total"}</span><strong>{money(total)}</strong></div><div className="modal-actions"><button className="cancel-action" onClick={() => setCancelBillOpen(true)}>{th ? "ยกเลิกบิล" : "Cancel bill"}</button><button className="cash-action" onClick={() => { setCashInput(""); setPaymentStep("cash"); }}>{th ? "ชำระเงินสด" : "Cash"}</button><button className="transfer-action" onClick={() => setPaymentStep("transfer")}>{th ? "ชำระเงินโอน" : "Transfer / QR"}</button></div></Modal> : null}
 
-    {paymentStep === "cash" ? <Modal className="cash-payment-modal" onClose={() => !busy && setPaymentStep("review")}><header className="desktop-pos-modal__header"><div><h2>{th ? "รับชำระเงินสด" : "Cash payment"}</h2><p>{th ? "กรอกจำนวนเงินที่รับจากลูกค้า" : "Enter cash received."}</p></div><button className="close-text" onClick={() => setPaymentStep("review")}>{th ? "ปิด" : "Close"}</button></header><div className="cash-layout"><section className="cash-summary"><div className="cash-summary-row"><span>{th ? "ยอดที่ต้องชำระ" : "Amount due"}</span><strong className="green">{money(total)}</strong></div><div className="cash-summary-row"><span>{th ? "รับเงินจากลูกค้า" : "Received"}</span><strong className="blue">{money(Number(cashInput || 0))}</strong></div><div className="quick-cash"><span>{th ? "บล็อกรับเงินด่วน" : "Quick cash"}</span><div>{[500, 1000, 1500].map((amount) => <button key={amount} onClick={() => setCashInput(String(amount))}>{money(amount)}</button>)}</div></div><div className="cash-summary-row"><span>{th ? "เงินทอน" : "Change"}</span><strong className="blue">{money(Math.max(0, Number(cashInput || 0) - total))}</strong></div></section><section className="cash-keypad"><span>{th ? "แป้นตัวเลข" : "Keypad"}</span><div>{["1","2","3","4","5","6","7","8","9","0","00","."].map((key) => <button key={key} onClick={() => setCashInput((current) => `${current}${key}`)}>{key}</button>)}</div><div className="keypad-foot"><button onClick={() => setCashInput("")}>{th ? "ล้าง" : "Clear"}</button><button onClick={() => setCashInput((current) => current.slice(0, -1))}>{th ? "ลบ" : "Back"}</button></div></section></div><div className="modal-actions modal-actions--spread"><button className="cancel-action" onClick={() => setCancelBillOpen(true)}>{th ? "ยกเลิกบิล" : "Cancel bill"}</button><button className="cash-action" disabled={busy || Number(cashInput || 0) < total} onClick={() => void completePayment("cash", Number(cashInput || 0))}>{busy ? (th ? "กำลังบันทึก..." : "Saving...") : (th ? "ยืนยันชำระ" : "Confirm payment")}</button></div></Modal> : null}
+    {paymentStep === "cash" ? <Modal className="desktop-cash-payment-modal" onClose={() => !busy && setPaymentStep("review")}><header className="desktop-pos-modal__header"><div><h2>{th ? "รับชำระเงินสด" : "Cash payment"}</h2><p>{th ? "กรอกจำนวนเงินที่รับจากลูกค้า" : "Enter cash received."}</p></div><button className="close-text" onClick={() => setPaymentStep("review")}>{th ? "ปิด" : "Close"}</button></header><div className="desktop-cash-layout"><section className="desktop-cash-panel"><div className="desktop-cash-summary-row desktop-cash-summary-row--due"><span>{th ? "ยอดที่ต้องชำระ" : "Amount due"}</span><strong>{money(total)}</strong></div><div className="desktop-cash-summary-row desktop-cash-summary-row--received"><span>{th ? "รับเงินจากลูกค้า" : "Received"}</span><strong className={!cashInput ? "is-placeholder" : ""}>{money(cashReceived)}</strong></div><div className="desktop-cash-quick"><span>{th ? "บล็อกรับเงินด่วน" : "Quick cash"}</span><div>{[500, 1000, 1500].map((amount) => <button key={amount} onClick={() => setCashInput(String(amount))}>{money(amount)}</button>)}</div></div><div className={`desktop-cash-summary-row desktop-cash-summary-row--difference ${cashDifference >= 0 ? "is-change" : "is-remaining"}`}><span>{cashDifference >= 0 ? (th ? "เงินทอน" : "Change") : (th ? "ยังขาด" : "Remaining")}</span><strong>{money(Math.abs(cashDifference))}</strong></div></section><section className="desktop-cash-keypad"><span className="desktop-cash-keypad__label">{th ? "แป้นตัวเลข" : "Keypad"}</span><div className="desktop-cash-keypad__grid">{["1","2","3","4","5","6","7","8","9","0","00","."].map((key) => <button key={key} onClick={() => appendCashKey(key)}>{key}</button>)}</div><div className="desktop-cash-keypad__foot"><button onClick={() => setCashInput("")}>{th ? "ล้าง" : "Clear"}</button><button onClick={() => setCashInput((current) => current.slice(0, -1))}>{th ? "ลบ" : "Back"}</button></div></section></div><div className="modal-actions modal-actions--spread desktop-cash-actions"><button className="cancel-action" onClick={() => setCancelBillOpen(true)}>{th ? "ยกเลิกบิล" : "Cancel bill"}</button><button className="cash-action" disabled={busy || cashReceived < total} onClick={() => void completePayment("cash", cashReceived)}>{busy ? (th ? "กำลังบันทึก..." : "Saving...") : (th ? "ยืนยันชำระ" : "Confirm payment")}</button></div></Modal> : null}
 
-    {paymentStep === "transfer" ? <Modal className="transfer-payment-modal" onClose={() => !busy && setPaymentStep("review")}><header className="desktop-pos-modal__header"><div><h2>{th ? "รับชำระเงินโอน" : "Transfer / QR payment"}</h2></div><button className="icon-close" onClick={() => setPaymentStep("review")}>×</button></header><div className="transfer-amount"><span>{th ? "ยอดชำระ" : "Amount due"}</span><strong>{money(total)}</strong></div><h3>{th ? "สแกน QR เพื่อชำระเงิน" : "Scan QR to pay"}</h3>{qrReady ? <div className="qr-payment-box"><img src={settings.paymentQrImage} alt="QR Payment"/><strong>{settings.paymentQrAccountName || (th ? "บัญชีรับชำระ" : "Payment account")}</strong>{settings.paymentQrNote ? <small>{settings.paymentQrNote}</small> : null}</div> : <div className="qr-required-box"><b>!</b><strong>{th ? "โปรดเปิดใช้งานชำระเงินก่อน" : "Payment QR is not configured"}</strong><p>{th ? "ไปที่เมนู ตั้งค่า > การชำระเงิน / QR แล้วใส่ภาพ QR ชำระเงิน จากนั้นเปิดใช้งานบัญชีรับเงิน" : "Open Settings > Payment / QR, add a QR image and enable the payment account."}</p></div>}<div className="transfer-actions"><button disabled={!qrReady} onClick={() => printDocument(paymentNoticeHtml({ settings, staff, tableCode: selectedTable, billNo, items: cart, total }))}>{th ? "พิมพ์ใบแจ้งชำระเงิน" : "Print payment notice"}</button><button className="transfer-confirm" disabled={!qrReady || busy} onClick={() => void completePayment("transfer", total)}>{busy ? (th ? "กำลังบันทึก..." : "Saving...") : (th ? "ยืนยันรับชำระแล้ว" : "Confirm paid")}</button></div></Modal> : null}
+    {paymentStep === "transfer" ? <Modal className="desktop-transfer-payment-modal" onClose={() => !busy && setPaymentStep("review")}><header className="desktop-pos-modal__header"><div><h2>{th ? "รับชำระเงินโอน" : "Transfer / QR payment"}</h2><p>{paymentQr.mode === "promptpay_online" ? (th ? "PromptPay Online · QR ล็อกยอดตามบิล" : "PromptPay Online · amount-locked QR") : paymentQr.mode === "bank_image_offline" ? (th ? "QR ธนาคารสำรอง" : "Bank QR fallback") : (th ? "ยังไม่มี QR พร้อมใช้งาน" : "QR not configured")}</p></div><button className="icon-close" onClick={() => setPaymentStep("review")}>×</button></header><div className="desktop-transfer-amount"><span>{th ? "ยอดชำระ" : "Amount due"}</span><strong>{money(total)}</strong></div><h3>{th ? "สแกน QR เพื่อชำระเงิน" : "Scan QR to pay"}</h3>{paymentQr.ready && qrRenderSrc ? <div className="desktop-qr-payment-box"><img src={qrRenderSrc} alt="QR Payment" onLoad={() => setQrLoaded(true)} onError={() => { if (settings.paymentQrImage && qrRenderSrc !== settings.paymentQrImage) { setQrRenderSrc(settings.paymentQrImage); setQrLoaded(false); } else { setQrRenderSrc(""); setQrLoaded(false); } }}/><strong>{paymentQr.label || (th ? "บัญชีรับชำระ" : "Payment account")}</strong><small>{paymentQr.mode === "promptpay_online" ? (th ? `ยอดถูกกำหนดไว้ที่ ${money(total)}` : `Amount locked to ${money(total)}`) : (th ? "QR คงที่จากธนาคาร · ตรวจสอบยอดก่อนยืนยัน" : "Static bank QR · verify amount before confirming")}</small>{settings.paymentQrNote ? <small>{settings.paymentQrNote}</small> : null}</div> : <div className="desktop-qr-required-box"><b>!</b><strong>{th ? "ยังไม่มี QR พร้อมใช้งาน" : "Payment QR is not available"}</strong><p>{online ? (th ? "ไปที่ ตั้งค่า > ตั้งค่า QR ชำระเงิน แล้วกรอกหมายเลข PromptPay หรืออัปโหลดภาพ QR สำรอง" : "Configure PromptPay or a fallback bank QR in Settings.") : (th ? "เครื่องออฟไลน์ กรุณาอัปโหลดภาพ QR ธนาคารสำรองในเมนูตั้งค่า" : "Offline: configure a fallback bank QR image.")}</p></div>}<div className="desktop-transfer-actions">{mode === "dine_in" ? <button disabled={!qrReady || !settings.printerName} onClick={() => void printPaymentNoticeNative({ settings, staff, tableCode: selectedTable, billNo, items: cart, total, qrSrc: qrRenderSrc, fallbackQrSrc: settings.paymentQrImage, qrMode: paymentQr.mode }).then(() => showNotice("ok", th ? "ส่งใบแจ้งชำระเงินไปเครื่องพิมพ์แล้ว" : "Payment notice sent to printer")).catch(() => showNotice("error", th ? "พิมพ์ใบแจ้งชำระเงินไม่สำเร็จ ตรวจสอบเครื่องพิมพ์และ QR" : "Payment notice print failed"))}>{settings.printerName ? (th ? "พิมพ์ใบแจ้งชำระเงิน" : "Print payment notice") : (th ? "ตั้งค่าเครื่องพิมพ์ก่อน" : "Configure printer")}</button> : null}<button className="desktop-transfer-confirm" disabled={!qrReady || busy} onClick={() => void completePayment("transfer", total)}>{busy ? (th ? "กำลังบันทึก..." : "Saving...") : (th ? "ยืนยันรับชำระแล้ว" : "Confirm paid")}</button></div></Modal> : null}
 
     {cancelBillOpen ? <Modal className="cancel-bill-modal" onClose={() => !busy && setCancelBillOpen(false)}><header className="desktop-pos-modal__header"><div><h2>{th ? "ยกเลิกบิล" : "Cancel bill"}</h2><p>{th ? "ต้องยืนยันด้วย PIN ผู้จัดการหรือเจ้าของร้าน" : "Owner or manager PIN is required."}</p></div><button className="icon-close" onClick={() => setCancelBillOpen(false)}>×</button></header><label>PIN<input type="password" value={cancelPin} onChange={(event) => setCancelPin(event.target.value)}/></label><label>{th ? "เหตุผล" : "Reason"}<input value={cancelReason} onChange={(event) => setCancelReason(event.target.value)}/></label>{cancelError ? <p className="form-error">{cancelError}</p> : null}<div className="modal-actions"><button onClick={() => setCancelBillOpen(false)}>{th ? "กลับ" : "Back"}</button><button className="cancel-action" disabled={busy || !cancelPin || !cancelReason.trim()} onClick={() => void cancelCurrentBill()}>{th ? "ยืนยันยกเลิกบิล" : "Confirm cancellation"}</button></div></Modal> : null}
 
-    {moveOpen && selectedTable ? <Modal className="move-table-modal" onClose={() => setMoveOpen(false)}><header className="desktop-pos-modal__header"><div><h2>{th ? `ย้ายโต๊ะ ${selectedTable}` : `Move ${selectedTable}`}</h2><p>{th ? "เลือกโต๊ะว่างปลายทาง" : "Choose an available destination table."}</p></div><button className="icon-close" onClick={() => setMoveOpen(false)}>×</button></header><div className="move-table-grid">{TABLE_CODES.filter((code) => code !== selectedTable).map((code) => <button key={code} disabled={Boolean(tableBills[code])} onClick={() => moveTable(code)}><strong>{code}</strong><span>{tableBills[code] ? (th ? "มีบิล" : "Occupied") : (th ? "ว่าง" : "Available")}</span></button>)}</div></Modal> : null}
+    {moveOpen && selectedTable ? <Modal className="move-table-modal" onClose={() => setMoveOpen(false)}><header className="desktop-pos-modal__header"><div><h2>{th ? `ย้ายโต๊ะ ${selectedTable}` : `Move ${selectedTable}`}</h2><p>{th ? "เลือกโต๊ะว่างปลายทางจากรายการโต๊ะที่เปิดใช้งาน" : "Choose an available active table."}</p></div><button className="icon-close" onClick={() => setMoveOpen(false)}>×</button></header><div className="move-table-grid">{salesTables.filter((table) => table.code !== selectedTable).map((table) => <button key={table.id} disabled={Boolean(tableBills[table.code])} onClick={() => moveTable(table.code)}><strong>{table.code}</strong><span>{tableBills[table.code] ? (th ? "มีบิล" : "Occupied") : table.name}</span></button>)}</div></Modal> : null}
 
-    {receipt ? <Modal className="receipt-success-modal" onClose={() => setReceipt(null)}><header className="desktop-pos-modal__header"><div><h2>{th ? "สรุปชำระเงินสำเร็จ" : "Payment complete"}</h2><p>{th ? "บันทึกการขายเรียบร้อย" : "Sale saved successfully."}</p></div><button className="close-text" onClick={() => setReceipt(null)}>{th ? "ปิดหน้าต่าง" : "Close"}</button></header><article className="receipt-preview"><img src="/icon.png" alt="CpIPOS"/><h3>{receipt.settings.storeName}</h3><p>{receipt.settings.branchName}</p><div className="receipt-meta"><span>{th ? "ผู้ขาย" : "Seller"}</span><strong>{staff.displayName}</strong><span>{th ? "เลขที่บิล" : "Receipt"}</span><strong>{receipt.receiptNo}</strong><span>{th ? "วันที่" : "Date"}</span><strong>{new Date(receipt.createdAt).toLocaleString(th ? "th-TH" : "en-US")}</strong></div><div className="receipt-lines">{receipt.items.map((item) => <div key={item.id || item.name}><span>{item.name} × {item.quantity}</span><strong>{money(item.lineTotal)}</strong></div>)}</div><div className="receipt-grand"><span>{th ? "ยอดที่ต้องชำระ" : "Total"}</span><strong>{money(receipt.total)}</strong></div><div className="receipt-lines"><div><span>{th ? "ชำระเงิน" : "Payment"}</span><strong>{receipt.paymentMethod === "cash" ? (th ? "เงินสด" : "Cash") : (th ? "โอน / QR" : "Transfer / QR")}</strong></div>{receipt.paymentMethod === "cash" ? <><div><span>{th ? "รับเงินจากลูกค้า" : "Received"}</span><strong>{money(receipt.paid)}</strong></div><div><span>{th ? "เงินทอน" : "Change"}</span><strong>{money(receipt.changeAmount)}</strong></div></> : null}</div><p className="receipt-footer">{receipt.settings.receiptFooter}</p></article><div className="receipt-actions"><button onClick={() => printDocument(receiptHtml(receipt))}>{th ? "พิมพ์ใบเสร็จ" : "Print receipt"}</button><button className="checkout-button" onClick={() => setReceipt(null)}>{th ? "เริ่มบิลใหม่" : "New sale"}</button></div></Modal> : null}
+    {drawerOpen ? <Modal className="cash-drawer-modal" onClose={() => !busy && setDrawerOpen(false)}><header className="desktop-pos-modal__header"><div><h2>{th ? "เปิดลิ้นชักเงินสด" : "Open cash drawer"}</h2><p>{th ? "ยืนยันสิทธิ์ด้วย PIN ผู้จัดการหรือเจ้าของร้าน" : "Owner or manager PIN is required."}</p></div><button className="icon-close" onClick={() => !busy && setDrawerOpen(false)}>×</button></header><div className="cash-drawer-auth-panel"><span className="cash-drawer-auth-icon"><Icon name="drawer"/></span><label>{th ? "PIN ผู้จัดการ / เจ้าของร้าน" : "Owner / manager PIN"}<input type="password" inputMode="numeric" maxLength={4} autoFocus value={drawerPin} onChange={(event) => { setDrawerPin(event.target.value.replace(/\D/g, "").slice(0, 4)); setDrawerError(""); }} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); void confirmManualDrawer(); } }}/></label>{drawerError ? <p className="form-error">{drawerError}</p> : null}</div><div className="modal-actions"><button disabled={busy} onClick={() => setDrawerOpen(false)}>{th ? "กลับ" : "Back"}</button><button className="cash-action" disabled={busy || drawerPin.length !== 4} onClick={() => void confirmManualDrawer()}>{busy ? (th ? "กำลังเปิด..." : "Opening...") : (th ? "ยืนยันเปิดลิ้นชัก" : "Open drawer")}</button></div></Modal> : null}
+
+    {receipt ? <Modal className="receipt-success-modal" onClose={() => setReceipt(null)}><header className="desktop-pos-modal__header"><div><h2>{th ? "สรุปชำระเงินสำเร็จ" : "Payment complete"}</h2><p>{th ? "บันทึกการขายเรียบร้อย" : "Sale saved successfully."}</p></div><button className="close-text" onClick={() => setReceipt(null)}>{th ? "ปิดหน้าต่าง" : "Close"}</button></header><article className="receipt-preview"><img src="/icon.png" alt="CpIPOS"/><h3>{receipt.settings.storeName}</h3><p>{receipt.settings.branchName}</p><div className="receipt-meta"><span>{th ? "ผู้ขาย" : "Seller"}</span><strong>{staff.displayName}</strong>{receipt.tableCode ? <><span>{th ? "โต๊ะ" : "Table"}</span><strong>{receipt.tableCode}</strong></> : null}<span>{th ? "เลขที่บิล" : "Receipt"}</span><strong>{receipt.receiptNo}</strong><span>{th ? "วันที่" : "Date"}</span><strong>{new Date(receipt.createdAt).toLocaleString(th ? "th-TH" : "en-US")}</strong></div><div className="receipt-lines">{receipt.items.map((item) => <div key={item.id || item.name}><span>{item.name} × {item.quantity}</span><strong>{money(item.lineTotal)}</strong></div>)}</div><div className="receipt-grand"><span>{th ? "ยอดที่ต้องชำระ" : "Total"}</span><strong>{money(receipt.total)}</strong></div><div className="receipt-lines"><div><span>{th ? "ชำระเงิน" : "Payment"}</span><strong>{receipt.paymentMethod === "cash" ? (th ? "เงินสด" : "Cash") : (th ? "โอน / QR" : "Transfer / QR")}</strong></div>{receipt.paymentMethod === "cash" ? <><div><span>{th ? "รับเงินจากลูกค้า" : "Received"}</span><strong>{money(receipt.paid)}</strong></div><div><span>{th ? "เงินทอน" : "Change"}</span><strong>{money(receipt.changeAmount)}</strong></div></> : null}</div><p className="receipt-footer">{receipt.settings.receiptFooter}</p></article><div className="receipt-actions"><button disabled={!settings.printerName} onClick={() => void printReceiptNative(receipt).then(() => showNotice("ok", th ? "ส่งใบเสร็จไปเครื่องพิมพ์แล้ว" : "Receipt sent to printer")).catch(() => showNotice("error", th ? "พิมพ์ใบเสร็จไม่สำเร็จ" : "Receipt print failed"))}>{settings.printerName ? (th ? "พิมพ์ใบเสร็จ" : "Print receipt") : (th ? "ตั้งค่าเครื่องพิมพ์ก่อน" : "Configure printer")}</button><button className="checkout-button" onClick={() => setReceipt(null)}>{th ? "เริ่มบิลใหม่" : "New sale"}</button></div></Modal> : null}
   </section>;
 }

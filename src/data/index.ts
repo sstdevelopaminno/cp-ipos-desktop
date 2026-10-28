@@ -1,41 +1,46 @@
-import type { AppSettings } from "../domain/types";
 import type { PosRepository } from "./repository";
 import { BrowserRepository } from "./browserRepository";
 
-function booleanSetting(value: unknown) {
-  if (value === true || value === 1) return true;
-  const normalized = String(value ?? "").trim().toLowerCase();
-  return normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on";
+// Desktop startup must never block the UI while SQLite finishes WAL recovery or
+// first-run migrations.  Keep this under App.tsx's hard startup timeout and let
+// later repository calls use the same connection once it is ready.
+const STARTUP_SOFT_INITIALIZE_MS = 1200;
+
+function softTimeout(ms: number) {
+  return new Promise<"timeout">((resolve) => window.setTimeout(() => resolve("timeout"), ms));
 }
 
-function normalizeSettings(settings: AppSettings): AppSettings {
-  return {
-    ...settings,
-    paymentQrEnabled: booleanSetting(settings.paymentQrEnabled)
-  };
-}
-
-function withNormalizedSettings(repo: PosRepository): PosRepository {
-  return new Proxy(repo, {
+function withStartupStabilizer(base: PosRepository): PosRepository {
+  let initializeTask: Promise<void> | null = null;
+  return new Proxy(base, {
     get(target, property, receiver) {
-      if (property === "getSettings") {
-        return async () => normalizeSettings(await target.getSettings());
-      }
-      if (property === "updateSettings") {
-        return async (settings: AppSettings, staff: Parameters<PosRepository["updateSettings"]>[1]) =>
-          normalizeSettings(await target.updateSettings({ ...settings, paymentQrEnabled: booleanSetting(settings.paymentQrEnabled) }, staff));
+      if (property === "initialize") {
+        return async () => {
+          initializeTask ??= target.initialize().catch((error) => {
+            initializeTask = null;
+            throw error;
+          });
+          const result = await Promise.race([initializeTask.then(() => "ready" as const), softTimeout(STARTUP_SOFT_INITIALIZE_MS)]);
+          if (result === "timeout") {
+            console.warn("CpIPOS database initialization continues in the background");
+            window.dispatchEvent(new CustomEvent("cpipos:database-initialize-background"));
+          }
+        };
       }
       const value = Reflect.get(target, property, receiver);
       return typeof value === "function" ? value.bind(target) : value;
     }
-  });
+  }) as PosRepository;
 }
 
 export async function createRepository(): Promise<PosRepository> {
   const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   if (isTauri) {
     const { TauriRepository } = await import("./tauriRepository");
-    return withNormalizedSettings(new TauriRepository());
+    // Cloud archive is intentionally not wrapped into the core repository path:
+    // it can make buttons feel stuck when the network is slow. Cloud sync should
+    // run from its own runtime after the app is ready.
+    return withStartupStabilizer(new TauriRepository());
   }
-  return withNormalizedSettings(new BrowserRepository());
+  return new BrowserRepository();
 }

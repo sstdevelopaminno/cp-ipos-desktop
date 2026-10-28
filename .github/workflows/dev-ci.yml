@@ -1,0 +1,35 @@
+name: Desktop Dev CI
+
+on:
+  push:
+    branches:
+      - main
+      - dev/ui-system
+  pull_request:
+    branches:
+      - main
+      - dev/ui-system
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install dependencies
+        run: npm ci
+      - name: Frontend build
+        run: npm run build
+      - name: Release configuration and offline license issuer tests
+        run: node --test scripts/test_release_contract.test.mjs scripts/test_license_issuance.test.mjs
+      - name: SQLite grocery transaction smoke test
+        run: python scripts/test_sqlite_migrations.py
+      - name: Rust check
+        run: cargo check --manifest-path src-tauri/Cargo.toml

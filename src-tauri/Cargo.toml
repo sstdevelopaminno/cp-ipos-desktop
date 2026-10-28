@@ -1,8 +1,8 @@
 [package]
 name = "cp-ipos-desktop"
-version = "0.1.0"
+version = "0.3.4"
 description = "CpIPOS Offline-first Windows POS"
-authors = ["CUTTING POINT TECH CO., LTD."]
+authors = ["CUTTING POINT INNOVATION CO., LTD."]
 edition = "2021"
 
 [lib]
@@ -13,7 +13,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-sql = { version = "2", features = ["sqlite"] }
+tauri-plugin-updater = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Printing"] }

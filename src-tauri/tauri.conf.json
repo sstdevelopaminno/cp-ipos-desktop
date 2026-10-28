@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "CpIPOS Desktop",
-  "version": "0.3.0",
+  "version": "0.3.4",
   "identifier": "th.co.cuttingpoint.cpipos.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -32,15 +32,32 @@
         "resizable": false,
         "fullscreen": false,
         "decorations": false,
+        "transparent": true,
+        "shadow": false,
         "visible": true,
         "center": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data: blob: https://promptpay.io; connect-src ipc: http://ipc.localhost http://localhost:* ws://localhost:* https:",
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$APPDATA/**"
+        ]
+      }
     }
   },
   "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIxMUE3RkU3Qjc4RTkxM0MKUldROGtZNjM1MzhhSWQ0bmJPVlhrcGFwMGE4MjN2OGVodURXQjNUaktjcmNmT3pQTUcwY0pYejYK",
+      "endpoints": [
+        "https://github.com/sstdevelopaminno/cp-ipos-desktop/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    },
     "sql": {
       "preload": [
         "sqlite:cpipos.db"
@@ -49,6 +66,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": [
       "nsis",
       "msi"

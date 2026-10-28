@@ -1,0 +1,94 @@
+.printer-required-card.printer-first-run-compact {
+  width: min(620px, calc(100vw - 28px));
+  max-height: calc(var(--app-vh, 100vh) - 28px);
+  overflow: auto;
+  padding: 20px;
+  gap: 12px;
+}
+
+.printer-required-card.printer-first-run-compact h1 {
+  margin: 4px 0 2px;
+  font-size: 24px;
+}
+
+.printer-required-card.printer-first-run-compact > p {
+  margin: 0;
+  color: #64748b;
+  line-height: 1.45;
+}
+
+.printer-required-card.printer-first-run-compact .printer-setup-card {
+  padding: 14px;
+  border-radius: 18px;
+  max-height: none;
+}
+
+.printer-required-card.printer-first-run-compact .printer-setup-card > .warning:first-of-type {
+  display: none;
+}
+
+.printer-required-card.printer-first-run-compact .printer-status-row,
+.printer-required-card.printer-first-run-compact .settings-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.printer-required-card.printer-first-run-compact .metric {
+  padding: 10px;
+  min-height: 64px;
+}
+
+.printer-required-card.printer-first-run-compact label {
+  gap: 4px;
+  font-size: 13px;
+}
+
+.printer-required-card.printer-first-run-compact input,
+.printer-required-card.printer-first-run-compact select {
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: 12px;
+}
+
+.printer-required-card.printer-first-run-compact .actions.modal-footer {
+  position: sticky;
+  bottom: 0;
+  background: linear-gradient(180deg, rgba(255,255,255,0.8), #ffffff 40%);
+  padding-top: 10px;
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.printer-first-run-status {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1e40af;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.printer-first-run-skip {
+  background: #2563eb !important;
+  color: #ffffff !important;
+  border-color: #2563eb !important;
+}
+
+.printer-first-run-deep-scan {
+  color: #475569 !important;
+}
+
+@media (max-width: 760px), (max-height: 760px) {
+  .printer-required-card.printer-first-run-compact {
+    width: min(560px, calc(100vw - 20px));
+    padding: 16px;
+  }
+  .printer-required-card.printer-first-run-compact .printer-status-row,
+  .printer-required-card.printer-first-run-compact .settings-form-grid {
+    grid-template-columns: 1fr;
+  }
+}

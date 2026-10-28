@@ -1,18 +1,109 @@
-﻿import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { createRepository } from "./data";
-import type { CancelBillInput, PosRepository, ProductInput } from "./data/repository";
-import type { AppSettings, CartLine, Language, PaymentMethod, Product, Receipt, Sale, SalesSummary, Shift, Staff, StockMovement, StorageHealth } from "./domain/types";
+import type { PosRepository } from "./data/repository";
+import type { AppSettings, Language, Product, SalesSummary, Shift, Staff, StockMovement, StorageHealth } from "./domain/types";
 import { productName, t } from "./i18n";
+import { RetailSalesScreen } from "./RetailSalesScreen";
+import { AppSidebar } from "./AppSidebar";
+import { SalesHistoryScreenV2 } from "./SalesHistoryScreen";
+import { ProductsScreenV2 } from "./ProductsScreen";
+import { ReportsDashboardScreen } from "./ReportsDashboardScreen";
+import { TableManagementScreen } from "./TableManagementScreen";
+import { maskPromptPayId, normalizePromptPayId, resolvePaymentQr } from "./payment-qr";
+import { licensedSalesModes, type CpiposSalesMode } from "./license-entitlements";
+import "./inventory-ui.css";
 
-type View = "sales" | "products" | "salesHistory" | "reports" | "employees" | "settings";
-type Toast = { kind: "ok" | "warn" | "error"; text: string };
+type View = "sales" | "tables" | "products" | "salesHistory" | "reports" | "employees" | "settings";
+const STAFF_ALLOWED_VIEWS = new Set<View>(["sales", "salesHistory"]);
+const canUseAdminViews = (staff: Staff | null) => staff?.role === "owner" || staff?.role === "manager";
+const canAccessView = (staff: Staff | null, view: View) => canUseAdminViews(staff) || STAFF_ALLOWED_VIEWS.has(view);
+const licenseAllowsView = (view: View, salesModes: CpiposSalesMode[]) => view !== "tables" || salesModes.includes("dine-in");
+const cleanEmployeeCode = (value: string) => value.replace(/\s+/g, "").toUpperCase().slice(0, 4);
+const cleanPin = (value: string) => value.replace(/\D/g, "").slice(0, 4);
 const money = (n: number) => `฿${Number(n || 0).toLocaleString("th-TH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const today = () => new Date().toISOString().slice(0, 10);
-const nowTime = () => new Date().toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" });
-const units = ["ชิ้น", "ขวด", "กระป๋อง", "ถุง", "กล่อง", "แพ็ค", "ลัง", "kg", "g", "liter", "ml"];
-const emptyProduct = (barcode = ""): ProductInput => ({ productCode:"", barcode, nameTh:"", nameEn:"", categoryId:"retail", categoryName:"ค้าปลีก", price:0, cost:0, unit:"ชิ้น", stockQuantity:0, minimumStock:0, quantityScale:1, imagePath:"", active:true });
+const nowTime = () => new Date().toLocaleString("th-TH", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const SYSTEM_LOGO = "/icon.png";
 const completeStartupSplash = async () => { try { await invoke("complete_startup_splash"); } catch { /* Browser preview fallback. */ } };
+const STARTUP_REPOSITORY_TIMEOUT_MS = 2500;
+const STARTUP_INITIALIZE_TIMEOUT_MS = 8000;
+const STARTUP_QUERY_TIMEOUT_MS = 5000;
+const withStartupTimeout = <T,>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
+  let timer = 0;
+  return new Promise<T>((resolve, reject) => {
+    timer = window.setTimeout(() => reject(new Error(label)), ms);
+    promise.then(value => {
+      window.clearTimeout(timer);
+      resolve(value);
+    }).catch(error => {
+      window.clearTimeout(timer);
+      reject(error);
+    });
+  });
+};
+const readFileAsDataUrl = (file: File) => new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result || "")); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); });
+const INSTALL_ID_KEY = "cpipos.installation.id";
+const getInstallationId = () => {
+  if (typeof localStorage === "undefined") return "preview-installation";
+  const saved = localStorage.getItem(INSTALL_ID_KEY);
+  if (saved) return saved;
+  const id = crypto.randomUUID();
+  localStorage.setItem(INSTALL_ID_KEY, id);
+  return id;
+};
+const shortHash = (value: string) => {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).toUpperCase().padStart(8, "0");
+};
+const licenseDeviceFingerprint = (settings: AppSettings) => "CP-" + shortHash(settings.deviceId + "|" + settings.deviceName + "|" + getInstallationId());
+const licenseStatusText = (status: string) => status === "active" ? "เปิดใช้งานแล้ว" : status === "pending_activation" ? "รอเปิดใช้งานกับ CpIPOS-IT" : status === "revoked" ? "ถูกระงับ" : status === "expired" ? "หมดอายุ" : "ยังไม่ใส่ลายเส้น";
+const listPrinters = async (): Promise<PrinterInfo[]> => {
+  try {
+    return await invoke<PrinterInfo[]>("list_windows_printers");
+  } catch {
+    return [];
+  }
+};
+const testPrinter = async (printerName: string) => {
+  if (!printerName.trim()) throw new Error("PRINTER_NOT_CONFIGURED");
+  await invoke("print_test_receipt", { printerName });
+};
+type PrinterInfo = { name: string; status: string; isDefault: boolean; isOffline: boolean };
+type ScreenProfile = { width: number; height: number; shortNav: boolean; compactNav: boolean };
+const detectScreenProfile = (): ScreenProfile => {
+  if (typeof window === "undefined") return { width: 1366, height: 768, shortNav: false, compactNav: false };
+  const viewport = window.visualViewport;
+  const width = Math.round(viewport?.width || window.innerWidth || 1366);
+  const height = Math.round(viewport?.height || window.innerHeight || 768);
+  return { width, height, shortNav: height <= 820, compactNav: width < 1180 || height < 700 };
+};
+
+const lowStockBody = (products: Product[], language: Language) => {
+  const names = products.slice(0, 4).map(p => `${productName(language, p)} เหลือ ${p.stockQuantity} ${p.unit}`).join(" · ");
+  return products.length ? `มีสินค้าใกล้หมด/หมด ${products.length} รายการ${names ? `: ${names}` : ""}` : "";
+};
+const requestStockNotification = async (products: Product[], language: Language) => {
+  if (!products.length || !("Notification" in window)) return;
+  const body = lowStockBody(products, language);
+  const title = "CpIPOS แจ้งเตือนสต็อกต่ำ";
+  try {
+    if (Notification.permission === "granted") {
+      new Notification(title, { body, icon: SYSTEM_LOGO });
+      return;
+    }
+    if (Notification.permission === "default") {
+      const permission = await Notification.requestPermission();
+      if (permission === "granted") new Notification(title, { body, icon: SYSTEM_LOGO });
+    }
+  } catch {
+    // Browser/Tauri preview can still show the in-app notice inside the inventory page.
+  }
+};
 
 export default function App() {
   const [repo, setRepo] = useState<PosRepository | null>(null);
@@ -22,75 +113,631 @@ export default function App() {
   const [products, setProducts] = useState<Product[]>([]);
   const [view, setView] = useState<View>("sales");
   const [error, setError] = useState("");
+  const [startupSlow, setStartupSlow] = useState(false);
   const [splashStep, setSplashStep] = useState(0);
+  const [screenProfile, setScreenProfile] = useState<ScreenProfile>(() => detectScreenProfile());
   const [closeShift, setCloseShift] = useState(false);
+  const [logoutOpen, setLogoutOpen] = useState(false);
+  const [salesModeLabel, setSalesModeLabel] = useState("ร้านชำ / ค้าปลีก");
+  const [salesModes, setSalesModes] = useState<CpiposSalesMode[]>(() => licensedSalesModes());
+  const [navCollapsed, setNavCollapsed] = useState<boolean>(() => {
+    const saved = localStorage.getItem("cpipos.nav.collapsed");
+    return saved === null ? detectScreenProfile().compactNav : saved === "1";
+  });
   const [clock, setClock] = useState(nowTime());
   const language: Language = settings?.language || "th";
-  const splashTexts = [t(language,"loading"), t(language,"loadingDb"), t(language,"loadingShift")];
+  const splashTexts = [t(language, "loading"), t(language, "loadingDb"), t(language, "loadingShift")];
   const refreshProducts = async (r = repo) => { if (r) setProducts(await r.listProducts()); };
   const refreshSettings = async (r = repo) => { if (r) setSettings(await r.getSettings()); };
   const refreshShift = async (r = repo) => { if (r) setShift(await r.getActiveShift()); };
 
-  useEffect(() => { const id=window.setInterval(()=>setClock(nowTime()), 30000); return()=>window.clearInterval(id); }, []);
-  useEffect(() => { const id=window.setInterval(()=>setSplashStep(s=>Math.min(2,s+1)), 260); return()=>window.clearInterval(id); }, []);
-  useEffect(() => { let alive = true; const finishStartup = () => window.setTimeout(() => { if (alive) { setSplashStep(3); void completeStartupSplash(); } }, 1700); (async () => { try { const r = await createRepository(); await r.initialize(); const [saved, activeShift, currentSettings, currentProducts] = await Promise.all([r.getSavedSession(), r.getActiveShift(), r.getSettings(), r.listProducts()]); if (!alive) return; setRepo(r); setStaff(saved); setShift(activeShift); setSettings(currentSettings); setProducts(currentProducts); finishStartup(); } catch { setError(t(language,"dbError")); finishStartup(); } })(); return () => { alive = false; }; }, []);
+  useEffect(() => { const id = window.setInterval(() => setClock(nowTime()), 1000); return () => window.clearInterval(id); }, []);
+  useEffect(() => {
+    const applyProfile = () => {
+      const next = detectScreenProfile();
+      setScreenProfile(next);
+      document.documentElement.style.setProperty("--app-vh", next.height + "px");
+      localStorage.setItem("cpipos.screen.currentProfile", JSON.stringify({ ...next, capturedAt: new Date().toISOString() }));
+      if (!localStorage.getItem("cpipos.screen.initialProfile")) {
+        localStorage.setItem("cpipos.screen.initialProfile", JSON.stringify({ ...next, devicePixelRatio: window.devicePixelRatio || 1, capturedAt: new Date().toISOString() }));
+      }
+    };
+    applyProfile();
+    window.addEventListener("resize", applyProfile);
+    window.visualViewport?.addEventListener("resize", applyProfile);
+    return () => { window.removeEventListener("resize", applyProfile); window.visualViewport?.removeEventListener("resize", applyProfile); };
+  }, []);
+  useEffect(() => { const id = window.setInterval(() => setSplashStep(s => s >= 3 ? s : Math.min(2, s + 1)), 260); return () => window.clearInterval(id); }, []);
+  useEffect(() => { localStorage.setItem("cpipos.nav.collapsed", navCollapsed ? "1" : "0"); }, [navCollapsed]);
+  useEffect(() => {
+    const onModeChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ label?: string }>).detail;
+      if (detail?.label) setSalesModeLabel(detail.label);
+    };
+    window.addEventListener("cpipos:sales-mode-changed", onModeChanged);
+    return () => window.removeEventListener("cpipos:sales-mode-changed", onModeChanged);
+  }, []);
+  useEffect(() => {
+    const refreshLicenseViews = () => setSalesModes(licensedSalesModes());
+    const initial = window.setTimeout(refreshLicenseViews, 0);
+    window.addEventListener("cpipos:license-entitlements", refreshLicenseViews);
+    window.addEventListener("cpipos:license-online-status", refreshLicenseViews);
+    return () => {
+      window.clearTimeout(initial);
+      window.removeEventListener("cpipos:license-entitlements", refreshLicenseViews);
+      window.removeEventListener("cpipos:license-online-status", refreshLicenseViews);
+    };
+  }, []);
+  useEffect(() => {
+    if (staff && (!canAccessView(staff, view) || !licenseAllowsView(view, salesModes))) setView("sales");
+  }, [staff, view, salesModes]);
+  useEffect(() => {
+    let alive = true;
+    let guardTimer = 0;
+    const finishStartup = (delayMs = 150) => window.setTimeout(() => {
+      if (!alive) return;
+      window.clearTimeout(guardTimer);
+      setSplashStep(3);
+      void completeStartupSplash();
+    }, delayMs);
+    guardTimer = window.setTimeout(() => {
+      if (!alive) return;
+      setStartupSlow(true);
+      setSplashStep(3);
+      void completeStartupSplash();
+    }, 5500);
+    (async () => {
+      try {
+        const r = await withStartupTimeout(createRepository(), STARTUP_REPOSITORY_TIMEOUT_MS, "REPOSITORY_LOAD_TIMEOUT");
+        await withStartupTimeout(r.initialize(), STARTUP_INITIALIZE_TIMEOUT_MS, "DATABASE_INITIALIZE_TIMEOUT");
+        const [saved, activeShift, currentSettings, currentProducts] = await Promise.all([
+          withStartupTimeout(r.getSavedSession(), STARTUP_QUERY_TIMEOUT_MS, "SESSION_LOAD_TIMEOUT"),
+          withStartupTimeout(r.getActiveShift(), STARTUP_QUERY_TIMEOUT_MS, "SHIFT_LOAD_TIMEOUT"),
+          withStartupTimeout(r.getSettings(), STARTUP_QUERY_TIMEOUT_MS, "SETTINGS_LOAD_TIMEOUT"),
+          withStartupTimeout(r.listProducts(), STARTUP_QUERY_TIMEOUT_MS, "PRODUCTS_LOAD_TIMEOUT"),
+        ]);
+        if (!alive) return;
+        setRepo(r);
+        setStaff(saved);
+        setShift(activeShift);
+        setSettings(currentSettings);
+        setProducts(currentProducts);
+        setStartupSlow(false);
+        finishStartup();
+      } catch (err) {
+        if (!alive) return;
+        const reason = err instanceof Error ? err.message : "STARTUP_FAILED";
+        setError(`${t(language, "dbError")} (${reason})`);
+        finishStartup(0);
+      }
+    })();
+    return () => { alive = false; window.clearTimeout(guardTimer); };
+  }, []);
 
   if (splashStep < 3) return <main className="splash"><div className="splash-card"><img src="/icon.png" alt="CpIPOS" /><h1>CpIPOS Desktop</h1><p>{splashTexts[splashStep]}</p></div></main>;
-  if (error || !repo || !settings) return <main className="center-screen"><section className="error-card"><h1>{t(language,"dbError")}</h1><p>{error || t(language,"dbError")}</p></section></main>;
+  if (error || !repo || !settings) return <main className="center-screen"><section className="error-card"><h1>{startupSlow ? "กำลังเปิดระบบช้ากว่าปกติ" : t(language, "dbError")}</h1><p>{error || "กำลังโหลดฐานข้อมูลต่อในหน้าหลัก หากนานเกิน 10 วินาทีให้ปิดแล้วเปิดใหม่"}</p><button className="big-primary" onClick={() => window.location.reload()}>ลองเปิดใหม่</button></section></main>;
   if (!staff) return <LoginScreen repo={repo} settings={settings} language={language} onLogin={async s => { await repo.saveSession(s); setStaff(s); await refreshShift(repo); }} />;
+  if (!settings.printerSetupConfirmed) return <PrinterSetupRequiredScreen repo={repo} staff={staff} settings={settings} language={language} refreshSettings={() => refreshSettings(repo)} onLogout={async () => { await repo.clearSession(staff, shift || undefined, settings.deviceId); setStaff(null); }} />;
   if (!shift) return <ShiftScreen repo={repo} staff={staff} settings={settings} language={language} onOpen={async s => { setShift(s); setView("sales"); }} />;
-  const nav: { id: View; label: string }[] = [{ id:"sales", label:t(language,"sales") }, { id:"products", label:t(language,"products") }, { id:"salesHistory", label:t(language,"history") }, { id:"reports", label:t(language,"reports") }, { id:"employees", label:t(language,"employees") }, { id:"settings", label:t(language,"settings") }];
-  return <main className="app-shell"><aside className="side-nav"><div className="side-brand"><img src="/icon.png" alt="" /><div><strong>CpIPOS</strong><small>Desktop POS</small></div></div>{nav.map(n=><button key={n.id} className={view===n.id?"active":""} onClick={()=>setView(n.id)}>{n.label}</button>)}</aside><section className="workspace"><header className="topbar"><div><strong>CpIPOS</strong><span>{settings.storeName} / {settings.branchName}</span></div><div className="topbar-meta"><span>{t(language,"cashier")}: {staff.displayName}</span><span>{t(language,"role")}: {staff.role}</span><span>{t(language,"currentShift")}: {shift.id.slice(0,8)}</span><span>{clock}</span><button onClick={()=>setCloseShift(true)}>{t(language,"closeShift")}</button></div></header><div className="view-body">{view === "sales" && <SalesScreen repo={repo} staff={staff} shift={shift} settings={settings} products={products} language={language} refreshProducts={()=>refreshProducts(repo)} />}{view === "products" && <ProductsScreen repo={repo} staff={staff} products={products} language={language} refreshProducts={()=>refreshProducts(repo)} />}{view === "salesHistory" && <SalesHistoryScreen repo={repo} staff={staff} shift={shift} settings={settings} language={language} />}{view === "reports" && <ReportsScreen repo={repo} language={language} />}{view === "employees" && <EmployeesScreen repo={repo} staff={staff} language={language} />}{view === "settings" && <SettingsScreen repo={repo} staff={staff} settings={settings} language={language} refreshSettings={()=>refreshSettings(repo)} />}</div></section>{closeShift && <CloseShiftModal repo={repo} staff={staff} shift={shift} settings={settings} language={language} onClose={()=>setCloseShift(false)} onConfirm={async()=>{await repo.closeShift(staff, settings.deviceId); await repo.clearSession(staff, shift, settings.deviceId); setCloseShift(false); setShift(null); setStaff(null);}} />}</main>;
+
+  const nav = [
+    { id: "sales", label: t(language, "sales"), icon: "sale" as const },
+    { id: "tables", label: language === "th" ? "จัดการโต๊ะ" : "Tables", icon: "tables" as const },
+    { id: "products", label: t(language, "products"), icon: "stock" as const },
+    { id: "salesHistory", label: t(language, "history"), icon: "history" as const },
+    { id: "reports", label: t(language, "reports"), icon: "report" as const },
+    { id: "employees", label: t(language, "employees"), icon: "staff" as const },
+    { id: "settings", label: t(language, "settings"), icon: "settings" as const },
+  ];
+
+  const hasFullAccess = canUseAdminViews(staff);
+  const roleVisibleNav = hasFullAccess ? nav : nav.filter(item => STAFF_ALLOWED_VIEWS.has(item.id as View));
+  const visibleNav = roleVisibleNav.filter(item => licenseAllowsView(item.id as View, salesModes));
+  const activeView = canAccessView(staff, view) && licenseAllowsView(view, salesModes) ? view : "sales";
+  const effectiveNavCollapsed = screenProfile.compactNav || navCollapsed;
+  const shellClassName = "app-shell " + (effectiveNavCollapsed ? "nav-collapsed " : "") + (screenProfile.shortNav ? "nav-short " : "") + (screenProfile.compactNav ? "nav-auto-compact" : "");
+
+  return <main className={shellClassName}>
+    <AppSidebar collapsed={effectiveNavCollapsed} compactLocked={screenProfile.compactNav} active={activeView} items={visibleNav} onToggle={() => { if (!screenProfile.compactNav) setNavCollapsed(v => !v); }} onSelect={id => { const next = id as View; if (canAccessView(staff, next)) setView(next); }} onCloseShift={() => setCloseShift(true)} onLogout={() => setLogoutOpen(true)} />
+    <section className="workspace">
+      <header className="topbar">
+        <div className="topbar-brand"><strong>CpIPOS</strong><span>{settings.storeName} / {settings.branchName}</span></div>
+        {activeView === "sales" && salesModes.length > 1 && <button className="topbar-mode-switch" onClick={() => window.dispatchEvent(new CustomEvent("cpipos:open-sales-mode-picker"))} title="เลือกหรือสลับโหมดการขาย">
+          <span className="topbar-mode-switch__icon">⌂</span>
+          <span><small>เลือก / สลับโหมด</small><strong>{salesModeLabel}</strong></span>
+          <b>⌄</b>
+        </button>}
+        <div className="topbar-meta"><span>{t(language, "cashier")}: {staff.displayName}</span><span>{t(language, "role")}: {staff.role}</span><span>{t(language, "currentShift")}: {shift.id.slice(0, 8)}</span><span>วันที่/เวลา: {clock}</span><button onClick={() => setCloseShift(true)}>{t(language, "closeShift")}</button></div>
+      </header>
+      <div className={`view-body ${activeView === "sales" ? "sales-view" : ""} ${activeView === "reports" ? "reports-view" : ""}`}>
+        {activeView === "sales" && <RetailSalesScreen repo={repo} staff={staff} shift={shift} settings={settings} products={products} language={language} refreshProducts={() => refreshProducts(repo)} />}
+        {activeView === "tables" && salesModes.includes("dine-in") && <TableManagementScreen language={language} />}
+        {activeView === "products" && <ProductsScreenV2 repo={repo} staff={staff} products={products} language={language} refreshProducts={() => refreshProducts(repo)} requestStockNotification={requestStockNotification} />}
+        {activeView === "salesHistory" && <SalesHistoryScreenV2 repo={repo} staff={staff} shift={shift} settings={settings} language={language} />}
+        {activeView === "reports" && <ReportsScreen repo={repo} language={language} />}
+        {activeView === "employees" && <EmployeesScreen repo={repo} staff={staff} language={language} />}
+        {activeView === "settings" && <SettingsScreen repo={repo} staff={staff} settings={settings} language={language} refreshSettings={() => refreshSettings(repo)} />}
+      </div>
+    </section>
+    {closeShift && <CloseShiftModal repo={repo} staff={staff} shift={shift} settings={settings} language={language} onClose={() => setCloseShift(false)} onConfirm={async () => { await repo.closeShift(staff, settings.deviceId); await repo.clearSession(staff, shift, settings.deviceId); setCloseShift(false); setShift(null); setStaff(null); }} />}
+    {logoutOpen && <LogoutModal repo={repo} staff={staff} shift={shift} settings={settings} onClose={() => setLogoutOpen(false)} onConfirm={async () => { await repo.clearSession(staff, shift, settings.deviceId); setLogoutOpen(false); setView("sales"); setStaff(null); }} />}
+  </main>;
 }
 
 function LoginScreen({ repo, settings, language, onLogin }: { repo: PosRepository; settings: AppSettings; language: Language; onLogin: (staff: Staff) => void }) {
-  const [code,setCode]=useState(""); const [pin,setPin]=useState(""); const [error,setError]=useState("");
-  const submit=async()=>{ const s=await repo.verifyPin(pin); if(s && (!code || s.code.toLowerCase()===code.toLowerCase())) onLogin(s); else {setError(t(language,"pinWrong")); setPin("");} };
-  const press=(v:string)=>{ if(v==="back") setPin(pin.slice(0,-1)); else if(v==="ok") submit(); else if(pin.length<8) setPin(pin+v); };
-  return <main className="center-screen"><section className="login-card pos-card"><img className="brand-logo" src="/icon.png" alt="CpIPOS" /><h1>{settings.storeName}</h1><p>{settings.branchName}</p><label>{t(language,"employeeCode")}<input value={code} onChange={e=>setCode(e.target.value)} autoFocus /></label><p>{t(language,"loginHint")}</p><div className="pin-dots">{[0,1,2,3].map(i=><span key={i} className={pin.length>i?"filled":""}/>)}</div>{error&&<ErrorMessage text={error}/>}<div className="keypad">{"123456789".split("").map(n=><button key={n} onClick={()=>press(n)}>{n}</button>)}<button onClick={()=>press("0")}>0</button><button onClick={()=>press("back")}>⌫</button><button className="primary" onClick={()=>press("ok")}>OK</button></div><p className="warning">{t(language,"demoPin")}</p></section></main>;
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    const loginPin = cleanPin(pin);
+    if (loginPin.length !== 4) {
+      setError("กรอก PIN 4 ตัว");
+      return;
+    }
+    try {
+      setBusy(true);
+      setError("");
+      const s = await repo.verifyPin(loginPin);
+      if (s) onLogin(s);
+      else {
+        setError("PIN ไม่ถูกต้อง");
+        setPin("");
+        setBusy(false);
+      }
+    } catch {
+      setError("เข้าสู่ระบบไม่สำเร็จ");
+      setBusy(false);
+    }
+  };
+  return <main className="center-screen"><section className="login-card pos-card"><img className="brand-logo" src="/icon.png" alt="CpIPOS" /><h1>{settings.storeName}</h1><p>{settings.branchName}</p><label>รหัสเข้าระบบ / PIN<input value={pin} maxLength={4} inputMode="numeric" type="password" onChange={e => { setPin(cleanPin(e.target.value)); setError(""); }} onKeyDown={e => { if (e.key === "Enter") void submit(); }} autoFocus placeholder="กรอก PIN 4 ตัว" /></label>{error && <ErrorMessage text={error} />}<button className="big-primary" disabled={busy || pin.length !== 4} onClick={() => void submit()}>{busy ? t(language, "submitBusy") : "ยืนยันเข้าระบบ"}</button><p className="warning">PIN เริ่มต้นสำหรับเครื่องใหม่ให้ดูจากคู่มือผู้ดูแล และควรเปลี่ยนทันทีหลังเข้าใช้งานครั้งแรก</p></section></main>;
 }
-
 function ShiftScreen({ repo, staff, settings, language, onOpen }: { repo: PosRepository; staff: Staff; settings: AppSettings; language: Language; onOpen: (shift: Shift) => void }) {
-  const [cash,setCash]=useState("0"); const [busy,setBusy]=useState(false);
-  return <main className="center-screen"><section className="shift-card pos-card"><span className="status-pill">{t(language,"offlineReady")}</span><h1>{t(language,"openShift")}</h1><div className="info-grid"><Metric label={t(language,"cashier")} value={staff.displayName}/><Metric label="Branch" value={settings.branchName}/><Metric label="Device" value={settings.deviceName}/></div><label>{t(language,"openingCash")}<input type="number" value={cash} onChange={e=>setCash(e.target.value)} /></label><button className="big-primary" disabled={busy} onClick={async()=>{setBusy(true); onOpen(await repo.openShift(Number(cash||0),staff,settings.deviceId));}}>{busy?t(language,"submitBusy"):t(language,"open")}</button></section></main>;
+  const [cash, setCash] = useState("0");
+  const [busy, setBusy] = useState(false);
+  return <main className="center-screen"><section className="shift-card pos-card"><span className="status-pill">{t(language, "offlineReady")}</span><h1>{t(language, "openShift")}</h1><div className="info-grid"><Metric label={t(language, "cashier")} value={staff.displayName} /><Metric label="Branch" value={settings.branchName} /><Metric label="Device" value={settings.deviceName} /></div><label>{t(language, "openingCash")}<input type="number" value={cash} onChange={e => setCash(e.target.value)} /></label><button className="big-primary" disabled={busy} onClick={async () => { setBusy(true); onOpen(await repo.openShift(Number(cash || 0), staff, settings.deviceId)); }}>{busy ? t(language, "submitBusy") : t(language, "open")}</button></section></main>;
 }
 
-function SalesScreen({ repo, staff, shift, settings, products, language, refreshProducts }: { repo: PosRepository; staff: Staff; shift: Shift; settings: AppSettings; products: Product[]; language: Language; refreshProducts: () => Promise<void> }) {
-  const inputRef=useRef<HTMLInputElement>(null); const [cart,setCart]=useState<CartLine[]>([]); const [barcode,setBarcode]=useState(""); const [query,setQuery]=useState(""); const [cat,setCat]=useState("all"); const [toast,setToast]=useState<Toast|null>(null); const [choice,setChoice]=useState(false); const [pay,setPay]=useState<PaymentMethod|null>(null); const [receipt,setReceipt]=useState<Receipt|null>(null); const [cancelOpen,setCancelOpen]=useState(false); const [unknown,setUnknown]=useState(""); const [addProduct,setAddProduct]=useState<ProductInput|null>(null);
-  const categories=useMemo(()=>[{id:"all",label:t(language,"all")},...Array.from(new Map(products.map(p=>[p.categoryId,{id:p.categoryId,label:p.categoryName}])).values())],[products,language]);
-  const visible=products.filter(p=>p.active && (cat==="all"||p.categoryId===cat) && (!query || `${p.productCode} ${p.barcode||""} ${productName(language,p)} ${p.categoryName}`.toLowerCase().includes(query.toLowerCase())));
-  const total=cart.reduce((s,l)=>s+l.quantity*l.price,0);
-  const show=(kind:Toast["kind"],text:string)=>{setToast({kind,text}); window.setTimeout(()=>setToast(null),2400);};
-  const focusScan=()=>window.setTimeout(()=>inputRef.current?.focus(),60);
-  const add=(p:Product,q=1)=>{setCart(rows=>rows.some(x=>x.id===p.id)?rows.map(x=>x.id===p.id?{...x,quantity:Number((x.quantity+q).toFixed(3))}:x):[...rows,{...p,quantity:q}]); show("ok",`${t(language,"scan")}: ${productName(language,p)}`); focusScan();};
-  const scan=async()=>{ const code=barcode.trim().replace(/\s+/g,""); if(!code) return; const p=await repo.findProductByBarcode(code); setBarcode(""); if(p) add(p); else {setUnknown(code); show("warn",t(language,"unknownBarcode"));} focusScan(); };
-  const remove=async(line:CartLine)=>{await repo.recordCartItemRemoved(line,line.quantity,staff,shift,settings.deviceId); setCart(rows=>rows.filter(x=>x.id!==line.id)); focusScan();};
-  const complete=async(method:PaymentMethod,paid:number)=>{ const sale=await repo.checkout({items:cart.map(l=>({productId:l.id,name:productName(language,l),quantity:l.quantity,unitPrice:l.price})),paymentMethod:method,paid,staff,shift,deviceId:settings.deviceId}); setCart([]); setPay(null); setChoice(false); await refreshProducts(); setReceipt(await repo.getReceipt(sale.id)); show("ok",`${t(language,"saleStored")} · ${t(language,"noInternet")}`); focusScan(); };
-  return <section className="sales-grid pos-sales"><div className="catalog"><div className="scan-row scan-zone"><label>{t(language,"scan")}<input ref={inputRef} value={barcode} onChange={e=>setBarcode(e.target.value)} onKeyDown={e=>{if(e.key==="Enter") scan();}} autoFocus /></label><label>{t(language,"search")}<input value={query} onChange={e=>setQuery(e.target.value)} /></label><button onClick={scan}>{t(language,"scan")}</button></div><div className="chips">{categories.map(c=><button key={c.id} className={cat===c.id?"active":""} onClick={()=>setCat(c.id)}>{c.label}</button>)}</div><div className="products">{visible.length?visible.map(p=><button key={p.id} className="product-card" onClick={()=>add(p)}><span>{productName(language,p).slice(0,1)}</span><strong>{productName(language,p)}</strong><small>{p.productCode} {p.barcode?`· ${p.barcode}`:""}</small><b>{money(p.price)}</b><em className={stockClass(p)}>{t(language,"stock")}: {p.stockQuantity} {p.unit}</em></button>):<EmptyState text={t(language,"empty")}/>}</div></div><aside className="cart sticky-cart"><header><h2>{t(language,"cart")}</h2><span>{cart.length}</span></header><div className="cart-list">{!cart.length&&<EmptyState text={t(language,"emptyCart")}/>} {cart.map(line=><div className="cart-line" key={line.id}><div><strong>{productName(language,line)}</strong><small>{money(line.price)} / {line.unit}</small></div><div className="qty"><button onClick={()=>setCart(rows=>rows.map(x=>x.id===line.id?{...x,quantity:Math.max(0.001,Number((x.quantity-1).toFixed(3)))}:x))}>-</button><input className="qty-input" type="number" step="0.001" min="0.001" value={line.quantity} onChange={e=>setCart(rows=>rows.map(x=>x.id===line.id?{...x,quantity:Math.max(0.001,Number(e.target.value||1))}:x))}/><button onClick={()=>setCart(rows=>rows.map(x=>x.id===line.id?{...x,quantity:Number((x.quantity+1).toFixed(3))}:x))}>+</button></div><strong>{money(line.price*line.quantity)}</strong><button className="danger" onClick={()=>remove(line)}>×</button></div>)}</div><footer><div className="total"><span>{t(language,"total")}</span><strong>{money(total)}</strong></div><button className="primary" disabled={!cart.length} onClick={()=>setChoice(true)}>{t(language,"checkout")}</button><button className="danger" disabled={!cart.length} onClick={()=>setCancelOpen(true)}>{t(language,"cancelBill")}</button></footer></aside>{toast&&<ToastView toast={toast}/>} {choice&&<PaymentChoiceModal language={language} total={total} onClose={()=>setChoice(false)} onSelect={m=>{setChoice(false);setPay(m);}}/>}{pay&&<PaymentModal language={language} method={pay} total={total} onClose={()=>{setPay(null);focusScan();}} onConfirm={paid=>complete(pay,paid)}/>} {receipt&&<ReceiptModal receipt={receipt} language={language} onClose={()=>{setReceipt(null);focusScan();}}/>}{cancelOpen&&<CancelBillModal repo={repo} cart={cart} staff={staff} shift={shift} settings={settings} language={language} onClose={()=>setCancelOpen(false)} onDone={()=>{setCart([]);setCancelOpen(false);focusScan();}}/>}{unknown&&<UnknownBarcodeModal code={unknown} language={language} onClose={()=>{setUnknown("");focusScan();}} onAdd={()=>{setAddProduct(emptyProduct(unknown));setUnknown("");}}/>}{addProduct&&<ProductModal repo={repo} staff={staff} language={language} product={addProduct} onClose={()=>{setAddProduct(null);focusScan();}} onSaved={async()=>{setAddProduct(null);await refreshProducts();focusScan();}}/>}</section>;
+function ReportsScreen({ repo, language }: { repo: PosRepository; language: Language }) {
+  return <ReportsDashboardScreen repo={repo} language={language} />;
 }
 
-function PaymentChoiceModal({language,total,onClose,onSelect}:{language:Language;total:number;onClose:()=>void;onSelect:(m:PaymentMethod)=>void}){return <Modal title={t(language,"pay")} onClose={onClose}><div className="amount-hero"><span>{t(language,"total")}</span><strong>{money(total)}</strong></div><div className="method-grid"><button onClick={()=>onSelect("cash")}><strong>{t(language,"cash")}</strong><small>{t(language,"received")} / {t(language,"change")}</small></button><button onClick={()=>onSelect("transfer")}><strong>{t(language,"transfer")}</strong><small>{t(language,"recordOnly")}</small></button><button onClick={()=>onSelect("promptpay")}><strong>{t(language,"promptpay")}</strong><small>{t(language,"recordOnly")}</small></button><button onClick={()=>onSelect("card")}><strong>{t(language,"card")}</strong><small>{t(language,"recordOnly")}</small></button></div><div className="actions"><button className="secondary" onClick={onClose}>{t(language,"back")}</button></div></Modal>}
-function PaymentModal({language,method,total,onClose,onConfirm}:{language:Language;method:PaymentMethod;total:number;onClose:()=>void;onConfirm:(paid:number)=>Promise<void>}){const [paid,setPaid]=useState(method==="cash"?"":String(total));const [busy,setBusy]=useState(false);const [error,setError]=useState("");const amount=Number(paid||0);const ok=method!=="cash"||amount>=total;const add=(v:string)=>setPaid(p=>v==="back"?p.slice(0,-1):`${p}${v}`);return <Modal title={`${t(language,"pay")} · ${t(language,method)}`} onClose={busy?()=>{}:onClose}><div className="amount-hero"><span>{t(language,"total")}</span><strong>{money(total)}</strong></div>{method!=="cash"&&<p className="warning">{t(language,"recordOnly")}</p>}<label>{t(language,"received")}<input type="number" disabled={method!=="cash"} value={paid} onChange={e=>setPaid(e.target.value)}/></label>{method==="cash"&&<><div className="quick"><button onClick={()=>setPaid(String(total))}>{t(language,"exactAmount")}</button>{[100,200,500,1000].map(v=><button key={v} onClick={()=>setPaid(String(v))}>{v}</button>)}</div><div className="num-pad">{"123456789".split("").map(n=><button key={n} onClick={()=>add(n)}>{n}</button>)}<button onClick={()=>add("00")}>00</button><button onClick={()=>add("0")}>0</button><button onClick={()=>add("back")}>⌫</button></div><div className="change-box"><span>{t(language,"change")}</span><strong>{money(Math.max(0,amount-total))}</strong></div></>}{error&&<ErrorMessage text={error}/>}<div className="actions"><button disabled={!ok||busy} onClick={async()=>{try{setBusy(true);await onConfirm(method==="cash"?amount:total)}catch(e){setError(e instanceof Error?e.message:String(e));setBusy(false);}}}>{busy?t(language,"submitBusy"):t(language,"confirmPayment")}</button><button className="secondary" disabled={busy} onClick={onClose}>{t(language,"back")}</button></div></Modal>}
-function UnknownBarcodeModal({code,language,onClose,onAdd}:{code:string;language:Language;onClose:()=>void;onAdd:()=>void}){return <Modal title={t(language,"unknownBarcode")} onClose={onClose}><div className="amount-hero"><span>{t(language,"barcode")}</span><strong>{code}</strong></div><div className="actions"><button onClick={onAdd}>{t(language,"addProduct")}</button><button className="secondary" onClick={onClose}>{t(language,"close")}</button></div></Modal>}
-function CancelBillModal({ repo, cart, staff, shift, settings, language, onClose, onDone }: { repo: PosRepository; cart: CartLine[]; staff: Staff; shift: Shift; settings: AppSettings; language: Language; onClose: () => void; onDone: () => void }){const[reason,setReason]=useState("");const[pin,setPin]=useState("");const[busy,setBusy]=useState(false);const[error,setError]=useState("");return <Modal title={t(language,"cancelBill")} onClose={busy?()=>{}:onClose}><p className="warning">ยกเลิกก่อนชำระเงินจะไม่ตัดสต็อก</p><label>PIN<input value={pin} onChange={e=>setPin(e.target.value)}/></label><label>{t(language,"reason")}<input value={reason} onChange={e=>setReason(e.target.value)}/></label>{error&&<ErrorMessage text={error}/>}<div className="actions"><button disabled={busy||!pin||!reason} onClick={async()=>{setBusy(true);const ok=await repo.verifyPin(pin);if(!ok){setError("AUTHORIZED_PIN_REQUIRED");setBusy(false);return}const input:CancelBillInput={items:cart.map(l=>({productId:l.id,name:productName(language,l),quantity:l.quantity,unitPrice:l.price})),reason,staff:ok,shift,deviceId:settings.deviceId};await repo.cancelBill(input);onDone();}}>{busy?t(language,"submitBusy"):t(language,"confirm")}</button><button className="secondary" disabled={busy} onClick={onClose}>{t(language,"back")}</button></div></Modal>}
+function EmployeesScreen({ repo, staff, language }: { repo: PosRepository; staff: Staff; language: Language }) {
+  const [rows, setRows] = useState<Staff[]>([]);
+  const [formTarget, setFormTarget] = useState<Staff | "new" | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Staff | null>(null);
+  const load = async () => setRows(await repo.listEmployees());
+  useEffect(() => { void load(); }, []);
+  return <section className="panel employees-page">
+    <div className="employees-toolbar">
+      <div><h1>{t(language, "employees")}</h1><p>{t(language, "demoPin")}</p></div>
+      <button className="inventory-primary" onClick={() => setFormTarget("new")}>เพิ่มพนักงาน</button>
+    </div>
+    <div className="employees-table-shell">
+      <div className="employees-table-summary"><strong>{rows.length.toLocaleString("th-TH")} รายการ</strong><span>จัดการรหัสพนักงาน สิทธิ์ และสถานะใช้งาน</span></div>
+      <div className="employees-table-wrap">
+        <table className="employees-table"><thead><tr><th>ชื่อพนักงาน</th><th>รหัส</th><th>สิทธิ์</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody>{rows.map(row => {
+          const isCurrent = row.id === staff.id;
+          return <tr key={row.id}><td><strong>{row.displayName}</strong>{isCurrent && <small>ผู้ใช้งานปัจจุบัน</small>}</td><td>{row.code}</td><td>{row.role}</td><td><span className={row.active !== false ? "badge normal" : "badge cancelled"}>{row.active !== false ? t(language, "active") : t(language, "inactive")}</span></td><td><div className="inventory-actions"><button className="inventory-action edit" onClick={() => setFormTarget(row)}>แก้ไข</button><button className="inventory-action delete" disabled={isCurrent} onClick={() => setDeleteTarget(row)}>ลบ</button></div></td></tr>;
+        })}</tbody></table>
+      </div>
+    </div>
+    {formTarget && <EmployeeFormModal repo={repo} staff={staff} language={language} initial={formTarget === "new" ? undefined : formTarget} onClose={() => setFormTarget(null)} onSaved={async () => { setFormTarget(null); await load(); }} />}
+    {deleteTarget && <DeleteEmployeeModal repo={repo} staff={staff} employee={deleteTarget} onClose={() => setDeleteTarget(null)} onDeleted={async () => { setDeleteTarget(null); await load(); }} />}
+  </section>;
+}
 
-function ProductsScreen({repo,staff,products,language,refreshProducts}:{repo:PosRepository;staff:Staff;products:Product[];language:Language;refreshProducts:()=>Promise<void>}){const[editing,setEditing]=useState<Product|ProductInput|null>(null);const[stockFor,setStockFor]=useState<Product|null>(null);return <section className="panel"><div className="toolbar"><h1>{t(language,"products")}</h1><button onClick={()=>setEditing(emptyProduct())}>{t(language,"addProduct")}</button></div><div className="stock-list">{products.map(p=><article className="stock-card" key={p.id}><div className="product-thumb">{p.imagePath?<img src={p.imagePath}/>:productName(language,p).slice(0,1)}</div><div><strong>{productName(language,p)}</strong><small>{p.productCode} · {p.barcode||"-"}</small><small>{money(p.price)} · {p.stockQuantity} {p.unit} · {stockLabel(language,p)}</small></div><span className={`badge ${stockClass(p)}`}>{stockLabel(language,p)}</span><button onClick={()=>setStockFor(p)}>{t(language,"adjustment")}</button><button onClick={()=>setEditing(p)}>{t(language,"edit")}</button></article>)}</div>{editing&&<ProductModal repo={repo} staff={staff} language={language} product={editing} onClose={()=>setEditing(null)} onSaved={async()=>{setEditing(null);await refreshProducts();}}/>}{stockFor&&<StockModal repo={repo} staff={staff} product={stockFor} language={language} onClose={()=>setStockFor(null)} onDone={async()=>{setStockFor(null);await refreshProducts();}}/>}</section>}
-function ProductModal({repo,staff,language,product,onClose,onSaved}:{repo:PosRepository;staff:Staff;language:Language;product:Product|ProductInput;onClose:()=>void;onSaved:()=>void}){const[form,setForm]=useState<Product|ProductInput>({...product});const[error,setError]=useState("");const[duplicate,setDuplicate]=useState<Product|null>(null);const[busy,setBusy]=useState(false);const set=(key:keyof ProductInput,value:string|number|boolean)=>setForm(f=>({...f,[key]:value}));const checkBarcode=async()=>{const code=(form.barcode||"").trim();if(!code)return;const found=await repo.findProductByBarcode(code);if(found&&found.id!==('id'in form?form.id:undefined))setDuplicate(found);else setDuplicate(null)};const save=async()=>{try{setBusy(true);setError("");if(duplicate)throw new Error(t(language,"duplicateBarcode"));if(!form.productCode){setError(t(language,"duplicateCode"));return}if(!form.nameTh){setError(t(language,"nameTh"));return}if('id'in form&&form.id)await repo.updateProduct(form as Product,staff);else await repo.createProduct(form as ProductInput,staff);onSaved()}catch(e){setError(e instanceof Error?e.message:String(e));setBusy(false)}};return <Modal title={'id'in form&&form.id?t(language,"edit"):t(language,"addProduct")} onClose={busy?()=>{}:onClose}><fieldset><legend>{t(language,"productInfo")}</legend><div className="form-grid"><label>{t(language,"productCode")}<input value={form.productCode} onChange={e=>set("productCode",e.target.value)}/></label><label>{t(language,"barcode")}<input value={form.barcode||""} onBlur={checkBarcode} onKeyDown={e=>{if(e.key==="Enter")checkBarcode()}} onChange={e=>{set("barcode",e.target.value);setDuplicate(null)}}/></label><label>{t(language,"nameTh")}<input value={form.nameTh} onChange={e=>set("nameTh",e.target.value)}/></label><label>{t(language,"nameEn")}<input value={form.nameEn||""} onChange={e=>set("nameEn",e.target.value)}/></label><label>{t(language,"category")}<input value={form.categoryName} onChange={e=>{set("categoryName",e.target.value);set("categoryId",e.target.value.toLowerCase().replace(/\s+/g,"-")||"retail")}}/></label><label>{t(language,"active")}<select value={form.active===false?"0":"1"} onChange={e=>set("active",e.target.value==="1")}><option value="1">{t(language,"active")}</option><option value="0">{t(language,"inactive")}</option></select></label></div></fieldset><fieldset><legend>{t(language,"pricing")}</legend><div className="form-grid"><label>{t(language,"price")}<input type="number" value={form.price} onChange={e=>set("price",Number(e.target.value))}/></label><label>{t(language,"cost")}<input type="number" value={form.cost} onChange={e=>set("cost",Number(e.target.value))}/></label></div></fieldset><fieldset><legend>{t(language,"stockSection")}</legend><div className="form-grid"><label>{t(language,"stock")}<input type="number" step="0.001" value={form.stockQuantity} onChange={e=>set("stockQuantity",Number(e.target.value))}/></label><label>{t(language,"unit")}<select value={form.unit} onChange={e=>set("unit",e.target.value)}>{units.map(u=><option key={u}>{u}</option>)}</select></label><label>{t(language,"minStock")}<input type="number" step="0.001" value={form.minimumStock} onChange={e=>set("minimumStock",Number(e.target.value))}/></label></div></fieldset>{duplicate&&<p className="warning">{t(language,"duplicateBarcode")}: {duplicate.productCode} {productName(language,duplicate)} <button onClick={()=>{setForm(duplicate);setDuplicate(null)}}>{t(language,"openExisting")}</button></p>}{error&&<ErrorMessage text={error}/>}<div className="actions modal-footer"><button className="secondary" disabled={busy} onClick={onClose}>{t(language,"back")}</button><button disabled={busy||!!duplicate} onClick={save}>{busy?t(language,"submitBusy"):t(language,"save")}</button></div></Modal>}
-function StockModal({repo,staff,product,language,onClose,onDone}:{repo:PosRepository;staff:Staff;product:Product;language:Language;onClose:()=>void;onDone:()=>void}){const[type,setType]=useState<"STOCK_IN"|"STOCK_OUT"|"ADJUSTMENT">("STOCK_IN");const[amount,setAmount]=useState("1");const[reason,setReason]=useState("");const[busy,setBusy]=useState(false);return <Modal title={`${t(language,"stockSection")} · ${productName(language,product)}`} onClose={busy?()=>{}:onClose}><div className="form-grid"><label>{t(language,"status")}<select value={type} onChange={e=>setType(e.target.value as typeof type)}><option value="STOCK_IN">{t(language,"stockIn")}</option><option value="STOCK_OUT">{t(language,"stockOut")}</option><option value="ADJUSTMENT">{t(language,"adjustment")}</option></select></label><label>{t(language,"amount")}<input type="number" step="0.001" value={amount} onChange={e=>setAmount(e.target.value)}/></label></div><label>{t(language,"reason")}<input value={reason} onChange={e=>setReason(e.target.value)}/></label><div className="actions"><button disabled={busy||!reason} onClick={async()=>{setBusy(true);await repo.applyStockMovement({productId:product.id,movementType:type,quantity:Number(amount||0),reason,staff});onDone();}}>{busy?t(language,"submitBusy"):t(language,"save")}</button><button className="secondary" disabled={busy} onClick={onClose}>{t(language,"back")}</button></div></Modal>}
+function EmployeeFormModal({ repo, staff, language, initial, onClose, onSaved }: { repo: PosRepository; staff: Staff; language: Language; initial?: Staff; onClose: () => void; onSaved: () => Promise<void> }) {
+  const [code, setCode] = useState(initial?.code || "");
+  const [name, setName] = useState(initial?.displayName || "");
+  const [pin, setPin] = useState("");
+  const [role, setRole] = useState<Staff["role"]>(initial?.role || "staff");
+  const [active, setActive] = useState(initial?.active !== false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const submit = async () => {
+    const employeeCode = cleanEmployeeCode(code);
+    if (!employeeCode || !name.trim()) { setError("กรอกรหัสพนักงานและชื่อพนักงาน"); return; }
+    if (employeeCode.length > 4) { setError("รหัสพนักงานต้องไม่เกิน 4 ตัว"); return; }
+    if (!initial && !pin) { setError("กรอก PIN 4 ตัวสำหรับพนักงานใหม่"); return; }
+    if (pin && pin.length !== 4) { setError("PIN ต้องเป็นตัวเลข 4 ตัว"); return; }
+    setBusy(true);
+    setError("");
+    try {
+      await repo.saveEmployee({ id: initial?.id, code: employeeCode, displayName: name.trim(), role, active, demoPin: pin || undefined }, staff);
+      await onSaved();
+    } catch (err) {
+      setError(err instanceof Error && err.message === "EMPLOYEE_CODE_EXISTS" ? "รหัสพนักงานนี้ถูกใช้แล้ว" : err instanceof Error && err.message === "EMPLOYEE_CODE_TOO_LONG" ? "รหัสพนักงานต้องไม่เกิน 4 ตัว" : err instanceof Error && err.message === "EMPLOYEE_PIN_INVALID" ? "PIN ต้องเป็นตัวเลข 4 ตัว" : err instanceof Error && err.message === "EMPLOYEE_PIN_REQUIRED" ? "กรอก PIN 4 ตัวสำหรับพนักงานใหม่" : "บันทึกพนักงานไม่สำเร็จ");
+      setBusy(false);
+    }
+  };
+  return <Modal title={initial ? "แก้ไขพนักงาน" : "เพิ่มพนักงาน"} onClose={busy ? () => {} : onClose}>
+    <div className="employee-form-grid"><label>{t(language, "employeeCode")}<input value={code} maxLength={4} onChange={e => setCode(cleanEmployeeCode(e.target.value))} autoFocus /></label><label>Name<input value={name} onChange={e => setName(e.target.value)} /></label><label>PIN<input value={pin} maxLength={4} inputMode="numeric" type="password" autoComplete="new-password" onChange={e => setPin(cleanPin(e.target.value))} placeholder={initial ? "เว้นว่างเพื่อใช้ PIN เดิม" : "PIN 4 ตัว"} /></label><label>{t(language, "role")}<select value={role} onChange={e => setRole(e.target.value as Staff["role"])}><option value="staff">staff</option><option value="manager">manager</option><option value="owner">owner</option></select></label><label>{t(language, "status")}<select value={active ? "1" : "0"} onChange={e => setActive(e.target.value === "1")}><option value="1">{t(language, "active")}</option><option value="0">{t(language, "inactive")}</option></select></label></div>
+    {error && <ErrorMessage text={error} />}
+    <div className="actions modal-footer"><button disabled={busy} onClick={() => void submit()}>{busy ? t(language, "submitBusy") : t(language, "save")}</button><button className="secondary" disabled={busy} onClick={onClose}>{t(language, "back")}</button></div>
+  </Modal>;
+}
 
-function SalesHistoryScreen({repo,staff,shift,settings,language}:{repo:PosRepository;staff:Staff;shift:Shift;settings:AppSettings;language:Language}){const[sales,setSales]=useState<Sale[]>([]);const[receipt,setReceipt]=useState<Receipt|null>(null);const[voiding,setVoiding]=useState<Sale|null>(null);const[filter,setFilter]=useState<"today"|"all"|"cancelled">("today");const load=async()=>setSales(await repo.listSales(150,filter==="today"?{todayOnly:true,status:"all"}:filter==="cancelled"?{status:"cancelled"}:{status:"all"}));useEffect(()=>{load()},[filter]);return <section className="panel"><div className="toolbar"><h1>{t(language,"history")}</h1><div className="segmented"><button className={filter==="today"?"active":""} onClick={()=>setFilter("today")}>{t(language,"today")}</button><button className={filter==="all"?"active":""} onClick={()=>setFilter("all")}>{t(language,"allSales")}</button><button className={filter==="cancelled"?"active":""} onClick={()=>setFilter("cancelled")}>{t(language,"cancelledBills")}</button></div></div><table><tbody>{sales.map(s=><tr key={s.id}><td><strong>{s.receiptNo}</strong><small>{new Date(s.createdAt).toLocaleString()}</small></td><td>{s.cashierName}</td><td>{t(language,s.paymentMethod)}</td><td><span className={`badge ${s.status}`}>{s.status==="completed"?t(language,"completed"):t(language,"voided")}</span></td><td>{money(s.total)}</td><td><button onClick={async()=>setReceipt(await repo.getReceipt(s.id))}>{t(language,"receipt")}</button>{s.status==="completed"&&<button className="danger" onClick={()=>setVoiding(s)}>{t(language,"voidSale")}</button>}</td></tr>)}</tbody></table>{!sales.length&&<EmptyState text={t(language,"empty")}/>} {receipt&&<ReceiptModal receipt={receipt} language={language} onClose={()=>setReceipt(null)} reprint/>}{voiding&&<VoidSaleModal repo={repo} sale={voiding} staff={staff} shift={shift} settings={settings} language={language} onClose={()=>setVoiding(null)} onDone={async()=>{setVoiding(null);await load();}}/>}</section>}
-function VoidSaleModal({repo,sale,staff,shift,settings,language,onClose,onDone}:{repo:PosRepository;sale:Sale;staff:Staff;shift:Shift;settings:AppSettings;language:Language;onClose:()=>void;onDone:()=>void}){const[pin,setPin]=useState("");const[reason,setReason]=useState("");const[restock,setRestock]=useState(true);const[busy,setBusy]=useState(false);const[error,setError]=useState("");return <Modal title={`${t(language,"voidSale")} ${sale.receiptNo}`} onClose={busy?()=>{}:onClose}><Metric label={t(language,"total")} value={money(sale.total)}/><label>PIN<input value={pin} onChange={e=>setPin(e.target.value)}/></label><label>{t(language,"reason")}<input value={reason} onChange={e=>setReason(e.target.value)}/></label><label className="inline-check"><input type="checkbox" checked={restock} onChange={e=>setRestock(e.target.checked)}/>{t(language,"restockReturned")}</label>{error&&<ErrorMessage text={error}/>}<div className="actions"><button disabled={busy||!pin||!reason} onClick={async()=>{try{setBusy(true);await repo.voidSale({saleId:sale.id,pin,reason,restock,staff,shift,deviceId:settings.deviceId});onDone()}catch(e){setError(e instanceof Error?e.message:String(e));setBusy(false)}}}>{busy?t(language,"submitBusy"):t(language,"confirm")}</button><button className="secondary" disabled={busy} onClick={onClose}>{t(language,"back")}</button></div></Modal>}
-function ReportsScreen({repo,language}:{repo:PosRepository;language:Language}){const[date,setDate]=useState(today());const[summary,setSummary]=useState<SalesSummary|null>(null);const[stock,setStock]=useState<StockMovement[]>([]);useEffect(()=>{repo.getSalesSummary(date).then(setSummary);repo.listStockMovements(40).then(setStock)},[date]);return <section className="split"><div className="panel"><div className="toolbar"><h1>{t(language,"reports")}</h1><input type="date" value={date} onChange={e=>setDate(e.target.value)}/></div>{summary?<><div className="metric-grid"><Metric label="ยอดขายรวม" value={money(summary.totalSales)}/><Metric label="จำนวนบิล" value={String(summary.billCount)}/><Metric label={t(language,"cash")} value={money(summary.cashTotal)}/><Metric label={t(language,"transfer")} value={money(summary.transferTotal)}/><Metric label="เฉลี่ยต่อบิล" value={money(summary.averageBill)}/><Metric label="บิลยกเลิก" value={`${summary.cancelledCount} / ${money(summary.cancelledValue)}`}/></div><h3>{t(language,"byProduct")}</h3>{summary.byProduct.length?summary.byProduct.map(p=><p key={p.label}>{p.label}: {p.quantity} · {money(p.total)}</p>):<EmptyState text={t(language,"empty")}/>}<h3>{t(language,"byEmployee")}</h3>{summary.byEmployee.length?summary.byEmployee.map(p=><p key={p.label}>{p.label}: {p.count} · {money(p.total)}</p>):<EmptyState text={t(language,"empty")}/>}</>:<LoadingState/>}</div><div className="panel"><h2>Stock ledger</h2><div className="mini-list">{stock.length?stock.map(s=><p key={s.id}><strong>{s.movementType}</strong> {s.name} {s.quantity} <small>{s.reason}</small></p>):<EmptyState text={t(language,"empty")}/>}</div></div></section>}
-function EmployeesScreen({repo,staff,language}:{repo:PosRepository;staff:Staff;language:Language}){const[rows,setRows]=useState<Staff[]>([]);const[code,setCode]=useState("");const[name,setName]=useState("");const[pin,setPin]=useState("");const[role,setRole]=useState<Staff["role"]>("staff");const load=async()=>setRows(await repo.listEmployees());useEffect(()=>{load()},[]);return <section className="panel"><div className="toolbar"><h1>{t(language,"employees")}</h1></div><p className="warning">{t(language,"demoPin")}</p><div className="form-grid"><input placeholder={t(language,"employeeCode")} value={code} onChange={e=>setCode(e.target.value)}/><input placeholder="Name" value={name} onChange={e=>setName(e.target.value)}/><input placeholder="Demo PIN" value={pin} onChange={e=>setPin(e.target.value)}/><select value={role} onChange={e=>setRole(e.target.value as Staff["role"])}><option value="staff">staff</option><option value="manager">manager</option><option value="owner">owner</option></select></div><button onClick={async()=>{await repo.saveEmployee({code,displayName:name,role,active:true,demoPin:pin},staff);setCode("");setName("");setPin("");await load()}}>{t(language,"save")}</button><table><tbody>{rows.map(r=><tr key={r.id}><td>{r.displayName}</td><td>{r.code}</td><td>{r.role}</td><td>{r.active!==false?t(language,"active"):t(language,"inactive")}</td></tr>)}</tbody></table></section>}
-function SettingsScreen({repo,staff,settings,language,refreshSettings}:{repo:PosRepository;staff:Staff;settings:AppSettings;language:Language;refreshSettings:()=>Promise<void>}){const[form,setForm]=useState(settings);const[section,setSection]=useState("store");const[health,setHealth]=useState<StorageHealth|null>(null);useEffect(()=>{setForm(settings);repo.getStorageHealth().then(setHealth)},[settings]);const set=(key:keyof AppSettings,value:string|boolean)=>setForm(f=>({...f,[key]:value}));const nav=[['store',t(language,'storeInfo')],['branch',t(language,'branchDevice')],['language',t(language,'language')],['owner',t(language,'owner')],['receipt',t(language,'receiptSettings')],['printer',t(language,'printer')],['scanner',t(language,'scanner')],['storage',t(language,'storage')],['backup',t(language,'backupRestore')],['remote',t(language,'remoteManagement')],['about',t(language,'versionAbout')]];return <section className="split"><div className="panel settings-nav">{nav.map(([id,label])=><button key={id} className={section===id?"active":""} onClick={()=>setSection(id)}>{label}</button>)}</div><div className="panel"><h1>{nav.find(n=>n[0]===section)?.[1]}</h1>{section==="language"&&<label>{t(language,"language")}<select value={form.language} onChange={e=>set("language",e.target.value as Language)}><option value="th">{t(language,"thai")}</option><option value="en">{t(language,"english")}</option></select></label>}{section==="store"&&<div className="form-grid"><label>Store<input value={form.storeName} onChange={e=>set("storeName",e.target.value)}/></label><label>Branch<input value={form.branchName} onChange={e=>set("branchName",e.target.value)}/></label></div>}{section==="branch"&&<div className="form-grid"><label>Device<input value={form.deviceName} onChange={e=>set("deviceName",e.target.value)}/></label><label>Device ID<input value={form.deviceId} onChange={e=>set("deviceId",e.target.value)}/></label></div>}{section==="receipt"&&<div className="form-grid"><label>Header<input value={form.receiptHeader} onChange={e=>set("receiptHeader",e.target.value)}/></label><label>Footer<input value={form.receiptFooter} onChange={e=>set("receiptFooter",e.target.value)}/></label></div>}{section==="printer"&&<p className="warning">{t(language,"notReady")} · {form.printerType}</p>}{section==="scanner"&&<p>{form.scannerMode}</p>}{section==="storage"&&<StoragePanel health={health}/>} {['backup','remote'].includes(section)&&<p className="warning">{t(language,"notReady")}</p>} {section==="owner"&&<p className="warning">{t(language,"demoPin")}</p>} {section==="about"&&<p>CpIPOS Desktop 0.1.0</p>}<p className="warning">{t(language,"recordOnly")}</p><button onClick={async()=>{await repo.updateSettings(form,staff);await refreshSettings()}}>{t(language,"save")}</button></div></section>}
-function CloseShiftModal({repo,staff,shift,settings,language,onClose,onConfirm}:{repo:PosRepository;staff:Staff;shift:Shift;settings:AppSettings;language:Language;onClose:()=>void;onConfirm:()=>Promise<void>}){const[summary,setSummary]=useState<SalesSummary|null>(null);const[busy,setBusy]=useState(false);useEffect(()=>{repo.getSalesSummary(today()).then(setSummary)},[]);return <Modal title={t(language,"closeShiftTitle")} onClose={busy?()=>{}:onClose}><div className="info-grid"><Metric label={t(language,"cashier")} value={staff.displayName}/><Metric label="Branch" value={settings.branchName}/><Metric label={t(language,"currentShift")} value={shift.id.slice(0,8)}/></div>{summary&&<div className="metric-grid"><Metric label="จำนวนบิล" value={String(summary.billCount)}/><Metric label={t(language,"total")} value={money(summary.totalSales)}/><Metric label={t(language,"cash")} value={money(summary.cashTotal)}/><Metric label={t(language,"transfer")} value={money(summary.transferTotal)}/><Metric label="Void" value={String(summary.cancelledCount)}/></div>}<p className="warning">{t(language,"closedToLogin")}</p><div className="actions"><button disabled={busy} onClick={async()=>{setBusy(true);await onConfirm()}}>{busy?t(language,"submitBusy"):t(language,"confirmCloseShift")}</button><button className="secondary" disabled={busy} onClick={onClose}>{t(language,"back")}</button></div></Modal>}
-function ReceiptModal({receipt,language,onClose,reprint=false}:{receipt:Receipt;language:Language;onClose:()=>void;reprint?:boolean}){return <Modal title={reprint?t(language,"reprint"):t(language,"receipt")} onClose={onClose}><div className="receipt"><h2>{receipt.settings.receiptHeader}</h2><p>{receipt.settings.storeName}</p><p>{receipt.receiptNo}</p><p>{new Date(receipt.createdAt).toLocaleString()}</p>{receipt.items.map(i=><div className="receipt-line" key={i.id||i.name}><span>{i.name} × {i.quantity}</span><span>{money(i.lineTotal)}</span></div>)}<hr/><div className="receipt-line"><strong>{t(language,"total")}</strong><strong>{money(receipt.total)}</strong></div><p>{t(language,receipt.paymentMethod)} · {receipt.status}</p>{receipt.paymentMethod!=="cash"&&<p className="warning">{t(language,"recordOnly")}</p>}<p>{receipt.settings.receiptFooter}</p></div></Modal>}
-function StoragePanel({health}:{health:StorageHealth|null}){if(!health)return <LoadingState/>;return <div className="metric-grid"><Metric label="DB" value={`${Math.round(health.databaseSize/1024)} KB`}/><Metric label="Media" value={`${Math.round(health.mediaSize/1024)} KB`}/><Metric label="Sales" value={String(health.salesCount)}/><Metric label="Audit" value={String(health.auditCount)}/></div>}
-function stockClass(p:Product){return p.stockQuantity<=0?"out":p.stockQuantity<=p.minimumStock?"low":"normal"}
-function stockLabel(language:Language,p:Product){return p.stockQuantity<=0?t(language,"outOfStock"):p.stockQuantity<=p.minimumStock?t(language,"lowStock"):t(language,"normal")}
-function Metric({label,value}:{label:string;value:string}){return <div className="metric"><span>{label}</span><strong>{value}</strong></div>}
-function ToastView({toast}:{toast:Toast}){return <div className={`toast ${toast.kind}`}>{toast.text}</div>}
-function EmptyState({text}:{text:string}){return <div className="empty-state">{text}</div>}
-function LoadingState(){return <div className="empty-state">Loading...</div>}
-function ErrorMessage({text}:{text:string}){return <p className="error-message">{text}</p>}
-function Modal({title,children,onClose}:{title:string;children:ReactNode;onClose:()=>void}){useEffect(()=>{const f=(e:KeyboardEvent)=>{if(e.key==="Escape")onClose()};window.addEventListener("keydown",f);return()=>window.removeEventListener("keydown",f)},[onClose]);return <div className="modal-backdrop"><section className="modal"><header><h2>{title}</h2><button onClick={onClose}>×</button></header>{children}</section></div>}
+function DeleteEmployeeModal({ repo, staff, employee, onClose, onDeleted }: { repo: PosRepository; staff: Staff; employee: Staff; onClose: () => void; onDeleted: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const confirm = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await repo.deleteEmployee(employee.id, staff);
+      await onDeleted();
+    } catch {
+      setError("ลบพนักงานไม่สำเร็จ");
+      setBusy(false);
+    }
+  };
+  return <Modal title="ลบพนักงาน" onClose={busy ? () => {} : onClose}>
+    <div className="employee-delete-card"><strong>{employee.displayName}</strong><span>{employee.code} · {employee.role}</span><p>ระบบจะปิดใช้งานพนักงานนี้เพื่อรักษาประวัติรายการขายและ audit เดิม</p></div>
+    {error && <ErrorMessage text={error} />}
+    <div className="actions modal-footer"><button className="danger" disabled={busy} onClick={() => void confirm()}>{busy ? "กำลังลบ..." : "ยืนยันลบ"}</button><button className="secondary" disabled={busy} onClick={onClose}>กลับ</button></div>
+  </Modal>;
+}
+
+type NativeCloudPlan = { code: string; days: number; label_th?: string; price_thb?: number | null; active?: boolean };
+type NativeCloudState = {
+  plans?: NativeCloudPlan[];
+  request?: { status?: string; plan_days?: number; price_thb?: number | null } | null;
+  entitlement?: { plan_code?: string; cloud_code?: string; status?: string; expires_at?: string | null; last_backup_at?: string | null } | null;
+  connected?: boolean;
+  cloud_readable?: boolean;
+  syncing?: boolean;
+  checkedAt?: string;
+  lastError?: string;
+  lifecycle_status?: string;
+  renewal_required?: boolean;
+};
+const fallbackCloudPlans: NativeCloudPlan[] = [7, 15, 30, 60, 90].map(days => ({ code: `BACKUP_${days}D`, days, label_th: `Cloud Backup ${days} วัน`, price_thb: null, active: true }));
+const cloudRuntime = () => (window as Window & { __CPIPOS_CLOUD_BACKUP__?: NativeCloudState }).__CPIPOS_CLOUD_BACKUP__;
+const cloudDateText = (value?: string | null) => {
+  if (!value) return "-";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "-" : date.toLocaleString("th-TH");
+};
+const cloudMoney = (value?: number | null) => value == null ? "รอ IT กำหนดราคา" : new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", maximumFractionDigits: 0 }).format(value);
+const cloudExpiryTone = (expiresAt?: string | null) => {
+  if (!expiresAt) return { tone: "ok", text: "Cloud พร้อมใช้งาน" };
+  const ms = Date.parse(expiresAt) - Date.now();
+  const days = Math.ceil(ms / 86400000);
+  if (days > 5) return { tone: "ok", text: `Cloud เหลือ ${days} วัน` };
+  if (days >= 0) return { tone: "warn", text: `Cloud ใกล้ครบกำหนด เหลือ ${days} วัน` };
+  const expiredDays = Math.abs(days);
+  if (expiredDays <= 5) return { tone: "danger", text: `Cloud หมดอายุแล้ว ${expiredDays} วัน ระบบจะตัดใน ${Math.max(0, 5 - expiredDays)} วัน` };
+  return { tone: "off", text: "Cloud ถูกตัดแล้ว กลับมาใช้ข้อมูลในเครื่อง" };
+};
+type SettingsSection = "store" | "branch" | "license" | "language" | "owner" | "receipt" | "paymentQr" | "printer" | "scanner" | "storage" | "backup" | "remote" | "about";
+type SettingsNavItem = { id: SettingsSection; label: string; description: string; meta: string; tone: string };
+
+function SettingsScreen({ repo, staff, settings, language, refreshSettings }: { repo: PosRepository; staff: Staff; settings: AppSettings; language: Language; refreshSettings: () => Promise<void> }) {
+  const [form, setForm] = useState(settings);
+  const [openSection, setOpenSection] = useState<SettingsSection | null>(null);
+  const [health, setHealth] = useState<StorageHealth | null>(null);
+  const [logoError, setLogoError] = useState("");
+  const [saveError, setSaveError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [cloudState, setCloudState] = useState<NativeCloudState | undefined>(() => cloudRuntime());
+  useEffect(() => { setForm(settings); void repo.getStorageHealth().then(setHealth); }, [settings]);
+  useEffect(() => {
+    const refresh = () => setCloudState(cloudRuntime());
+    window.addEventListener("cpipos:cloud-state", refresh);
+    window.addEventListener("online", refresh);
+    window.addEventListener("offline", refresh);
+    refresh();
+    return () => {
+      window.removeEventListener("cpipos:cloud-state", refresh);
+      window.removeEventListener("online", refresh);
+      window.removeEventListener("offline", refresh);
+    };
+  }, []);
+  const set = (key: keyof AppSettings, value: string | boolean) => setForm(f => ({ ...f, [key]: value }));
+  const cloudMeta = cloudState?.entitlement
+    ? `${cloudExpiryTone(cloudState.entitlement.expires_at).text}`
+    : cloudState?.request?.status === "pending"
+      ? "รอ IT ยืนยัน Cloud"
+      : navigator.onLine
+        ? "เลือกแพ็กเกจ Cloud"
+        : "Cloud แสดงได้เมื่อออนไลน์";
+  const nav: SettingsNavItem[] = [
+    { id: "store", label: t(language, "storeInfo"), description: "ชื่อร้าน โลโก้ ที่อยู่ และเลขผู้เสียภาษี", meta: form.storeName || "ยังไม่ระบุชื่อร้าน", tone: "blue" },
+    { id: "branch", label: t(language, "branchDevice"), description: "ชื่อสาขา เครื่องขาย และรหัสอุปกรณ์", meta: form.deviceName || form.deviceId, tone: "cyan" },
+    { id: "license", label: "ลายเส้นโปรแกรม", description: "License และการผูกเครื่องกับ CpIPOS-IT", meta: licenseStatusText(form.programLicenseStatus), tone: "rose" },
+    { id: "language", label: t(language, "language"), description: "ภาษาแสดงผลของหน้าจอ POS", meta: form.language === "th" ? t(language, "thai") : t(language, "english"), tone: "green" },
+    { id: "owner", label: t(language, "owner"), description: "ข้อมูลเจ้าของร้านและบันทึก PIN เดโม", meta: form.ownerName || "Owner", tone: "violet" },
+    { id: "receipt", label: t(language, "receiptSettings"), description: "ข้อความหัวท้ายใบเสร็จและข้อมูลร้านบนใบเสร็จ", meta: form.receiptHeader || "CpIPOS", tone: "amber" },
+    { id: "paymentQr", label: "ตั้งค่า QR ชำระเงิน", description: "PromptPay ล็อกยอดเมื่อออนไลน์ และ QR ธนาคารสำรองเมื่อออฟไลน์", meta: form.paymentQrEnabled === false ? "ปิดใช้งาน" : form.paymentQrPromptPayId ? `PromptPay ${maskPromptPayId(form.paymentQrPromptPayId)}` : form.paymentQrImage ? "ใช้ QR ธนาคารสำรอง" : "ยังไม่ได้ตั้งค่า", tone: "blue" },
+    { id: "printer", label: t(language, "printer"), description: "เครื่องพิมพ์ใบเสร็จและขนาดกระดาษ", meta: form.printerName || "ยังไม่ได้เลือกเครื่องพิมพ์", tone: "slate" },
+    { id: "scanner", label: t(language, "scanner"), description: "โหมดรับค่าจากเครื่องอ่านบาร์โค้ด", meta: form.scannerMode, tone: "teal" },
+    { id: "storage", label: t(language, "storage"), description: "พื้นที่จัดเก็บ ฐานข้อมูล ยอดขาย และ audit", meta: health ? health.salesCount.toLocaleString("th-TH") + " sales" : "กำลังตรวจสอบ", tone: "indigo" },
+    { id: "backup", label: t(language, "backupRestore"), description: "สำรองและกู้คืนข้อมูลเครื่องขาย", meta: cloudMeta, tone: "orange" },
+    { id: "remote", label: t(language, "remoteManagement"), description: "การจัดการระยะไกลและสถานะการเชื่อมต่อ", meta: t(language, "notReady"), tone: "pink" },
+    { id: "about", label: t(language, "versionAbout"), description: "เวอร์ชันแอปและข้อมูลระบบ", meta: "CpIPOS Desktop 0.1.0", tone: "gray" },
+  ];
+  const selected = nav.find(item => item.id === openSection) || null;
+  const open = (id: SettingsSection) => { setForm(settings); setLogoError(""); setSaveError(""); setOpenSection(id); if (id === "storage") void repo.getStorageHealth().then(setHealth); };
+  const close = () => { if (busy) return; setForm(settings); setLogoError(""); setSaveError(""); setOpenSection(null); };
+  const save = async () => {
+    setBusy(true);
+    setSaveError("");
+    try {
+      await repo.updateSettings(form, staff);
+      await refreshSettings();
+      setOpenSection(null);
+    } catch {
+      setSaveError("บันทึกการตั้งค่าไม่สำเร็จ");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return <section className="panel settings-page">
+    <div className="settings-page-head"><div><span className="settings-kicker">CpIPOS Settings</span><h1>{t(language, "settings")}</h1><p>เลือกหมวดที่ต้องการตั้งค่า ระบบจะแสดงฟอร์มเป็น POP UP เพื่อแก้ไขทีละส่วน</p></div></div>
+    <div className="settings-menu-grid">{nav.map(item => <button key={item.id} className={"settings-menu-card " + item.tone} onClick={() => open(item.id)}>
+      <span className="settings-menu-icon"><SettingsIcon section={item.id} /></span>
+      <span className="settings-menu-copy"><strong>{item.label}</strong><small>{item.description}</small><em>{item.meta}</em></span>
+      <span className="settings-menu-arrow">›</span>
+    </button>)}</div>
+    {selected && <SettingsModal item={selected} section={selected.id} form={form} health={health} language={language} logoError={logoError} saveError={saveError} busy={busy} set={set} setLogoError={setLogoError} onSave={save} onClose={close} />}
+  </section>;
+}
+
+function SettingsModal({ item, section, form, health, language, logoError, saveError, busy, set, setLogoError, onSave, onClose }: { item: SettingsNavItem; section: SettingsSection; form: AppSettings; health: StorageHealth | null; language: Language; logoError: string; saveError: string; busy: boolean; set: (key: keyof AppSettings, value: string | boolean) => void; setLogoError: (value: string) => void; onSave: () => Promise<void>; onClose: () => void }) {
+  const editable = !["storage", "backup", "remote", "about"].includes(section);
+  return <Modal title={item.label} onClose={busy ? () => {} : onClose}>
+    <div className={"settings-modal-body " + item.tone}>
+      <div className="settings-modal-intro"><span className="settings-menu-icon"><SettingsIcon section={section} /></span><div><strong>{item.description}</strong><small>{item.meta}</small></div></div>
+      {section === "language" && <label>{t(language, "language")}<select value={form.language} onChange={e => set("language", e.target.value as Language)}><option value="th">{t(language, "thai")}</option><option value="en">{t(language, "english")}</option></select></label>}
+      {section === "store" && <div className="settings-form-grid"><label>ชื่อร้าน<input value={form.storeName} onChange={e => set("storeName", e.target.value)} /></label><label>สาขา<input value={form.branchName} onChange={e => set("branchName", e.target.value)} /></label><label>ที่อยู่<textarea value={form.address} onChange={e => set("address", e.target.value)} /></label><label>เบอร์โทรศัพท์<input value={form.phone} onChange={e => set("phone", e.target.value)} /></label><label>เลขผู้เสียภาษี<input value={form.taxId} onChange={e => set("taxId", e.target.value)} /></label><div className="settings-logo-preview"><img src={form.storeLogoPath || SYSTEM_LOGO} alt="โลโก้ใบเสร็จ" onError={e => { e.currentTarget.src = SYSTEM_LOGO; }} /><div><strong>โลโก้ใบเสร็จ</strong><small>{form.storeLogoPath ? "ใช้โลโก้ร้านจากการตั้งค่า" : "ยังไม่ใส่โลโก้ร้าน จะแสดงโลโก้ระบบ CpIPOS"}</small><input type="file" accept="image/png,image/jpeg,image/webp" onChange={async e => { const file = e.target.files?.[0]; if (!file) return; try { setLogoError(""); set("storeLogoPath", await readFileAsDataUrl(file)); } catch { setLogoError("อ่านไฟล์โลโก้ไม่สำเร็จ"); } }} /><button type="button" className="secondary" onClick={() => set("storeLogoPath", "")}>ใช้โลโก้ระบบ</button></div>{logoError && <ErrorMessage text={logoError} />}</div></div>}
+      {section === "branch" && <div className="settings-form-grid"><label>ชื่อสาขา<input value={form.branchName} onChange={e => set("branchName", e.target.value)} /></label><label>Device<input value={form.deviceName} onChange={e => set("deviceName", e.target.value)} /></label><label>Device ID<input value={form.deviceId} onChange={e => set("deviceId", e.target.value)} /></label></div>}
+      {section === "license" && <LicenseSettingsPanel form={form} set={set} />}
+      {section === "owner" && <div className="settings-form-grid"><label>ชื่อเจ้าของร้าน<input value={form.ownerName} onChange={e => set("ownerName", e.target.value)} /></label><label>บันทึกนโยบาย PIN<input value={form.ownerPinNote} onChange={e => set("ownerPinNote", e.target.value)} /></label><p className="warning settings-wide">{t(language, "demoPin")}</p></div>}
+      {section === "receipt" && <div className="settings-form-grid"><label>ชื่อหัวใบเสร็จ<input value={form.receiptHeader} onChange={e => set("receiptHeader", e.target.value)} /></label><label>ข้อความท้ายใบเสร็จ<input value={form.receiptFooter} onChange={e => set("receiptFooter", e.target.value)} /></label><label>ที่อยู่บนใบเสร็จ<textarea value={form.address} onChange={e => set("address", e.target.value)} /></label><label>เบอร์โทรบนใบเสร็จ<input value={form.phone} onChange={e => set("phone", e.target.value)} /></label><label>เลขผู้เสียภาษี<input value={form.taxId} onChange={e => set("taxId", e.target.value)} /></label></div>}
+      {section === "paymentQr" && <PaymentQrSettingsPanel form={form} set={set} />}
+      {section === "printer" && <PrinterSettingsPanel form={form} set={set} />}
+      {section === "scanner" && <div className="settings-form-grid"><label>โหมดเครื่องอ่านบาร์โค้ด<select value={form.scannerMode} onChange={e => set("scannerMode", e.target.value)}><option value="keyboard-wedge">Keyboard wedge / กด Enter หลังสแกน</option><option value="manual">Manual input / พิมพ์เอง</option></select></label><p className="warning settings-wide">เครื่องอ่านบาร์โค้ดทั่วไปควรใช้โหมด keyboard-wedge เพื่อส่งค่าเข้าช่องค้นหาเหมือนแป้นพิมพ์</p></div>}
+      {section === "storage" && <StoragePanel health={health} />}
+      {section === "backup" && <BackupCloudNativePanel />}
+      {section === "remote" && <div className="settings-form-grid"><label className="inline-check settings-wide"><input type="checkbox" checked={form.remoteManagementEnabled} disabled readOnly /> เปิด Remote Management</label><p className="warning settings-wide">{t(language, "notReady")} - ยังไม่เปิดการจัดการระยะไกลในรุ่นนี้</p></div>}
+      {section === "about" && <div className="metric-grid"><Metric label="App" value="CpIPOS Desktop" /><Metric label="Version" value="0.1.0" /><Metric label="Mode" value="Offline POS" /></div>}
+      {editable && <p className="warning">{t(language, "recordOnly")}</p>}
+      {saveError && <ErrorMessage text={saveError} />}
+      <div className="actions modal-footer">{editable && <button disabled={busy} onClick={() => void onSave()}>{busy ? t(language, "submitBusy") : t(language, "save")}</button>}<button className="secondary" disabled={busy} onClick={onClose}>{t(language, "back")}</button></div>
+    </div>
+  </Modal>;
+}
+
+
+
+function BackupCloudNativePanel() {
+  const [cloud, setCloud] = useState<NativeCloudState | undefined>(() => cloudRuntime());
+  const [online, setOnline] = useState(() => navigator.onLine);
+  useEffect(() => {
+    const refresh = () => { setCloud(cloudRuntime()); setOnline(navigator.onLine); };
+    window.addEventListener("cpipos:cloud-state", refresh);
+    window.addEventListener("online", refresh);
+    window.addEventListener("offline", refresh);
+    window.dispatchEvent(new CustomEvent("cpipos:cloud-refresh"));
+    refresh();
+    return () => {
+      window.removeEventListener("cpipos:cloud-state", refresh);
+      window.removeEventListener("online", refresh);
+      window.removeEventListener("offline", refresh);
+    };
+  }, []);
+
+  const plans = cloud?.plans?.length ? cloud.plans : fallbackCloudPlans;
+  const pending = cloud?.request?.status === "pending" ? cloud.request : null;
+  const entitlement = cloud?.entitlement || null;
+  const expiry = cloudExpiryTone(entitlement?.expires_at);
+  const buy = (code: string) => window.dispatchEvent(new CustomEvent("cpipos:cloud-purchase", { detail: { planCode: code } }));
+  const backupNow = () => window.dispatchEvent(new CustomEvent("cpipos:cloud-backup-now"));
+
+  return <div className="backup-cloud-native-panel commercial-card cloud-backup-card">
+    <div className="cloud-hero"><span className="cloud-hero-icon">Cloud</span><div><span className="commercial-kicker">CLOUD BACKUP / RESTORE</span><h3>Cloud สำรองข้อมูล CpIPOS</h3><p>แสดงแพ็กเกจให้ลูกค้าตัดสินใจได้ทันที และจะซิงก์ขึ้น Cloud เมื่อ IT ยืนยันสิทธิ์แล้ว</p></div></div>
+    {entitlement && <div className="cloud-active-card"><div><span className="cloud-live-dot">●</span><strong>Cloud เชื่อมต่อแล้ว</strong></div><code>{entitlement.cloud_code || "CLOUD"}</code><span>แพ็กเกจ: {entitlement.plan_code || "-"}</span><span>ใช้งานถึง: {cloudDateText(entitlement.expires_at)}</span><span>สำรองล่าสุด: {cloudDateText(entitlement.last_backup_at)}</span><button className="commercial-cloud-now" disabled={!online || cloud?.syncing} onClick={backupNow}>{cloud?.syncing ? "กำลังสำรองข้อมูล..." : "สำรองข้อมูลตอนนี้"}</button></div>}
+    {entitlement && <div className={`cloud-lifecycle-alert ${expiry.tone}`}><strong>{expiry.text}</strong><span>{expiry.tone === "danger" || expiry.tone === "off" ? "ถ้าไม่ต่ออายุภายในช่วงผ่อนผัน ระบบจะหยุด Cloud และกลับไปใช้ข้อมูลในเครื่อง" : "ระบบขายยังใช้ฐานข้อมูลในเครื่องเป็นหลักเพื่อให้ขายต่อได้แม้เน็ตหลุด"}</span></div>}
+    {pending && <div className="cloud-pending-card"><strong>รอฝ่าย IT ยืนยันการซื้อ Cloud</strong><span>{pending.plan_days || "-"} วัน · {cloudMoney(pending.price_thb)}</span></div>}
+    {!entitlement && !pending && <div className="cloud-plan-grid">{plans.map(plan => <button key={plan.code} className="cloud-plan-card" disabled={!online || cloud?.syncing || plan.price_thb == null} onClick={() => buy(plan.code)}><span className="cloud-days">{plan.days} วัน</span><strong>{plan.label_th || `Cloud Backup ${plan.days} วัน`}</strong><em>{cloudMoney(plan.price_thb)}</em><small>{!online ? "รออินเทอร์เน็ต" : plan.price_thb == null ? "รอ IT กำหนดราคา" : "ส่งคำขอซื้อให้ IT"}</small></button>)}</div>}
+    {cloud?.lastError && <p className="commercial-status cloud-error">{cloud.lastError}</p>}
+    <div className="cloud-connection-line"><span>{online ? "● ONLINE" : "○ OFFLINE"}</span><span>{entitlement ? "CLOUD ACTIVE" : "CLOUD NOT ACTIVE"}</span><span>{cloud?.cloud_readable ? "SEARCH CLOUD" : "LOCAL FIRST"}</span><span>{cloud?.syncing ? "SYNCING" : "IDLE"}</span></div>
+  </div>;
+}
+function PaymentQrSettingsPanel({ form, set }: { form: AppSettings; set: (key: keyof AppSettings, value: string | boolean) => void }) {
+  const [online, setOnline] = useState(() => navigator.onLine);
+  const [imageError, setImageError] = useState("");
+  const preview = resolvePaymentQr(form, 50, online);
+  const promptPayId = normalizePromptPayId(form.paymentQrPromptPayId);
+
+  useEffect(() => {
+    const refresh = () => setOnline(navigator.onLine);
+    window.addEventListener("online", refresh);
+    window.addEventListener("offline", refresh);
+    return () => {
+      window.removeEventListener("online", refresh);
+      window.removeEventListener("offline", refresh);
+    };
+  }, []);
+
+  return <div className="payment-qr-settings">
+    <div className="payment-qr-status-row">
+      <span className={online ? "payment-qr-status online" : "payment-qr-status offline"}>{online ? "● ONLINE" : "○ OFFLINE"}</span>
+      <span>{online ? "เมื่อชำระเงิน ระบบจะสร้าง PromptPay QR ตามยอดบิลอัตโนมัติ" : "ออฟไลน์: ระบบจะใช้ภาพ QR ธนาคารที่บันทึกไว้ในเครื่องแทน"}</span>
+    </div>
+
+    <label className="inline-check settings-wide"><input type="checkbox" checked={form.paymentQrEnabled !== false} onChange={e => set("paymentQrEnabled", e.target.checked)} /> เปิดใช้งาน QR ชำระเงิน</label>
+
+    <div className="payment-qr-mode-grid">
+      <section className="payment-qr-mode-card">
+        <span className="payment-qr-mode-badge">ONLINE PROMPTPAY</span>
+        <h3>PromptPay QR ล็อกยอดอัตโนมัติ</h3>
+        <p>กรอกเฉพาะตัวเลขที่ผูก PromptPay ระบบจะนำยอดชำระจากบิลไปสร้าง QR โดยอัตโนมัติเมื่อเครื่องมีอินเทอร์เน็ต</p>
+        <label>หมายเลข PromptPay
+          <input inputMode="numeric" value={promptPayId} onChange={e => set("paymentQrPromptPayId", normalizePromptPayId(e.target.value))} placeholder="กรอกตัวเลข 9–15 หลัก" />
+        </label>
+        <small>ระบบไม่แสดง URL สำหรับสร้าง QR ให้ผู้ใช้งานเห็น</small>
+      </section>
+
+      <section className="payment-qr-mode-card">
+        <span className="payment-qr-mode-badge offline">OFFLINE FALLBACK</span>
+        <h3>ภาพ QR ธนาคารสำรอง</h3>
+        <p>ใช้เมื่อเครื่องไม่มีอินเทอร์เน็ต หรือไม่สามารถเรียก PromptPay QR แบบล็อกยอดได้ ภาพนี้เป็น QR คงที่จากแอปธนาคาร</p>
+        <label>เลือกรูป QR จากธนาคาร
+          <input type="file" accept="image/png,image/jpeg,image/webp" onChange={async e => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            try {
+              setImageError("");
+              set("paymentQrImage", await readFileAsDataUrl(file));
+            } catch {
+              setImageError("อ่านไฟล์ QR ไม่สำเร็จ");
+            }
+          }} />
+        </label>
+        {form.paymentQrImage ? <button type="button" className="secondary" onClick={() => set("paymentQrImage", "")}>ลบภาพ QR สำรอง</button> : null}
+        {imageError ? <ErrorMessage text={imageError} /> : null}
+      </section>
+    </div>
+
+    <div className="settings-form-grid">
+      <label>ชื่อบัญชี / ชื่อผู้รับ<input value={form.paymentQrAccountName || ""} onChange={e => set("paymentQrAccountName", e.target.value)} placeholder="ชื่อบัญชีรับเงิน" /></label>
+      <label>ข้อความกำกับ<input value={form.paymentQrNote || ""} onChange={e => set("paymentQrNote", e.target.value)} placeholder="เช่น กรุณาตรวจสอบชื่อบัญชีก่อนโอน" /></label>
+    </div>
+
+    <div className="payment-qr-preview">
+      <div>
+        <span>ตัวอย่างการทำงาน</span>
+        <strong>{preview.mode === "promptpay_online" ? "PromptPay Online · ล็อกยอด ฿50.00" : preview.mode === "bank_image_offline" ? "QR ธนาคารสำรอง" : "ยังไม่มี QR พร้อมใช้งาน"}</strong>
+        <small>{preview.mode === "promptpay_online" ? `PromptPay: ${maskPromptPayId(preview.promptPayId)}` : online ? "กรอก PromptPay หรืออัปโหลด QR สำรอง" : "อัปโหลด QR ธนาคารเพื่อใช้ขณะออฟไลน์"}</small>
+      </div>
+      {preview.ready ? <img src={preview.src} alt="ตัวอย่าง QR ชำระเงิน" onError={event => { if (form.paymentQrImage && event.currentTarget.src !== form.paymentQrImage) event.currentTarget.src = form.paymentQrImage; }} /> : <div className="payment-qr-placeholder">QR</div>}
+    </div>
+  </div>;
+}
+
+function PrinterSetupRequiredScreen({ repo, staff, settings, language, refreshSettings, onLogout }: { repo: PosRepository; staff: Staff; settings: AppSettings; language: Language; refreshSettings: () => Promise<void>; onLogout: () => Promise<void> }) {
+  const [form, setForm] = useState(settings);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const set = (key: keyof AppSettings, value: string | boolean) => setForm(f => ({ ...f, [key]: value }));
+  const save = async () => {
+    if (!form.printerSetupConfirmed) { setError("ต้องตรวจพบเครื่องพิมพ์และพิมพ์ทดสอบ 1 ครั้งก่อนเปิดใช้งานครั้งแรก"); return; }
+    setBusy(true); setError("");
+    try { await repo.updateSettings(form, staff); await refreshSettings(); }
+    catch { setError("บันทึกการตั้งค่าเครื่องพิมพ์ไม่สำเร็จ"); setBusy(false); }
+  };
+  return <main className="center-screen printer-required-page"><section className="pos-card printer-required-card"><span className="settings-kicker">First setup</span><h1>{t(language, "printer")}</h1><p>ต้องเชื่อมต่อและพิมพ์ทดสอบเครื่องพิมพ์ก่อนเริ่มใช้งาน CpIPOS</p><PrinterSettingsPanel form={form} set={set} />{error && <ErrorMessage text={error} />}<div className="actions modal-footer"><button disabled={busy || !form.printerSetupConfirmed} onClick={() => void save()}>{busy ? t(language, "submitBusy") : "ยืนยันและเข้าใช้งาน"}</button><button className="secondary" disabled={busy} onClick={() => void onLogout()}>ล็อคเอาท์</button></div></section></main>;
+}
+
+function PrinterSettingsPanel({ form, set }: { form: AppSettings; set: (key: keyof AppSettings, value: string | boolean) => void }) {
+  const [printers, setPrinters] = useState<PrinterInfo[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const selected = printers.find(p => p.name === form.printerName) || printers.find(p => p.isDefault) || printers[0];
+  const scan = async () => {
+    setBusy(true); setMessage("");
+    try {
+      const rows = await listPrinters();
+      setPrinters(rows);
+      const next = rows.find(p => p.name === form.printerName) || rows.find(p => p.isDefault) || rows[0];
+      if (next && !form.printerName) set("printerName", next.name);
+      set("printerConnectionStatus", next ? (next.isOffline ? "offline" : "ready") : "not_found");
+      set("printerLastCheckedAt", new Date().toISOString());
+      setMessage(next ? "ตรวจพบเครื่องพิมพ์แล้ว" : "ไม่พบเครื่องพิมพ์ หรือไม่ได้เปิดผ่าน CpIPOS Desktop");
+    } catch {
+      set("printerConnectionStatus", "error");
+      setMessage("ตรวจสอบเครื่องพิมพ์ไม่สำเร็จ ต้องเปิดผ่าน CpIPOS Desktop เพื่อสั่งพิมพ์จริง");
+    } finally { setBusy(false); }
+  };
+  const test = async () => {
+    const name = form.printerName || selected?.name || "";
+    if (!name) { setMessage("เลือกเครื่องพิมพ์ก่อน"); return; }
+    setBusy(true); setMessage("");
+    try {
+      await testPrinter(name);
+      set("printerName", name);
+      set("printerSetupConfirmed", true);
+      set("printerConnectionStatus", "ready");
+      set("printerLastCheckedAt", new Date().toISOString());
+      setMessage("พิมพ์ทดสอบแล้ว เชื่อมต่อเครื่องพิมพ์สำเร็จ");
+    } catch {
+      set("printerSetupConfirmed", false);
+      set("printerConnectionStatus", "error");
+      setMessage("พิมพ์ทดสอบไม่สำเร็จ ตรวจสอบว่าเปิดผ่าน CpIPOS Desktop และเลือกเครื่องพิมพ์จริง");
+    } finally { setBusy(false); }
+  };
+  useEffect(() => { void scan(); }, []);
+  return <div className="printer-setup-card"><strong>ตั้งค่าเครื่องพิมพ์ใบเสร็จ</strong><p className="warning">ระบบจะตรวจเครื่องพิมพ์ Windows อัตโนมัติ เลือกค่าเริ่มต้น และต้องพิมพ์ทดสอบ 1 ครั้งก่อนใช้งานครั้งแรก</p><div className="printer-status-row"><Metric label="สถานะ" value={form.printerSetupConfirmed ? "พร้อมใช้งาน" : "รอยืนยัน"} /><Metric label="เครื่องพิมพ์" value={form.printerName || selected?.name || "ยังไม่พบ"} /></div><div className="settings-form-grid"><label>เครื่องพิมพ์<select value={form.printerName || selected?.name || ""} onChange={e => set("printerName", e.target.value)}><option value="">เลือกเครื่องพิมพ์</option>{printers.map(p => <option key={p.name} value={p.name}>{p.name}{p.isDefault ? " (Default)" : ""}{p.isOffline ? " - Offline" : ""}</option>)}</select></label><label>ขนาดกระดาษ<select value={form.printerPaperWidthMm} onChange={e => set("printerPaperWidthMm", e.target.value)}><option value="80">80mm</option><option value="58">58mm</option></select></label><label className="inline-check"><input type="checkbox" checked={form.printerAutoConnect} onChange={e => set("printerAutoConnect", e.target.checked)} /> เชื่อมต่ออัตโนมัติ</label><label className="inline-check"><input type="checkbox" checked={form.printerAutoPrintReceipt} onChange={e => set("printerAutoPrintReceipt", e.target.checked)} /> พิมพ์ใบเสร็จอัตโนมัติหลังปิดบิล</label><label className="inline-check"><input type="checkbox" checked={form.cashDrawerEnabled} onChange={e => set("cashDrawerEnabled", e.target.checked)} /> เปิดลิ้นชักอัตโนมัติเมื่อรับเงินสด</label><label>หมายเหตุ<input value={form.printerConnectionNote} onChange={e => set("printerConnectionNote", e.target.value)} /></label></div><div className="actions modal-footer"><button type="button" className="secondary" disabled={busy} onClick={() => void scan()}>{busy ? "กำลังตรวจ..." : "ตรวจเครื่องพิมพ์"}</button><button type="button" disabled={busy || !(form.printerName || selected?.name)} onClick={() => void test()}>พิมพ์ทดสอบ 1 ครั้ง</button></div>{message && <p className="warning">{message}</p>}</div>;
+}
+
+function LicenseSettingsPanel({ form, set }: { form: AppSettings; set: (key: keyof AppSettings, value: string | boolean) => void }) {
+  const fingerprint = form.programLicenseDeviceFingerprint || licenseDeviceFingerprint(form);
+  const markPending = () => {
+    set("programLicenseStatus", form.programLicenseKey.trim() ? "pending_activation" : "not_configured");
+    set("programLicenseDeviceFingerprint", fingerprint);
+    set("programLicenseLastCheckedAt", new Date().toISOString());
+  };
+  return <div className="license-settings">
+    <div className="license-status-panel">
+      <div><span>สถานะลายเส้น</span><strong>{licenseStatusText(form.programLicenseStatus)}</strong><small>ต้องตรวจจริงจาก CpIPOS-IT ก่อนปลดล็อกสิทธิ์การใช้งาน</small></div>
+      <div><span>รหัสเครื่อง</span><strong className="license-device-code">{fingerprint}</strong><small>ใช้ผูก license กับ Windows เครื่องนี้</small></div>
+    </div>
+    <div className="settings-form-grid">
+      <label className="settings-wide">License Key<input value={form.programLicenseKey} onChange={e => set("programLicenseKey", e.target.value.trim())} placeholder="เช่น CPIPOS-XXXX-XXXX-XXXX" /></label>
+      <label>CpIPOS-IT API URL<input value={form.programLicenseBackendUrl} onChange={e => set("programLicenseBackendUrl", e.target.value.trim())} placeholder="https://cpipos-it.vercel.app" /></label>
+      <label>จำนวนเครื่องที่อนุญาต<input value={form.programLicenseDeviceLimit} onChange={e => set("programLicenseDeviceLimit", e.target.value.replace(/[^0-9]/g, ""))} placeholder="1" /></label>
+      <label>แพ็กเกจ / แผนใช้งาน<input value={form.programLicensePlan} onChange={e => set("programLicensePlan", e.target.value)} placeholder="เช่น Standard / Pro" /></label>
+      <label>หมดอายุ<input value={form.programLicenseExpiresAt} onChange={e => set("programLicenseExpiresAt", e.target.value)} placeholder="YYYY-MM-DD" /></label>
+      <label className="settings-wide">Signed License Token<textarea value={form.programLicenseToken} onChange={e => set("programLicenseToken", e.target.value.trim())} placeholder="token ที่ CpIPOS-IT เซ็นกลับมาในเฟสเชื่อมต่อจริง" /></label>
+    </div>
+    <div className="license-security-list">
+      <strong>แนวทางป้องกันการปลอม license</strong>
+      <span>Desktop ต้องตรวจ token ด้วย public key เท่านั้น และห้ามฝัง private key ในโปรแกรม</span>
+      <span>Backend ต้องเป็นผู้คุมจำนวนเครื่อง เปิด/ปิด license และการ revoke</span>
+      <span>ถ้า copy token ไปเครื่องอื่น ระบบต้องเทียบรหัสเครื่องแล้วไม่ผ่าน</span>
+    </div>
+    <button type="button" className="secondary license-prepare-button" onClick={markPending}>เตรียมเปิดใช้งานกับ CpIPOS-IT</button>
+  </div>;
+}
+
+function SettingsIcon({ section }: { section: SettingsSection }) {
+  switch (section) {
+    case "store": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10.5 12 4l8 6.5"/><path d="M6 10v9h12v-9"/><path d="M9 19v-5h6v5"/></svg>;
+    case "branch": return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="11" rx="2"/><path d="M9 20h6"/><path d="M12 16v4"/></svg>;
+    case "license": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 19 6v5c0 4.5-2.9 8.5-7 10-4.1-1.5-7-5.5-7-10V6z"/><path d="M9 12h6"/><path d="M12 9v6"/></svg>;
+    case "language": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h10"/><path d="M9 5v14"/><path d="M5 19c3-3 5-7 6-14"/><path d="M12 12c-1.5-1-3-3-4-5"/><path d="m15 19 3-8 3 8"/><path d="M16 16h4"/></svg>;
+    case "owner": return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M5 20c1.5-4 12.5-4 14 0"/></svg>;
+    case "receipt": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10v16l-2-1.2-2 1.2-2-1.2-2 1.2-2-1.2z"/><path d="M9 9h6"/><path d="M9 13h6"/></svg>;
+    case "paymentQr": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4z"/><path d="M15 14h2v2h-2zM19 14h1v3h-3v3h-3v-2M19 19h1v1h-1z"/></svg>;
+    case "printer": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 8V4h10v4"/><rect x="5" y="8" width="14" height="8" rx="2"/><path d="M8 14h8v6H8z"/></svg>;
+    case "scanner": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7V5h4"/><path d="M15 5h4v2"/><path d="M19 17v2h-4"/><path d="M9 19H5v-2"/><path d="M7 12h10"/><path d="M9 9v6"/><path d="M12 9v6"/><path d="M15 9v6"/></svg>;
+    case "storage": return <svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>;
+    case "backup": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7a7 7 0 1 1-1 9"/><path d="M7 7H3V3"/><path d="M12 8v5l3 2"/></svg>;
+    case "remote": return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9a12 12 0 0 1 16 0"/><path d="M7 12a7.5 7.5 0 0 1 10 0"/><path d="M10 15a3 3 0 0 1 4 0"/><circle cx="12" cy="18" r="1"/></svg>;
+    case "about": return <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg>;
+  }
+}
+
+function LogoutModal({ repo, staff, shift, settings, onClose, onConfirm }: { repo: PosRepository; staff: Staff; shift: Shift; settings: AppSettings; onClose: () => void; onConfirm: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  return <Modal title="ล็อคเอาท์" onClose={busy ? () => {} : onClose}>
+    <div className="logout-confirm-card"><div className="logout-confirm-icon">↪</div><div><strong>ออกจากผู้ใช้งานปัจจุบัน?</strong><p>ระบบจะกลับไปหน้าใส่รหัสพนักงาน แต่กะขายปัจจุบันยังเปิดอยู่ ถ้าต้องการปิดรอบขายให้ใช้เมนู “ปิดยอด”</p></div></div>
+    <div className="info-grid"><Metric label="แคชเชียร์" value={staff.displayName} /><Metric label="สาขา" value={settings.branchName} /><Metric label="กะปัจจุบัน" value={shift.id.slice(0, 8)} /></div>
+    <div className="actions"><button disabled={busy} onClick={async () => { setBusy(true); await onConfirm(); }}>{busy ? "กำลังออกจากระบบ..." : "ยืนยันล็อคเอาท์"}</button><button className="secondary" disabled={busy} onClick={onClose}>กลับ</button></div>
+  </Modal>;
+}
+
+function CloseShiftModal({ repo, staff, shift, settings, language, onClose, onConfirm }: { repo: PosRepository; staff: Staff; shift: Shift; settings: AppSettings; language: Language; onClose: () => void; onConfirm: () => Promise<void> }) {
+  const [summary, setSummary] = useState<SalesSummary | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { void repo.getSalesSummary(today()).then(setSummary); }, []);
+  return <Modal title={t(language, "closeShiftTitle")} onClose={busy ? () => {} : onClose}><div className="info-grid"><Metric label={t(language, "cashier")} value={staff.displayName} /><Metric label="Branch" value={settings.branchName} /><Metric label={t(language, "currentShift")} value={shift.id.slice(0, 8)} /></div>{summary && <div className="metric-grid"><Metric label="จำนวนบิล" value={String(summary.billCount)} /><Metric label={t(language, "total")} value={money(summary.totalSales)} /><Metric label={t(language, "cash")} value={money(summary.cashTotal)} /><Metric label={t(language, "transfer")} value={money(summary.transferTotal)} /><Metric label="Void" value={String(summary.cancelledCount)} /></div>}<p className="warning">{t(language, "closedToLogin")}</p><div className="actions"><button disabled={busy} onClick={async () => { setBusy(true); await onConfirm(); }}>{busy ? t(language, "submitBusy") : t(language, "confirmCloseShift")}</button><button className="secondary" disabled={busy} onClick={onClose}>{t(language, "back")}</button></div></Modal>;
+}
+
+function StoragePanel({ health }: { health: StorageHealth | null }) { if (!health) return <LoadingState />; return <div className="metric-grid"><Metric label="DB" value={`${Math.round(health.databaseSize / 1024)} KB`} /><Metric label="Media" value={`${Math.round(health.mediaSize / 1024)} KB`} /><Metric label="Sales" value={String(health.salesCount)} /><Metric label="Audit" value={String(health.auditCount)} /></div>; }
+function Metric({ label, value }: { label: string; value: string }) { return <div className="metric"><span>{label}</span><strong>{value}</strong></div>; }
+function EmptyState({ text }: { text: string }) { return <div className="empty-state">{text}</div>; }
+function LoadingState() { return <div className="empty-state">Loading...</div>; }
+function ErrorMessage({ text }: { text: string }) { return <p className="error-message">{text}</p>; }
+function Modal({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) { useEffect(() => { const f = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); }; window.addEventListener("keydown", f); return () => window.removeEventListener("keydown", f); }, [onClose]); return <div className="modal-backdrop"><section className="modal"><header><h2>{title}</h2><button onClick={onClose}>×</button></header>{children}</section></div>; }

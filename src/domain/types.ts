@@ -3,6 +3,7 @@ export type PaymentMethod = "cash" | "transfer" | "promptpay" | "card";
 export type SaleStatus = "completed" | "cancelled";
 export type Language = "th" | "en";
 export type StockMovementType = "STOCK_IN" | "SALE" | "STOCK_OUT" | "ADJUSTMENT" | "SALE_VOID_RETURN";
+export type DiscountType = "amount" | "percent";
 
 export type Product = {
   id: string;
@@ -54,7 +55,15 @@ export type Sale = {
   cancelledReason?: string;
 };
 
-export type Receipt = Sale & { items: SaleItem[]; settings: AppSettings; receiptLabel?: string };
+export type Receipt = Sale & {
+  items: SaleItem[];
+  settings: AppSettings;
+  receiptLabel?: string;
+  subtotal?: number;
+  discountAmount?: number;
+  discountType?: DiscountType;
+  discountValue?: number;
+};
 
 export type AppSettings = {
   storeName: string;
@@ -66,16 +75,37 @@ export type AppSettings = {
   address: string;
   phone: string;
   receiptFooter: string;
+  storeLogoPath: string;
   ownerName: string;
   ownerPinNote: string;
   printerType: string;
-  scannerMode: string;
-  remoteManagementEnabled: boolean;
-  language: Language;
+  printerName: string;
+  printerPaperWidthMm: string;
+  printerConnectionNote: string;
+  printerSetupConfirmed: boolean;
+  printerAutoConnect: boolean;
+  printerAutoPrintReceipt: boolean;
+  printerConnectionStatus: string;
+  printerLastCheckedAt: string;
+  cashDrawerEnabled: boolean;
   paymentQrEnabled?: boolean;
+  paymentQrPromptPayId?: string;
   paymentQrImage?: string;
   paymentQrAccountName?: string;
   paymentQrNote?: string;
+  scannerMode: string;
+  remoteManagementEnabled: boolean;
+  programLicenseKey: string;
+  programLicenseToken: string;
+  programLicenseStatus: string;
+  programLicensePlan: string;
+  programLicenseDeviceLimit: string;
+  programLicenseDeviceFingerprint: string;
+  programLicenseBackendUrl: string;
+  programLicenseActivatedAt: string;
+  programLicenseExpiresAt: string;
+  programLicenseLastCheckedAt: string;
+  language: Language;
 };
 
 export type AuditEvent = {

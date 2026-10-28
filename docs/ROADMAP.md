@@ -19,7 +19,7 @@ Status: retail core foundation active; not production-ready. Phase 0 evidence: [
 - [x] Settings, language switch, storage health and About/version foundation
 - [x] Local audit history
 - [x] Completed sale void with authorization, reason, audit and optional returned-stock ledger movement
-- [ ] Secure PIN hashing
+- [x] Secure PIN hashing
 - [ ] Receipt screen production hardening
 - [ ] Receipt reprint production hardening
 - [ ] Sales history production hardening
@@ -28,7 +28,7 @@ Status: retail core foundation active; not production-ready. Phase 0 evidence: [
 - [ ] Real printer hardware integration
 - [ ] Full installer/signing release verification
 
-Phase 1 is not complete until secure PIN hashing, receipt screen, receipt reprint, sales history, backup/restore and offline Tauri verification are completed. Do not mark production-ready.
+Phase 1 is not complete until receipt screen, receipt reprint, sales history, backup/restore, first-run PIN-change hardening and offline Tauri verification are completed. Do not mark production-ready.
 
 ## Phase 2 - Hardware
 
