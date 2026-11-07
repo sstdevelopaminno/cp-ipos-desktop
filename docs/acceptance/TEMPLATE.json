@@ -1,0 +1,48 @@
+{
+  "release": "vX.Y.Z",
+  "approved": false,
+  "approvedBy": "",
+  "approvedAt": "",
+  "checks": {
+    "cleanWindowsInstall": {
+      "status": "pending",
+      "evidence": ""
+    },
+    "offlineSaleAndShift": {
+      "status": "pending",
+      "evidence": ""
+    },
+    "sqliteBackupRestore": {
+      "status": "pending",
+      "evidence": ""
+    },
+    "printer58mmThai": {
+      "status": "pending",
+      "evidence": ""
+    },
+    "printer80mmThai": {
+      "status": "pending",
+      "evidence": ""
+    },
+    "barcodeScannerAndCashDrawer": {
+      "status": "pending",
+      "evidence": ""
+    },
+    "licenseDeviceAndExpiry": {
+      "status": "pending",
+      "evidence": ""
+    },
+    "updaterAndRollback": {
+      "status": "pending",
+      "evidence": ""
+    },
+    "authenticodeSigning": {
+      "status": "pending",
+      "evidence": ""
+    },
+    "websiteDownload": {
+      "status": "pending",
+      "evidence": ""
+    }
+  }
+}

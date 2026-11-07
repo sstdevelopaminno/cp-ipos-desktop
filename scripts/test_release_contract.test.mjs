@@ -45,3 +45,11 @@ test("Customer bearer license outputs are excluded from Git", () => {
     assert.ok(ignore.split(/\r?\n/).includes(pattern), `Missing sensitive license ignore rule: ${pattern}`);
   }
 });
+
+test("Packaged Windows license cannot silently fall back to browser-only storage", () => {
+  const gate = read("src/LicenseGate.tsx");
+  const nativeGuard = 'if ("__TAURI_INTERNALS__" in window) throw new Error("LICENSE_DATABASE_UNAVAILABLE")';
+  assert.ok(gate.includes(nativeGuard), "native runtime must reject browser storage fallback");
+  assert.ok(gate.includes('throw new Error("LICENSE_NATIVE_STORAGE_UNAVAILABLE")'), "native trial persistence must fail closed");
+  assert.ok(gate.includes('mode: "error"'), "license storage errors must not leave the POS loading forever");
+});
