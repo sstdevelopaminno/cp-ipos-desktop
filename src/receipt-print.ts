@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { Receipt } from "./domain/types";
+import { formatReceiptItemNotes } from "./receipt-item-notes";
 
 export type PrintableReceipt = Receipt & {
   subtotal?: number;
@@ -7,6 +8,8 @@ export type PrintableReceipt = Receipt & {
   discountType?: "amount" | "percent";
   discountValue?: number;
   tableCode?: string | null;
+  modeLabel?: string | null;
+  shiftLabel?: string | null;
 };
 
 const SYSTEM_LOGO = "/icon.png";
@@ -140,7 +143,10 @@ function rasterBytes(canvas: HTMLCanvasElement, usedHeight: number) {
 
 async function printReceiptRasterNow(receipt: PrintableReceipt, printerName: string) {
   const width = paperWidth(receipt);
-  const itemHeight = Math.max(1, receipt.items.length) * 74;
+  const itemHeight = Math.max(1, receipt.items.length) * 74 + receipt.items.reduce((sum, item) => {
+    const note = formatReceiptItemNotes(item.notes ?? item.note);
+    return sum + note.length * 2 + (note ? 32 : 0);
+  }, 0);
   const topLines = receiptTopLines(receipt);
   const headerTextHeight = topLines.reduce((sum, line) => sum + Math.max(1, Math.ceil(line.length / (width === 384 ? 24 : 38))) * 24, 0);
   const canvas = document.createElement("canvas");
@@ -177,6 +183,8 @@ async function printReceiptRasterNow(receipt: PrintableReceipt, printerName: str
   ctx.fillText(`เลขที่ ${receipt.receiptNo}`, 32, y); y += 24;
   ctx.fillText(new Date(receipt.createdAt).toLocaleString("th-TH"), 32, y); y += 24;
   ctx.fillText(`พนักงาน ${receipt.cashierName || receipt.employeeCode || "-"}`, 32, y); y += 24;
+  if (receipt.shiftLabel) { ctx.fillText(`กะ ${receipt.shiftLabel}`, 32, y); y += 24; }
+  if (receipt.modeLabel) { ctx.fillText(`โหมด ${receipt.modeLabel}`, 32, y); y += 24; }
   if (receipt.tableCode) { ctx.fillText(`โต๊ะ ${receipt.tableCode}`, 32, y); y += 24; }
   dashedLine(ctx, y, width); y += 36;
 
@@ -190,7 +198,17 @@ async function printReceiptRasterNow(receipt: PrintableReceipt, printerName: str
     ctx.font = "18px Tahoma, 'Segoe UI', sans-serif";
     ctx.textAlign = "left";
     ctx.fillText(`${item.quantity} x ${money(item.unitPrice)}`, 32, y);
-    y += 34;
+    y += 26;
+    const note = formatReceiptItemNotes(item.notes ?? item.note);
+    if (note) {
+      ctx.font = "18px Tahoma, 'Segoe UI', sans-serif";
+      ctx.textAlign = "left";
+      for (const line of note.split("\n").flatMap(part => wrapText(ctx, part, width - 64))) {
+        ctx.fillText(line, 32, y);
+        y += 23;
+      }
+    }
+    y += 12;
   }
 
   dashedLine(ctx, y, width); y += 38;
