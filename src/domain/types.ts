@@ -37,6 +37,8 @@ export type SaleItem = {
   quantity: number;
   unitPrice: number;
   lineTotal: number;
+  notes?: string | null;
+  note?: string | null;
 };
 
 export type Sale = {
